@@ -1,0 +1,14 @@
+# deps / build output never committed (this plugin has no build step, but linked
+# checkouts and stray installs appear in the tree during local development)
+node_modules/
+.pnpm-store/
+dist/
+*.tgz
+
+# local scratch
+*.log
+*.zstd
+.env
+.env.*
+.DS_Store
+Thumbs.db

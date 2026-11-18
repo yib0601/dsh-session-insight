@@ -1,0 +1,2375 @@
+/**
+ * dsh-turn-cost — context-insight surfaces (lazy sibling chunk).
+ *
+ * Supersedes dsh-context: the same surfaces, rebuilt on DSH's own built-in
+ * projections plus our official-price cost engine — a `/context` command with a
+ * centered modal, a session Context tab, a right-sidebar Context tab, a
+ * cross-session dashboard opened from the sidebar foot, and its own settings
+ * page for the cost preferences. Internal ids stay `tc*` so they never collide
+ * with a co-installed plugin of similar name.
+ *
+ * Visual system: every surface uses the host's own semantic tokens (`--dsw-*`):
+ * label-primary/secondary/tertiary for type, card-fill / settings-card-fill for
+ * surfaces, chart-* and state-* for data colour. Nothing here hardcodes a hex
+ * colour, so light and dark themes both read correctly.
+ *
+ * Sections: §1 locale · §2 stores/helpers · §3 primitives · §4 cards · §5 views
+ * · §6 composition.
+ */
+window.__ModuleLoader__.load({
+  id: '@local/dsh-turn-cost',
+  chunk: 'client.context.js',
+  factory(require) {
+    const React = require('react');
+    const ReactDOM = require('react-dom');
+    const h = React.createElement;
+
+    const COMMAND_LINE = '/context';
+    const NS = 'tcContext';
+    const TAB_ID = 'tc-context';
+    const SIDEBAR_KIND = 'tc-context';
+    /** Rows / cards rendered per page; "show more" grows by one page. */
+    const PAGE_SIZE = 60;
+
+    // ── §1 locale ────────────────────────────────────────────────────────────
+    const LOCALE = {
+      zh: {
+        tab: '上下文', entry: '上下文洞察', dashboard: '上下文洞察仪表盘',
+        cmdLabel: '上下文', cmdDesc: '查看当前上下文构成与费用', cmdSection: '上下文',
+        close: '关闭', loading: '读取中…',
+        kpiSessions: '会话', kpiSessionsSub: '共 {total} 个会话', kpiTokens: '计费 tokens', kpiCost: '估算费用', kpiCache: '缓存命中',
+        turns: '轮次', steps: '步骤', requests: '请求',
+        currentTitle: '当前上下文构成', used: '已用', free: '空闲', window: '上下文窗口',
+        system: '系统提示词', tools: '工具定义', messages: '消息与工具结果',
+        tokenTitle: 'Token 统计', input: '输入（未缓存）', cacheRead: '缓存命中', cacheWrite: '缓存写入', output: '输出',
+        tokenShare: '占比', tokenCost: '金额', tokenTotal: '合计',
+        costTitle: '费用（官方刊例价）', costTip: '按各模型官方刊例价估算，非实际扣费', unknown: '价格未知',
+        costByBucket: '费用构成', peakShort: '高峰', offPeakShort: '空闲', mixedTierShort: '高峰+空闲',
+        costSecondary: '另一币种',
+        modelTitle: '按模型花费', modelEmpty: '暂无请求记录', modelShare: '花费占比', modelRequests: '请求',
+        trendTitle: '上下文趋势', trendEmpty: '暂无请求记录',
+        trendTokens: 'Tokens', trendCost: '费用', trendCache: '缓存命中', trendPeak: '峰值', trendNow: '最新',
+        eventsTitle: '上下文事件', eventsEmpty: '暂无上下文变化事件',
+        evCompact: '压缩', evPrune: '剪枝', evInject: '注入', evSwitch: '模型切换', evMode: '模式切换',
+        activityTitle: '近 7 日用量', noSessions: '暂无会话数据', openSession: '打开会话',
+        modalTitle: '当前上下文', modalHint: 'Esc 或点击遮罩关闭',
+        estimateNote: '构成数字来自 DSH 内置 contextBreakdown 估算（约 4 字符 ≈ 1 token），不等于供应商上报用量。',
+        timingTitle: '时序统计', timingLlm: '模型耗时', timingTool: '工具耗时', timingTtft: '首字延迟',
+        timingTps: '解码速度', timingDecode: '解码耗时',
+        filesTitle: '文件活动', filesEmpty: '本会话暂无文件读写',
+        statsTitle: '上下文统计', userMsgs: '用户输入', answers: '助手消息', skillLoads: '技能加载',
+        toolCalls: '工具调用',
+        statsTools: '工具调用分布', statsCommands: '命令程序分布',
+        toolsEmpty: '暂无工具调用',
+        cmdTitle: '命令执行', cmdEmpty: '本会话没有执行命令', cmdSearch: '筛选程序或命令',
+        cmdPrograms: '程序分布', cmdStatus: '状态', cmdOk: '成功', cmdError: '失败', cmdRunning: '进行中',
+        cmdAll: '全部', cmdNoMatch: '没有匹配的命令',
+        filesFilter: '搜索路径', filesAll: '全部', filesRead: '读取', filesWrite: '写入', filesSearch: '搜索',
+        filesNoMatch: '没有匹配的文件', filesOps: '操作日志', filesDelta: '行数变化',
+        eventsAll: '全部', donutTotal: '合计',
+        rangeToday: '今天', range7: '近 7 天', range30: '近 30 天',
+        contentTitle: '请求内容', contentUser: '用户', contentAnswer: '回答', contentReasoning: '思考',
+        contentCall: '调用', contentResult: '结果', contentMore: '展开', contentLess: '收起',
+        tallyTools: '工具调用排行', tallyPrograms: '命令程序排行', tallySkills: '技能加载',
+        tallyEmpty: '所选时间范围内没有记录', tallyPending: '统计字段要等 DSH 重启后由 Host 折叠出来',
+        fleetTab: '编队', fleetTitle: '编队总览', fleetMembers: '成员', fleetRunning: '运行中',
+        fleetChildren: '子 Agent', fleetTokens: '家族 tokens', fleetCost: '家族费用',
+        fleetNetwork: 'Agent 网络', fleetTimeline: '跨 Agent 协作', fleetEvents: '家族事件',
+        fleetSelf: '当前', fleetParent: '父级', fleetChild: '子级',
+        fleetEmpty: '本会话没有子 Agent，也没有父级', fleetNoEvents: '暂无家族事件',
+        fleetTaskNote: '家族成员来自会话树（父 / 子 / 孙），费用按各自会话日志的官方价目表估算；任务板数据不在本插件的读模型内。',
+        agentsTitle: 'Agent 网络', agentsEmpty: '本会话暂无子智能体',
+        agentsRunning: '运行中', agentsIdle: '空闲',
+        browserTitle: '上下文浏览器', browserEmpty: '暂无请求记录',
+        browserTurn: '轮/步', browserModel: '模型', browserTokens: 'Tokens', browserCost: '费用',
+        browserProvider: '提供方', browserCache: '缓存命中', browserTier: '计费时段',
+        browserPeak: '高峰', browserOffPeak: '空闲（半价）', browserTime: '时间', browserExpand: '展开请求明细',
+        browserFilter: '筛选模型或轮次', browserSortTime: '按时间', browserSortCost: '按费用', browserSortTokens: '按 Tokens',
+        browserCopy: '复制 CSV', browserCopied: '已复制', browserCopyFail: '复制失败', browserNoMatch: '没有匹配的请求', browserShown: '显示 {shown} / {total}',
+        browserMore: '显示更多（还有 {remaining} 条）',
+        heatTitle: '活跃热力图', heatLess: '少', heatMore: '多', heatRange: '近 12 周',
+        dailyTitle: '近 7 日费用',
+        boardTitle: '跨会话模型花费', boardEmpty: '暂无模型用量',
+        sessionSearch: '搜索会话', sessionSortCost: '按费用', sessionSortTokens: '按 Tokens', sessionSortRecent: '按最近',
+        sessionsTitle: '会话',
+        nav: '费用', sectionIntro: '这里的偏好只作用于本浏览器：逐轮徽章、底部累计、金额币种、DeepSeek 计费时段与会话预算。',
+        groupDisplay: '显示', groupPricing: '计价', groupBudget: '预算',
+        prefBadge: '显示每轮费用徽章', prefBadgeDesc: '在每条回复底部显示该轮消耗金额',
+        prefPill: '显示底部会话累计', prefPillDesc: '在输入框下方状态栏显示本会话累计消费',
+        prefTier: 'DeepSeek 计费时段', prefTierDesc: 'DeepSeek 官方价分高峰与空闲两档，空闲为高峰半价',
+        prefTierAuto: '自动（按北京时间）', prefTierPeak: '按高峰', prefTierOffPeak: '按空闲',
+        prefCurrency: '金额币种', prefCurrencyDesc: 'DeepSeek 用官方人民币价；只发布美元价的厂商按汇率折算',
+        prefCurrencyCny: '人民币', prefCurrencyUsd: '美元',
+        prefBudget: '会话预算', prefBudgetDesc: '设成 0 表示不设上限；设置后底部累计显示「花费 / 预算」，超出转红',
+        prefBudgetClear: '清除',
+        sessionBudgetRemain: '剩余额度',
+        sessionTitle: '上下文洞察',
+        prefResetTitle: '重置偏好', prefResetDesc: '把上面各项恢复为默认值。',
+        prefReset: '恢复默认',
+      },
+      en: {
+        tab: 'Context', entry: 'Context insights', dashboard: 'Context insights dashboard',
+        cmdLabel: 'Context', cmdDesc: 'Inspect current context composition and cost', cmdSection: 'Context',
+        close: 'Close', loading: 'Loading…',
+        kpiSessions: 'Sessions', kpiSessionsSub: '{total} sessions in total', kpiTokens: 'Billed tokens', kpiCost: 'Estimated cost', kpiCache: 'Cache hit',
+        turns: 'Turns', steps: 'Steps', requests: 'Requests',
+        currentTitle: 'Current context composition', used: 'Used', free: 'Free', window: 'Context window',
+        system: 'System prompt', tools: 'Tool schemas', messages: 'Messages & tool results',
+        tokenTitle: 'Token stats', input: 'Input (uncached)', cacheRead: 'Cache hit', cacheWrite: 'Cache write', output: 'Output',
+        tokenShare: 'share', tokenCost: 'cost', tokenTotal: 'Total',
+        costTitle: 'Cost (official list prices)', costTip: 'Estimated at official list rates, not actual billing', unknown: 'Price unknown',
+        costByBucket: 'Cost by bucket', peakShort: 'Peak', offPeakShort: 'Off-peak', mixedTierShort: 'Peak + off-peak',
+        costSecondary: 'Other currency',
+        modelTitle: 'Cost by model', modelEmpty: 'No requests yet', modelShare: 'share of cost', modelRequests: 'requests',
+        trendTitle: 'Context trend', trendEmpty: 'No requests yet',
+        trendTokens: 'Tokens', trendCost: 'Cost', trendCache: 'Cache hit', trendPeak: 'peak', trendNow: 'latest',
+        eventsTitle: 'Context events', eventsEmpty: 'No context events yet',
+        evCompact: 'Compact', evPrune: 'Prune', evInject: 'Inject', evSwitch: 'Model switch', evMode: 'Mode',
+        activityTitle: 'Last 7 days', noSessions: 'No session data', openSession: 'Open session',
+        modalTitle: 'Current context', modalHint: 'Esc or click the backdrop to close',
+        estimateNote: 'Composition figures use DSH built-in contextBreakdown heuristic (~4 chars ≈ 1 token), not provider-reported usage.',
+        timingTitle: 'Timing stats', timingLlm: 'Model time', timingTool: 'Tool time', timingTtft: 'First token',
+        timingTps: 'Decode speed', timingDecode: 'Decode time',
+        filesTitle: 'File activity', filesEmpty: 'No file reads or writes yet',
+        statsTitle: 'Context stats', userMsgs: 'User input', answers: 'Assistant msgs', skillLoads: 'Skill loads',
+        toolCalls: 'Tool calls',
+        statsTools: 'Tool calls', statsCommands: 'Commands by program',
+        toolsEmpty: 'No tool calls yet',
+        cmdTitle: 'Command executions', cmdEmpty: 'No commands ran in this session', cmdSearch: 'Filter by program or command',
+        cmdPrograms: 'By program', cmdStatus: 'Status', cmdOk: 'OK', cmdError: 'Failed', cmdRunning: 'Running',
+        cmdAll: 'All', cmdNoMatch: 'No matching commands',
+        filesFilter: 'Filter by path', filesAll: 'All', filesRead: 'Read', filesWrite: 'Written', filesSearch: 'Searched',
+        filesNoMatch: 'No matching files', filesOps: 'Operation log', filesDelta: 'Line change',
+        eventsAll: 'All', donutTotal: 'total',
+        rangeToday: 'Today', range7: 'Last 7 days', range30: 'Last 30 days',
+        contentTitle: 'Request content', contentUser: 'User', contentAnswer: 'Answer', contentReasoning: 'Reasoning',
+        contentCall: 'Call', contentResult: 'Result', contentMore: 'More', contentLess: 'Less',
+        tallyTools: 'Tool calls', tallyPrograms: 'Commands by program', tallySkills: 'Skill loads',
+        tallyEmpty: 'Nothing in this range', tallyPending: 'Tallies need a DSH restart to be folded by the Host',
+        fleetTab: 'Fleet', fleetTitle: 'Fleet overview', fleetMembers: 'Members', fleetRunning: 'Running',
+        fleetChildren: 'Sub-agents', fleetTokens: 'Family tokens', fleetCost: 'Family cost',
+        fleetNetwork: 'Agent network', fleetTimeline: 'Cross-agent timeline', fleetEvents: 'Family events',
+        fleetSelf: 'This agent', fleetParent: 'Parent', fleetChild: 'Child',
+        fleetEmpty: 'No sub-agents and no parent for this session', fleetNoEvents: 'No family events yet',
+        fleetTaskNote: 'Members come from the session tree (parent / self / children / grandchildren) and each cost is estimated from that session\'s own log at official list prices; task-board data is outside this plugin\'s read model.',
+        agentsTitle: 'Agent network', agentsEmpty: 'No sub-agent sessions',
+        agentsRunning: 'running', agentsIdle: 'idle',
+        browserTitle: 'Context browser', browserEmpty: 'No requests yet',
+        browserTurn: 'Turn/step', browserModel: 'Model', browserTokens: 'Tokens', browserCost: 'Cost',
+        browserProvider: 'Provider', browserCache: 'Cache hit', browserTier: 'Rate tier',
+        browserPeak: 'Peak', browserOffPeak: 'Off-peak (half)', browserTime: 'Time', browserExpand: 'Expand request details',
+        browserFilter: 'Filter by model or turn', browserSortTime: 'Time', browserSortCost: 'Cost', browserSortTokens: 'Tokens',
+        browserCopy: 'Copy CSV', browserCopied: 'Copied', browserCopyFail: 'Copy failed', browserNoMatch: 'No matching requests', browserShown: '{shown} of {total}',
+        browserMore: 'Show more ({remaining} left)',
+        heatTitle: 'Activity heatmap', heatLess: 'less', heatMore: 'more', heatRange: 'last 12 weeks',
+        dailyTitle: 'Cost per day (7d)',
+        boardTitle: 'Cost by model (all sessions)', boardEmpty: 'No model usage yet',
+        sessionSearch: 'Search sessions', sessionSortCost: 'Cost', sessionSortTokens: 'Tokens', sessionSortRecent: 'Recent',
+        sessionsTitle: 'Sessions',
+        nav: 'Cost', sectionIntro: 'These preferences apply to this browser only: per-turn badges, the session total, display currency, DeepSeek billing tiers and the session budget.',
+        groupDisplay: 'Display', groupPricing: 'Pricing', groupBudget: 'Budget',
+        prefBadge: 'Show the per-turn cost badge', prefBadgeDesc: 'Show the cost of each turn under its last message',
+        prefPill: 'Show the session total', prefPillDesc: 'Show the accumulated session cost in the composer status bar',
+        prefTier: 'DeepSeek rate tier', prefTierDesc: 'DeepSeek list price has peak and off-peak tiers; off-peak is half price',
+        prefTierAuto: 'Automatic (Beijing time)', prefTierPeak: 'Peak only', prefTierOffPeak: 'Off-peak only',
+        prefCurrency: 'Currency', prefCurrencyDesc: 'DeepSeek uses its official CNY price; USD-only vendors are converted at the configured rate',
+        prefCurrencyCny: 'CNY', prefCurrencyUsd: 'USD',
+        prefBudget: 'Session budget', prefBudgetDesc: 'Zero means no cap; with a cap the session total reads “spent / cap” and turns red past it',
+        prefBudgetClear: 'Clear',
+        sessionBudgetRemain: 'Remaining',
+        sessionTitle: 'Context insights',
+        prefResetTitle: 'Reset preferences', prefResetDesc: 'Restore every setting above to its default.',
+        prefReset: 'Reset to defaults',
+      },
+    };
+
+    // ── §2 stores and helpers ───────────────────────────────────────────────
+    function createFlagStore() {
+      let value = false;
+      const listeners = new Set();
+      return {
+        getSnapshot: () => value,
+        subscribe(fn) { listeners.add(fn); return () => { listeners.delete(fn); }; },
+        set(next) {
+          if (next === value) return;
+          value = next;
+          for (const fn of listeners) fn();
+        },
+      };
+    }
+
+    /** One shared modal store: only one session's composer is visible at a time. */
+    const modalStore = createFlagStore();
+    function modalStoreOf() { return modalStore; }
+
+    // Data colours: the host's own chart palette keeps both themes correct.
+    const COLORS = {
+      system: 'var(--dsw-alias-chart-system)',
+      tools: 'var(--dsw-alias-chart-tools)',
+      messages: 'var(--dsw-alias-chart-messages)',
+      input: 'var(--dsw-alias-chart-messages)',
+      cacheRead: 'var(--dsw-alias-chart-tools)',
+      cacheWrite: 'var(--dsw-alias-chart-tools)',
+      output: 'var(--dsw-alias-state-warn-primary)',
+    };
+
+    const STYLES = `
+/* ── surface ─────────────────────────────────────────────────────────────── */
+.tc-surface{font-size:13px;line-height:1.55;color:var(--dsw-alias-label-secondary);
+  --tc-radius:var(--dsw-radius-md);--tc-radius-sm:var(--dsw-radius-sm)}
+.tc-panel{box-sizing:border-box;height:100%;overflow:auto;padding:18px 22px 28px;background:var(--dsw-alias-bg-base)}
+.tc-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 12px}
+.tc-head h2{margin:0;font-size:15px;font-weight:600;line-height:22px;color:var(--dsw-alias-label-primary)}
+.tc-head-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.tc-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}
+.tc-col-3{grid-column:span 3}.tc-col-4{grid-column:span 4}.tc-col-6{grid-column:span 6}
+.tc-col-8{grid-column:span 8}.tc-col-9{grid-column:span 9}.tc-col-12{grid-column:span 12}
+@media (max-width:1180px){.tc-col-3,.tc-col-4{grid-column:span 6}.tc-col-8,.tc-col-9{grid-column:span 12}}
+@media (max-width:820px){.tc-grid>*{grid-column:span 12 !important}}
+/* ── cards ───────────────────────────────────────────────────────────────── */
+.tc-card{box-sizing:border-box;min-width:0;display:flex;flex-direction:column;gap:10px;padding:14px 16px 16px;
+  border:1px solid var(--dsw-alias-border-l1);border-radius:var(--tc-radius);background:var(--dsw-alias-card-fill);
+  box-shadow:var(--dsw-elevation-panel)}
+.tc-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:20px}
+.tc-card-head h3{margin:0;font-size:13px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary)}
+.tc-card-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tc-card-body{display:flex;flex-direction:column;gap:10px;min-width:0}
+.tc-empty{display:flex;align-items:center;gap:8px;margin:0;padding:14px 0;font-size:12px;color:var(--dsw-alias-label-tertiary)}
+.tc-note{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
+/* ── KPI tiles ───────────────────────────────────────────────────────────── */
+.tc-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.tc-tile{box-sizing:border-box;display:flex;flex-direction:column;gap:2px;padding:11px 13px 12px;
+  border:1px solid var(--dsw-alias-border-l1);border-radius:var(--tc-radius);background:var(--dsw-alias-card-fill)}
+.tc-tile-top{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.tc-tile-top svg{width:12px;height:12px;flex:none;opacity:.85}
+.tc-tile b{font-size:21px;line-height:26px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary);letter-spacing:-.01em}
+.tc-tile-sub{font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.tc-tile[data-tone='cost'] b{color:var(--dsw-alias-state-business-primary)}
+.tc-tile[data-tone='warn'] b{color:var(--dsw-alias-state-warn-primary)}
+.tc-band{display:flex;align-items:center;gap:12px;margin:0 0 12px;padding:8px 12px;border-radius:var(--tc-radius);
+  border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-card-tile-fill);font-size:12px;
+  color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;flex-wrap:wrap}
+.tc-band b{color:var(--dsw-alias-label-primary);font-weight:500}
+.tc-band-title{color:var(--dsw-alias-label-secondary)}
+.tc-band[data-over='true'] b{color:var(--dsw-alias-state-error-primary)}
+/* ── data rows / legends ─────────────────────────────────────────────────── */
+.tc-dl{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:6px 14px;margin:0;font-size:12px;font-variant-numeric:tabular-nums}
+.tc-dl dt{color:var(--dsw-alias-label-tertiary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-dl dd{margin:0;text-align:right;color:var(--dsw-alias-label-primary)}
+.tc-rows{display:flex;flex-direction:column;gap:7px;margin:0;padding:0;min-width:0}
+.tc-row2{display:grid;grid-template-columns:minmax(72px,1fr) minmax(48px,.9fr) auto;align-items:center;gap:10px;
+  font-size:12px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary);min-width:0}
+.tc-row2>span:first-child{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-row2>span:last-child{text-align:right;color:var(--dsw-alias-label-primary);white-space:nowrap}
+.tc-dot{width:7px;height:7px;border-radius:2px;flex:none}
+.tc-mini{position:relative;height:5px;border-radius:3px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
+.tc-mini i{display:block;height:100%;border-radius:3px}
+.tc-mini-lg{height:6px;border-radius:3px}
+.tc-cap{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+/* ── stacked bar ─────────────────────────────────────────────────────────── */
+.tc-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
+.tc-bar i{display:block;height:100%;min-width:0}
+.tc-bar-lg{height:14px;border-radius:7px}
+.tc-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.tc-legend span{display:inline-flex;align-items:center;gap:5px}
+.tc-legend b{font-weight:500;color:var(--dsw-alias-label-secondary)}
+/* ── charts ──────────────────────────────────────────────────────────────── */
+.tc-chart{display:flex;align-items:flex-end;gap:4px;height:86px;margin-top:2px;
+  background:linear-gradient(to top,var(--dsw-alias-border-l1) 0 1px,transparent 1px) bottom/100% 1px no-repeat}
+.tc-chart .col{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;height:100%}
+.tc-chart .col i{display:block;width:100%;max-width:22px;border-radius:3px 3px 1px 1px;background:var(--dsw-alias-state-business-primary);opacity:.9}
+.tc-chart .col:hover i{opacity:1}
+.tc-chart .col span{font-size:9px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;font-variant-numeric:tabular-nums}
+.tc-chart .col strong{font-size:9px;font-weight:600;color:var(--dsw-alias-label-secondary);white-space:nowrap;font-variant-numeric:tabular-nums}
+.tc-spark{display:block;width:100%;height:88px;overflow:visible}
+.tc-spark .area{fill:var(--dsw-alias-state-business-primary);opacity:.16}
+.tc-spark .line{fill:none;stroke:var(--dsw-alias-state-business-primary);stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.tc-spark .grid{stroke:var(--dsw-alias-border-l1);stroke-width:1;stroke-dasharray:3 3}
+.tc-spark .dot{fill:var(--dsw-alias-state-business-primary)}
+.tc-spark text{fill:var(--dsw-alias-label-tertiary);font-size:9px;font-variant-numeric:tabular-nums}
+/* ── heatmap ─────────────────────────────────────────────────────────────── */
+.tc-heat{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);grid-template-rows:repeat(7,auto);
+  gap:3px;max-width:460px;padding:2px 0}
+.tc-heat i{display:block;width:100%;aspect-ratio:1;border-radius:2px;background:var(--dsw-alias-bg-layer-2)}
+.tc-heat i.blank{background:transparent}
+/* ── lists ───────────────────────────────────────────────────────────────── */
+.tc-list{list-style:none;margin:0;padding:0;max-height:220px;overflow:auto;display:flex;flex-direction:column}
+.tc-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:12px;min-width:0}
+.tc-list li:last-child{border-bottom:none}
+.tc-list .tc-strong{color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tc-path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;direction:rtl;text-align:left}
+.tc-chip{display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:18px;border-radius:var(--dsw-radius-xs);
+  background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tc-chip[data-tone='read']{color:var(--dsw-alias-state-business-primary);background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 14%,transparent)}
+.tc-chip[data-tone='write']{color:var(--dsw-alias-state-warn-primary);background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent)}
+.tc-chip[data-tone='ok']{color:var(--dsw-alias-state-success-primary);background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 14%,transparent)}
+/* ── controls ────────────────────────────────────────────────────────────── */
+.tc-btn{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--tc-radius-sm);
+  background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;padding:4px 10px;cursor:pointer}
+.tc-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.tc-btn:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.tc-btn[data-active='true']{background:var(--dsw-alias-button-primary-fill);border-color:transparent;color:var(--dsw-alias-label-primary-foreground)}
+.tc-input{box-sizing:border-box;height:26px;padding:0 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--tc-radius-sm);
+  background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;min-width:0}
+.tc-input::placeholder{color:var(--dsw-alias-label-tertiary)}
+.tc-input:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:1px}
+.tc-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tc-toolbar .tc-input{flex:1 1 150px}
+/* clickable chips double as list filters */
+.tc-chip[role='button']{cursor:pointer;border:1px solid transparent}
+.tc-chip[role='button']:hover{border-color:var(--dsw-alias-border-l1)}
+.tc-chip[data-on='true']{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground)}
+.tc-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0}
+/* ── donut ───────────────────────────────────────────────────────────────── */
+.tc-donut{display:flex;align-items:center;gap:14px;min-width:0;flex-wrap:wrap}
+.tc-donut svg{width:88px;height:88px;flex:none}
+.tc-donut circle{fill:none;stroke-width:11}
+.tc-donut .ring{stroke:var(--dsw-alias-bg-layer-2)}
+.tc-donut .tc-legend{flex:1 1 120px;min-width:0}
+.tc-donut text{font-size:9px;fill:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
+.tc-donut-center{font-size:15px;font-weight:600}
+/* ── stat strip (context stats) ──────────────────────────────────────────── */
+.tc-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:10px;min-width:0}
+.tc-stat{padding:8px 10px;border-radius:var(--tc-radius-sm);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);min-width:0}
+.tc-stat span{display:block;font-size:11px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-stat b{display:block;font-size:17px;line-height:22px;font-weight:600;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
+.tc-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;min-width:0}
+.tc-sub{font-size:11px;font-weight:500;color:var(--dsw-alias-label-tertiary);margin:0 0 6px}
+/* ── command ledger ──────────────────────────────────────────────────────── */
+.tc-cmd{display:grid;grid-template-columns:minmax(56px,auto) minmax(0,1fr) auto;gap:10px;align-items:center;
+  padding:5px 0;border-bottom:1px solid var(--dsw-alias-border-l1);font-size:12px;min-width:0}
+.tc-cmd:last-child{border-bottom:none}
+.tc-cmd code{font-family:var(--dsw-font-mono,ui-monospace,monospace);font-size:11px;color:var(--dsw-alias-label-secondary);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.tc-cmd .tc-meta{display:flex;align-items:center;gap:8px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.tc-log{list-style:none;margin:6px 0 0;padding:0 0 0 10px;border-left:2px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.tc-op{padding:4px 0;border-bottom:1px dashed var(--dsw-alias-border-l1)}
+.tc-op:last-child{border-bottom:none}
+.tc-delta{font-variant-numeric:tabular-nums;white-space:nowrap}
+.tc-delta b{font-weight:600}
+.tc-delta .add{color:var(--dsw-alias-state-success-primary)}
+.tc-delta .del{color:var(--dsw-alias-state-error-primary)}
+/* ── context browser content ─────────────────────────────────────────────── */
+.tc-pre{margin:3px 0 0;padding:6px 8px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-layer-1);
+  color:var(--dsw-alias-label-secondary);font-family:var(--dsw-font-mono,ui-monospace,monospace);font-size:11px;
+  line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}
+.tc-content{display:flex;flex-direction:column;gap:2px;margin-top:2px}
+.tc-more{align-self:center;margin-top:2px;font-size:11px;padding:3px 12px}
+/* ── table (context browser) ─────────────────────────────────────────────── */
+.tc-table{display:flex;flex-direction:column;gap:1px;max-height:320px;overflow:auto;font-variant-numeric:tabular-nums}
+.tc-trow{display:grid;grid-template-columns:66px minmax(0,1fr) 78px 84px 44px;gap:10px;align-items:center;padding:4px 6px;border-radius:var(--dsw-radius-xs);font-size:12px;min-width:0}
+.tc-trow>span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-trow>span:nth-child(3),.tc-trow>span:nth-child(4){text-align:right;white-space:nowrap}
+.tc-trow>span:last-child{text-align:right;color:var(--dsw-alias-label-tertiary)}
+.tc-trow.tc-thead{position:sticky;top:0;z-index:1;background:var(--dsw-alias-card-fill);color:var(--dsw-alias-label-tertiary);font-size:11px;border-bottom:1px solid var(--dsw-alias-border-l1);border-radius:0}
+.tc-trow[role='button']{cursor:pointer}
+.tc-trow[role='button']:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.tc-trow[aria-expanded='true']{background:var(--dsw-alias-bg-layer-2)}
+.tc-detail{margin:2px 0 6px;padding:8px 10px;border-left:2px solid var(--dsw-alias-state-business-primary);
+  border-radius:0 var(--dsw-radius-xs) var(--dsw-radius-xs) 0;background:var(--dsw-alias-bg-layer-1)}
+/* ── modal / overlay ─────────────────────────────────────────────────────── */
+.tc-mask{position:fixed;inset:0;z-index:9998;background:var(--dsw-alias-bg-mask-1);display:flex;align-items:center;justify-content:center;padding:24px}
+.tc-modal .tc-col-4{grid-column:span 6}
+@media (max-width:720px){.tc-modal .tc-col-4{grid-column:span 12}}
+.tc-modal{box-sizing:border-box;width:min(820px,100%);max-height:min(82vh,760px);overflow:auto;
+  border:1px solid var(--dsw-alias-border-l2);border-radius:var(--tc-radius);background:var(--dsw-alias-bg-layer-1);
+  padding:18px 20px 20px;box-shadow:var(--dsw-elevation-prominent)}
+.tc-overlay-mask{position:fixed;inset:0;z-index:9997;background:var(--dsw-alias-bg-mask-1);display:flex;justify-content:flex-end}
+.tc-overlay{box-sizing:border-box;width:min(940px,94vw);height:100%;overflow:auto;background:var(--dsw-alias-bg-base);
+  border-left:1px solid var(--dsw-alias-border-l1);padding:18px 22px 32px}
+.tc-session{box-sizing:border-box;display:flex;flex-direction:column;gap:5px;padding:10px 12px;border-radius:var(--tc-radius-sm);
+  border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-card-tile-fill);cursor:pointer;min-width:0}
+.tc-session:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.tc-session:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.tc-session b{font-size:12px;font-weight:500;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-session-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.tc-session-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+/* ── settings page ───────────────────────────────────────────────────────── */
+.tc-settings{display:flex;flex-direction:column;gap:6px;max-width:720px;color:var(--dsw-alias-label-primary)}
+.tc-settings-title{margin:0;font-size:18px;font-weight:600;line-height:26px}
+.tc-settings-intro{margin:0 0 4px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-tertiary)}
+.tc-group-title{margin:10px 0 0;font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary)}
+.tc-pref{display:flex;flex-direction:column}
+.tc-pref-row{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:14px 0;border-bottom:.5px solid var(--dsw-alias-border-l2)}
+.tc-pref-row:last-child{border-bottom:none}
+.tc-pref-text{min-width:0}
+.tc-pref-title{font-size:14px;line-height:20px;color:var(--dsw-alias-label-primary)}
+.tc-pref-desc{margin-top:2px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.tc-control{display:inline-flex;align-items:center;gap:8px;flex:none}
+/* switch */
+.tc-switch{position:relative;width:36px;height:20px;flex:none;padding:0;border-radius:10px;cursor:pointer;
+  border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);transition:background .15s ease}
+.tc-switch i{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-label-primary);
+  transition:transform .15s ease;box-shadow:var(--dsw-shadow-lv1)}
+.tc-switch[aria-checked='true']{background:var(--dsw-alias-state-business-primary);border-color:transparent}
+.tc-switch[aria-checked='true'] i{transform:translateX(16px);background:var(--dsw-alias-label-primary-foreground)}
+.tc-switch:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+/* segmented control: the pressed segment is the host's primary button — never a
+   white-on-white slab (brand-primary resolves to #f9fafb in the dark theme). */
+.tc-seg{display:inline-flex;flex:none;padding:2px;border-radius:var(--tc-radius-sm);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1)}
+.tc-seg .tc-btn{border:none;background:transparent;border-radius:calc(var(--tc-radius-sm) - 2px);padding:3px 10px;color:var(--dsw-alias-label-tertiary)}
+.tc-seg .tc-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
+.tc-seg .tc-btn[aria-pressed='true']{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font-weight:500}
+.tc-budget{display:inline-flex;align-items:center;gap:6px;padding:0 8px;height:26px;border:1px solid var(--dsw-alias-border-l1);
+  border-radius:var(--tc-radius-sm);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary);font-size:12px}
+.tc-budget input{width:80px;padding:0;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:right;outline:none}
+`;
+
+    function fmtInt(n) { return Number(n || 0).toLocaleString('en-US'); }
+
+    /** Compact count for chart labels: 12.3M / 840K, so a 2px bar still says a number. */
+    function fmtShort(n) {
+      const v = safeCount(n);
+      if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+      if (v >= 1e6) return (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + 'M';
+      if (v >= 1e3) return (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + 'K';
+      return String(Math.round(v));
+    }
+
+    function safeCount(n) { return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0; }
+
+    /** Price one `tcTimeline` request with the official table. */
+    function priceRequest(pricing, request, tier, currency) {
+      if (!request) return null;
+      const r = pricing.computeTurnCost({
+        uncachedInputTokens: safeCount(request.input), outputTokens: safeCount(request.output),
+        cacheReadTokens: safeCount(request.cacheRead), cacheWriteTokens: safeCount(request.cacheWrite),
+        totalTokens: safeCount(request.totalTokens),
+        routes: [{ provider: request.provider || '', model: request.model || '' }],
+      }, request.time || Date.now(), undefined, tier, currency);
+      return r.status === 'ok' ? r : null;
+    }
+
+    /** Roots that only set up the real command; never the program itself. */
+    const WRAPPER_ROOTS = new Set(['cd', 'pushd', 'sudo', 'env', 'time', 'nohup', 'command', 'exec']);
+
+    /**
+     * Program behind a command line, derived from the ledger's `call` text.
+     * The Host fold stores `program` too, but a running Host keeps the module
+     * generation it booted with, so after an in-place plugin update the stored
+     * value can come from an older heuristic — this re-derives only then.
+     */
+    function programOfCall(call) {
+      if (typeof call !== 'string' || call.trim() === '') return '';
+      const tokens = call.trim().split('\n')[0].split(/\s+/);
+      const clean = token => token.replace(/^[("'`]+|[);&|"'`]+$/g, '');
+      for (let index = 0; index < tokens.length; index += 1) {
+        const token = clean(tokens[index]);
+        if (token === '') continue;
+        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) continue;
+        if (WRAPPER_ROOTS.has(token)) { if (token === 'cd' || token === 'pushd') index += 1; continue; }
+        if (token.startsWith('-')) continue;
+        return token.split('/').pop() || token;
+      }
+      return '';
+    }
+
+    /** The program a ledger row should be grouped under. */
+    function commandProgram(command) {
+      const stored = String(command?.program ?? '');
+      if (stored !== '' && !WRAPPER_ROOTS.has(stored)) return stored;
+      return programOfCall(command?.call) || stored || '?';
+    }
+
+    /** Format an amount in the user's display currency. */
+    function money(pricing, amount, currency) {
+      return pricing.formatMoney(amount, currency);
+    }
+
+    /**
+     * Price one `tcActivity` model slot in the display currency.
+     *
+     * The Host folds each request's billing tier into the day row (`peak` /
+     * `offPeak` buckets), because a day-level aggregate has no request timestamp
+     * left to test. A pinned tier preference (`peak` / `offPeak`) overrides that
+     * split for every slot; `auto` uses it as folded. Legacy flat slots (`{input,
+     * cacheRead, …}`, pre-stateVersion-3) still price, at the folded-in `now`.
+     *
+     * @returns {number|null} null when the model has no official price row
+     */
+    function priceModelSlot(pricing, slot, model, tier, currency, now) {
+      if (!model || slot === null || slot === undefined) return null;
+      const forced = tier === 'peak' || tier === 'offPeak' ? tier : undefined;
+      const priceOne = (buckets, at) => {
+        if (buckets === null || buckets === undefined) return null;
+        const priced = pricing.priceBucketsResult({
+          input: safeCount(buckets.input), cacheRead: safeCount(buckets.cacheRead),
+          cacheWrite: safeCount(buckets.cacheWrite), output: safeCount(buckets.output),
+        }, model, now, at);
+        return priced === null ? null : pricing.moneyOf(priced, currency).amount;
+      };
+      const split = slot.peak !== undefined || slot.offPeak !== undefined;
+      if (!split) return priceOne(slot, forced);
+      const peak = priceOne(slot.peak, forced ?? 'peak');
+      const offPeak = priceOne(slot.offPeak, forced ?? 'offPeak');
+      if (peak === null && offPeak === null) return null;
+      return safeCount(peak) + safeCount(offPeak);
+    }
+
+    /** Tokens in one model slot, whether tier-split or legacy flat. */
+    function slotTokens(slot) {
+      if (slot === null || slot === undefined) return 0;
+      const sum = b => safeCount(b?.input) + safeCount(b?.cacheRead)
+        + safeCount(b?.cacheWrite) + safeCount(b?.output);
+      if (slot.peak !== undefined || slot.offPeak !== undefined) return sum(slot.peak) + sum(slot.offPeak);
+      return sum(slot);
+    }
+
+    const BUCKETS = ['input', 'cacheRead', 'cacheWrite', 'output'];
+
+    /**
+     * One pass over the request log: display-currency total, per-bucket money,
+     * per-model money, dual-currency totals, tier split, cache-hit share.
+     * Everything the cost cards show comes from here, so the numbers agree.
+     */
+    function summarize(pricing, requests, tier, currency) {
+      const out = {
+        cost: 0, cny: 0, usd: 0, tokens: 0, cacheReadTokens: 0,
+        byBucket: { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
+        byModel: new Map(), known: 0, unknown: 0, peak: 0, offPeak: 0, approximate: false,
+      };
+      for (const request of Array.isArray(requests) ? requests : []) {
+        const tokens = safeCount(request.totalTokens);
+        out.tokens += tokens;
+        out.cacheReadTokens += safeCount(request.cacheRead);
+        const priced = priceRequest(pricing, request, tier, currency);
+        if (priced === null) { out.unknown += 1; continue; }
+        out.known += 1;
+        out.cost += priced.amount;
+        out.cny += pricing.moneyOf(priced, 'CNY').amount;
+        out.usd += safeCount(priced.usd);
+        if (priced.approximate === true) out.approximate = true;
+        if (priced.peak === true) out.peak += 1;
+        else if (priced.peak === false) out.offPeak += 1;
+        if (priced.displayRates !== undefined) {
+          for (const key of BUCKETS) {
+            out.byBucket[key] += safeCount(priced.parts[key]) * (Number(priced.displayRates[key]) || 0) / 1e6;
+          }
+        }
+        const model = request.model || 'unknown';
+        const row = out.byModel.get(model) || { model, cost: 0, tokens: 0, requests: 0 };
+        row.cost += priced.amount;
+        row.tokens += tokens;
+        row.requests += 1;
+        out.byModel.set(model, row);
+      }
+      out.cacheHit = out.tokens > 0 ? out.cacheReadTokens / out.tokens * 100 : null;
+      out.models = [...out.byModel.values()].sort((a, b) => b.cost - a.cost || b.tokens - a.tokens);
+      return out;
+    }
+
+    /** Subscribe to the shared cost-preference store owned by the entry chunk. */
+    function usePrefsOf(pricing) {
+      return React.useSyncExternalStore(
+        pricing.prefs.subscribe, pricing.prefs.getSnapshot, () => pricing.PREF_DEFAULTS);
+    }
+
+    function useOptional(hook, selector) {
+      // Hooks must be called unconditionally; guard the hook itself instead.
+      return typeof hook === 'function' ? hook(selector) : undefined;
+    }
+
+    function pct(part, whole) {
+      if (!(whole > 0)) return 0;
+      return Math.max(0, Math.min(100, part / whole * 100));
+    }
+
+    function fmtDuration(ms) {
+      const n = safeCount(ms);
+      if (n <= 0) return '—';
+      if (n < 1000) return n.toFixed(0) + 'ms';
+      if (n < 60000) return (n / 1000).toFixed(1) + 's';
+      const minutes = Math.floor(n / 60000);
+      const seconds = Math.round((n % 60000) / 1000);
+      return minutes + 'm' + String(seconds).padStart(2, '0') + 's';
+    }
+
+    /** Beijing-time day key (`YYYY-MM-DD`) for a timestamp. */
+    function beijingKey(ms) {
+      return new Date(ms + 8 * 3600 * 1000).toISOString().slice(0, 10);
+    }
+
+    /** Monday-first weekday index of a `YYYY-MM-DD` key. */
+    function mondayIndex(key) {
+      const day = new Date(key + 'T00:00:00Z').getUTCDay();
+      return (day + 6) % 7;
+    }
+
+    function copyText(text) {
+      try {
+        if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).then(() => true, () => false);
+      } catch { /* fall through */ }
+      try {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.select();
+        const ok = document.execCommand('copy');
+        area.remove();
+        return Promise.resolve(ok);
+      } catch { return Promise.resolve(false); }
+    }
+
+    // ── §3 primitives ────────────────────────────────────────────────────────
+    function Card({ title, meta, children, className, bodyClass }) {
+      return h('section', { className: ['tc-card', className].filter(Boolean).join(' ') },
+        h('div', { className: 'tc-card-head' },
+          h('h3', null, title),
+          meta === undefined || meta === null ? null : h('span', { className: 'tc-card-meta' }, meta)),
+        h('div', { className: ['tc-card-body', bodyClass].filter(Boolean).join(' ') }, ...children));
+    }
+
+    function Empty({ text, icon, k }) {
+      // `k` keeps list children keyed: this helper is used inside children arrays.
+      return h('p', { className: 'tc-empty', key: k ?? 'empty' },
+        icon === undefined ? null : h('span', { 'aria-hidden': 'true', dangerouslySetInnerHTML: { __html: icon } }),
+        text);
+    }
+
+    /** One KPI tile: an icon + label line, the figure, and an optional sub line. */
+    function Tile({ label, value, sub, tone, icon }) {
+      return h('div', { className: 'tc-tile', 'data-tone': tone || 'plain' },
+        h('div', { className: 'tc-tile-top' },
+          typeof icon === 'string' ? h('span', { 'aria-hidden': 'true', dangerouslySetInnerHTML: { __html: icon } }) : icon,
+          h('span', null, label)),
+        h('b', null, value),
+        sub === undefined || sub === null ? null : h('div', { className: 'tc-tile-sub' }, sub));
+    }
+
+    const ICON = {
+      turns: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7"/></svg>',
+      steps: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M3 13V8m5 5V3m5 10V6"/></svg>',
+      requests: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>',
+      tokens: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><ellipse cx="8" cy="4" rx="4.6" ry="1.9"/><path d="M3.4 4v8c0 1 2 1.9 4.6 1.9s4.6-.9 4.6-1.9V4"/></svg>',
+      cost: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M8 1.5v13M11.2 4.4H6.1a2 2 0 0 0 0 4h3.8a2 2 0 0 1 0 4H4.6"/></svg>',
+      cache: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M8 1.6 14 5v6L8 14.4 2 11V5l6-3.4ZM2 5l6 3.4L14 5M8 8.4V14.4"/></svg>',
+      sessions: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5 6.5h6M5 9.5h4"/></svg>',
+    };
+
+    /** Stacked proportion bar from `[{value,color,label}]`. */
+    function StackBar({ items, height }) {
+      const total = items.reduce((sum, item) => sum + safeCount(item.value), 0);
+      if (total <= 0) return h('div', { className: 'tc-bar' + (height === 'lg' ? ' tc-bar-lg' : '') });
+      return h('div', { className: 'tc-bar' + (height === 'lg' ? ' tc-bar-lg' : '') },
+        ...items.filter(item => safeCount(item.value) > 0).map((item, index) => h('i', {
+          key: index, title: item.label + ' · ' + (item.hint ?? ''),
+          style: { width: (safeCount(item.value) / total * 100).toFixed(2) + '%', background: item.color },
+        })));
+    }
+
+    /** A labelled row with its own proportional mini bar and a right-hand value. */
+    function MeterRow({ label, color, value, max, right, hint }) {
+      return h('div', { className: 'tc-row2', title: hint },
+        h('span', null,
+          color === undefined ? null : h('i', { className: 'tc-dot', style: { background: color } }),
+          label),
+        h('span', { className: 'tc-mini', 'aria-hidden': 'true' },
+          h('i', { style: { width: pct(safeCount(value), safeCount(max) || 1).toFixed(1) + '%', background: color || 'var(--dsw-alias-state-business-primary)' } })),
+        h('span', null, right));
+    }
+
+    /** Donut of proportion shares; `items` are `{value, color, label}`. */
+    function Donut({ items, center, caption }) {
+      const rows = items.filter(item => safeCount(item.value) > 0);
+      const total = rows.reduce((sum, item) => sum + safeCount(item.value), 0);
+      const radius = 42;
+      const circumference = 2 * Math.PI * radius;
+      let offset = 0;
+      const arcs = rows.map((item, index) => {
+        const share = safeCount(item.value) / total;
+        const length = share * circumference;
+        const arc = h('circle', {
+          key: index, cx: 50, cy: 50, r: radius,
+          stroke: item.color, strokeDasharray: length + ' ' + (circumference - length),
+          strokeDashoffset: -offset, transform: 'rotate(-90 50 50)',
+        });
+        offset += length;
+        return arc;
+      });
+      return h('div', { className: 'tc-donut' },
+        h('svg', { viewBox: '0 0 100 100', role: 'img', 'aria-label': caption ?? '' },
+          h('circle', { className: 'ring', cx: 50, cy: 50, r: radius }),
+          ...arcs,
+          h('text', { x: 50, y: 48, textAnchor: 'middle', className: 'tc-donut-center' }, center ?? ''),
+          h('text', { x: 50, y: 60, textAnchor: 'middle' }, caption ?? '')),
+        h('div', { className: 'tc-legend', style: { flexDirection: 'column', alignItems: 'flex-start', gap: 4 } },
+          ...rows.map((item, index) => h('span', { key: index },
+            h('i', { className: 'tc-dot', style: { background: item.color } }),
+            item.label + ' ',
+            h('b', null, (safeCount(item.value) / total * 100).toFixed(1) + '%')))));
+    }
+
+    /** Text of a content block list, ignoring image/file placeholders. */
+    function textOfContent(content) {
+      if (!Array.isArray(content)) return '';
+      const parts = [];
+      for (const block of content) {
+        if (block === null || typeof block !== 'object') continue;
+        if (block.type === 'text' && typeof block.text === 'string') parts.push(block.text);
+        else if (block.type === 'image') parts.push('[image]');
+        else if (block.type === 'file') parts.push('[file]');
+      }
+      return parts.join('\n').trim();
+    }
+
+    /** Blocks of one assistant message as `{kind, title, text}` rows. */
+    function assistantRows(blocks) {
+      const rows = [];
+      for (const block of Array.isArray(blocks) ? blocks : []) {
+        if (block === null || typeof block !== 'object') continue;
+        if (block.kind === 'text') rows.push({ kind: 'text', title: null, text: String(block.text ?? '') });
+        else if (block.kind === 'reasoning') rows.push({ kind: 'reasoning', title: null, text: String(block.text ?? '') });
+        else if (block.kind === 'tool-call') rows.push({ kind: 'tool-call', title: String(block.name ?? ''), text: String(block.argsRaw ?? '') });
+        else if (block.kind === 'image') rows.push({ kind: 'image', title: null, text: '[image]' });
+      }
+      return rows.filter(row => row.text !== '' || row.title !== null);
+    }
+
+    /**
+     * Content of one request, read from the chat snapshot the page already holds
+     * (`legacy.nodes`): the user message that opened it, the assistant blocks of
+     * its step, and the tool results produced for it. Nothing is fetched, and
+     * nothing is written anywhere — this is the client's own copy of the surface.
+     *
+     * Legacy nodes carry no step on tool results, so a result belongs to the
+     * request whose time window (previous request → this request) contains it.
+     */
+    function contentOfRequest(nodes, request, previousTime) {
+      const list = Array.isArray(nodes) ? nodes : [];
+      const time = safeCount(request?.time);
+      const turn = request?.turn;
+      const step = request?.step;
+      let user = null;
+      let assistant = null;
+      let lastTurn = null;
+      const tools = [];
+      for (const node of list) {
+        if (node === null || typeof node !== 'object') continue;
+        const nodeTime = safeCount(node.time);
+        if (node.kind === 'user') {
+          if (nodeTime <= time) user = { time: nodeTime, text: textOfContent(node.content) };
+          continue;
+        }
+        if (node.kind === 'assistant') {
+          lastTurn = node.turn ?? lastTurn;
+          if (node.turn === turn && node.step === step) assistant = { time: nodeTime, blocks: node.blocks };
+          continue;
+        }
+        if (node.kind === 'tool-result') {
+          if (nodeTime > time || nodeTime <= (previousTime ?? 0)) continue;
+          const name = String(node.name || node.call?.name || '?');
+          const args = String(node.call?.argsRaw ?? '');
+          const text = textOfContent(node.content);
+          if (args === '' && text === '') continue;
+          tools.push({ name, args, text, isError: node.isError === true, turn: lastTurn });
+        }
+      }
+      return { user, assistant, tools };
+    }
+
+    /** A chip that toggles a list filter; the same chip shows its own count. */
+    function FilterChip({ label, count, on, onClick, tone }) {
+      return h('button', {
+        type: 'button', className: 'tc-chip', role: 'button',
+        'data-tone': tone ?? undefined, 'data-on': on ? 'true' : 'false',
+        'aria-pressed': on ? 'true' : 'false', onClick,
+      }, label + (count === undefined ? '' : ' ' + fmtInt(count)));
+    }
+
+    /** Area sparkline; points are `{value, label}` oldest → newest. */
+    function Sparkline({ points, format, caption }) {
+      const w = 100;
+      const hgt = 100;
+      const values = points.map(point => point.value);
+      const max = Math.max(1, ...values);
+      const min = Math.min(...values, 0);
+      const span = max - min || 1;
+      const step = points.length > 1 ? w / (points.length - 1) : w;
+      const xy = (value, index) => [index * step, hgt - ((value - min) / span) * (hgt - 10) - 5];
+      const line = points.map((point, index) => xy(point.value, index).map(n => n.toFixed(2)).join(',')).join(' ');
+      const area = `0,${hgt} ${line} ${w.toFixed(2)},${hgt}`;
+      const last = points[points.length - 1];
+      const lastPoint = xy(last.value, points.length - 1);
+      const grid = h('g', null,
+        h('line', { className: 'grid', x1: 0, y1: hgt - 5, x2: w, y2: hgt - 5 }),
+        h('line', { className: 'grid', x1: 0, y1: 5, x2: w, y2: 5 }));
+      return h('div', null,
+        h('svg', {
+          className: 'tc-spark', viewBox: `0 0 ${w} ${hgt}`, preserveAspectRatio: 'none', role: 'img',
+          'aria-label': caption ?? '',
+        },
+          grid,
+          points.length > 1 ? h('polygon', { className: 'area', points: area }) : null,
+          points.length > 1 ? h('polyline', { className: 'line', points: line }) : null,
+          h('circle', { className: 'dot', cx: lastPoint[0], cy: lastPoint[1], r: 1.8 })),
+        h('div', { className: 'tc-legend', style: { marginTop: 4, justifyContent: 'space-between' } },
+          h('span', null, caption ?? ''),
+          h('span', null, [last.label, format === undefined ? '' : format(last.value)].filter(Boolean).join(' · '))));
+    }
+
+    // ── §4 cards ─────────────────────────────────────────────────────────────
+    function CompositionCard({ t, breakdown, pressure }) {
+      const system = safeCount(breakdown?.systemTokens);
+      const tools = safeCount(breakdown?.toolsTokens);
+      const messages = safeCount(breakdown?.messageTokens);
+      const heuristic = system + tools + messages;
+      const windowSize = safeCount(pressure?.contextWindow);
+      const used = safeCount(pressure?.projectedTokens ?? pressure?.pressureTokens) || heuristic;
+      const total = Math.max(used, heuristic, windowSize, 1);
+      const rows = [
+        [t('system'), system, COLORS.system],
+        [t('tools'), tools, COLORS.tools],
+        [t('messages'), messages, COLORS.messages],
+      ];
+      const share = pct(used, windowSize || total);
+      return Card({
+        title: t('currentTitle'),
+        meta: t('used') + ' ' + fmtInt(used) + (windowSize ? ' / ' + fmtInt(windowSize) : ''),
+        className: 'tc-col-4',
+        children: [
+          // Composition bar: the three sources normalised to what is in use, so
+          // the split stays readable even at 1% of a 1M window.
+          StackBar({
+            items: rows.map(([label, value, color]) => ({ value, color, label, hint: fmtInt(value) })),
+            height: 'lg',
+          }),
+          h('div', { className: 'tc-rows' }, ...rows.map(([label, value, color], index) =>
+            MeterRow({
+              key: index, label, color, value, max: heuristic || 1,
+              right: fmtInt(value) + ' · ' + pct(value, heuristic || 1).toFixed(0) + '%',
+              hint: label,
+            }))),
+          windowSize > 0
+            ? h('div', null,
+              h('div', { className: 'tc-cap' },
+                h('span', null, t('window') + ' ' + fmtInt(windowSize)),
+                h('span', null, share.toFixed(1) + '%')),
+              h('div', { className: 'tc-mini tc-mini-lg', 'aria-hidden': 'true' },
+                h('i', {
+                  style: {
+                    width: Math.max(1, share).toFixed(1) + '%',
+                    background: 'var(--dsw-alias-state-business-primary)',
+                  },
+                })))
+            : null,
+          h('p', { className: 'tc-note' }, t('estimateNote')),
+        ],
+      });
+    }
+
+    function TokenCard({ t, pricing, usage, summary, currency }) {
+      const rows = BUCKETS.map((key, index) => ({
+        key,
+        label: [t('input'), t('cacheRead'), t('cacheWrite'), t('output')][index],
+        color: [COLORS.input, COLORS.cacheRead, COLORS.cacheWrite, COLORS.output][index],
+        tokens: safeCount(usage?.[['uncachedInputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'outputTokens'][index]]),
+        cost: summary.byBucket[key],
+      }));
+      const total = rows.reduce((sum, row) => sum + row.tokens, 0);
+      const hit = total > 0 ? safeCount(usage?.cacheReadTokens) / total * 100 : null;
+      return Card({
+        title: t('tokenTitle'),
+        meta: hit === null ? null : t('kpiCache') + ' ' + hit.toFixed(1) + '%',
+        className: 'tc-col-4',
+        children: [
+          // The ring carries the share picture; the rows below carry the numbers.
+          Donut({
+            items: rows.map(row => ({ value: row.tokens, color: row.color, label: row.label })),
+            center: fmtShort(total),
+            caption: t('tokenTotal'),
+          }),
+          StackBar({ items: rows.map(row => ({ value: row.tokens, color: row.color, label: row.label, hint: fmtInt(row.tokens) })) }),
+          h('div', { className: 'tc-rows' }, ...rows.map(row => MeterRow({
+            key: row.key, label: row.label, color: row.color, value: row.tokens, max: total || 1,
+            right: fmtInt(row.tokens) + ' · ' + pct(row.tokens, total || 1).toFixed(0) + '% · ' + money(pricing, row.cost, currency),
+            hint: row.label,
+          }))),
+          h('div', { className: 'tc-note' }, t('tokenTotal') + ' ' + fmtInt(total) + ' tok'),
+        ],
+      });
+    }
+
+    function CostCard({ t, pricing, summary, currency }) {
+      const bucketRows = [
+        [t('input'), summary.byBucket.input, COLORS.input],
+        [t('cacheRead'), summary.byBucket.cacheRead, COLORS.cacheRead],
+        [t('output'), summary.byBucket.output, COLORS.output],
+      ].filter(row => row[1] > 0);
+      const secondary = currency === 'CNY'
+        ? { label: 'USD', value: pricing.formatUsd(summary.usd) }
+        : { label: 'CNY', value: pricing.formatCny(summary.cny) };
+      const tier = summary.peak > 0 && summary.offPeak > 0
+        ? t('mixedTierShort')
+        : (summary.peak > 0 ? t('peakShort') : (summary.offPeak > 0 ? t('offPeakShort') : null));
+      return Card({
+        title: t('costTitle'),
+        meta: tier,
+        className: 'tc-col-4',
+        children: [
+          h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' } },
+            h('span', { style: {
+              fontSize: 26, lineHeight: '32px', fontWeight: 600, letterSpacing: '-.02em',
+              fontVariantNumeric: 'tabular-nums', color: 'var(--dsw-alias-label-primary)',
+            } }, money(pricing, summary.cost, currency)),
+            h('span', { className: 'tc-chip' }, secondary.label + ' ' + secondary.value)),
+          StackBar({
+            items: bucketRows.map(([label, value, color]) => ({ value, color, label, hint: money(pricing, value, currency) })),
+          }),
+          h('div', { className: 'tc-legend' }, ...bucketRows.map(([label, value, color], index) =>
+            h('span', { key: index }, h('i', { className: 'tc-dot', style: { background: color } }),
+              label + ' ', h('b', null, money(pricing, value, currency))))),
+          h('div', { className: 'tc-dl' },
+            h('dt', null, t('requests')), h('dd', null, String(summary.known)),
+            summary.unknown > 0 ? h('dt', null, t('unknown')) : null,
+            summary.unknown > 0 ? h('dd', null, String(summary.unknown)) : null),
+          h('p', { className: 'tc-note' }, t('costTip')),
+        ],
+      });
+    }
+
+    function ModelCostCard({ t, pricing, summary, currency, className }) {
+      const rows = summary.models.slice(0, 6);
+      return Card({
+        title: t('modelTitle'),
+        meta: rows.length === 0 ? null : rows.length + ' / ' + summary.models.length,
+        className: className || 'tc-col-4',
+        children: rows.length === 0
+          ? [Empty({ text: t('modelEmpty') })]
+          : [h('div', { className: 'tc-rows' }, ...rows.map(row => MeterRow({
+            key: row.model, label: row.model, color: 'var(--dsw-alias-state-business-primary)',
+            value: row.cost, max: rows[0].cost || 1,
+            right: money(pricing, row.cost, currency) + ' · ' + pct(row.cost, summary.cost || 1).toFixed(0) + '%',
+            hint: row.model + ' · ' + fmtInt(row.tokens) + ' tok · ' + row.requests + ' ' + t('modelRequests'),
+          })))],
+      });
+    }
+
+    function TrendCard({ t, pricing, timeline, tier, currency }) {
+      const metricState = React.useState('tokens');
+      const metric = metricState[0];
+      const setMetric = metricState[1];
+      const requests = Array.isArray(timeline?.requests) ? timeline.requests.slice(-40) : [];
+      const points = requests.map(request => {
+        const tokens = safeCount(request.totalTokens);
+        if (metric === 'cost') {
+          const priced = priceRequest(pricing, request, tier, currency);
+          return { value: priced ? priced.amount : 0, label: 'T' + String(request.turn ?? '') + '/' + String(request.step ?? '') };
+        }
+        if (metric === 'cache') {
+          return { value: tokens > 0 ? safeCount(request.cacheRead) / tokens * 100 : 0, label: 'T' + String(request.turn ?? '') };
+        }
+        return { value: tokens, label: 'T' + String(request.turn ?? '') };
+      });
+      const format = metric === 'cost'
+        ? (value => money(pricing, value, currency))
+        : (metric === 'cache' ? (value => value.toFixed(0) + '%') : (value => fmtInt(Math.round(value))));
+      const segment = (value, label) => h('button', {
+        key: value, type: 'button', className: 'tc-btn', 'aria-pressed': metric === value ? 'true' : 'false',
+        onClick: () => setMetric(value),
+      }, label);
+      return Card({
+        title: t('trendTitle'),
+        meta: requests.length === 0 ? null : t('trendNow') + ' ' + format(points[points.length - 1].value),
+        className: 'tc-col-4',
+        children: [
+          h('div', { className: 'tc-toolbar' },
+            h('div', { className: 'tc-seg', role: 'group', 'aria-label': t('trendTitle') },
+              segment('tokens', t('trendTokens')), segment('cost', t('trendCost')), segment('cache', t('trendCache')))),
+          points.length < 2
+            ? Empty({ text: t('trendEmpty') })
+            : Sparkline({
+              points,
+              format,
+              caption: t('trendPeak') + ' ' + format(Math.max(...points.map(point => point.value))),
+            }),
+        ],
+      });
+    }
+
+    function TimingCard({ t, stats }) {
+      const ttft = safeCount(stats?.ttftSteps) > 0 ? safeCount(stats?.ttftMs) / stats.ttftSteps : 0;
+      const tps = safeCount(stats?.decodeMs) > 0 ? safeCount(stats?.decodeTokens) / (stats.decodeMs / 1000) : 0;
+      const rows = [
+        [t('timingLlm'), fmtDuration(stats?.llmMs)],
+        [t('timingTool'), fmtDuration(stats?.toolMs)],
+        [t('timingTtft'), fmtDuration(ttft)],
+        [t('timingTps'), tps > 0 ? tps.toFixed(1) + ' tok/s' : '—'],
+        [t('timingDecode'), fmtDuration(stats?.decodeMs)],
+      ];
+      return Card({
+        title: t('timingTitle'),
+        className: 'tc-col-4',
+        children: [h('dl', { className: 'tc-dl' }, ...rows.flatMap(([label, value], index) =>
+          [h('dt', { key: 'd' + index }, label), h('dd', { key: 'v' + index }, value)]))],
+      });
+    }
+
+    /** File activity folded from file-touching tool calls. */
+    /**
+     * One strip of session counters plus the two distributions the tab was
+     * missing: how many tool calls each tool served, and which programs the
+     * commands used. Counts and names only — no arguments or output text.
+     */
+    function StatsCard({ t, timeline, turnCount, steps, requests }) {
+      const counts = timeline?.counts ?? {};
+      const tools = Object.entries(timeline?.toolCalls ?? {})
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8);
+      const programs = new Map();
+      for (const command of Array.isArray(timeline?.commands) ? timeline.commands : []) {
+        const key = commandProgram(command);
+        programs.set(key, (programs.get(key) ?? 0) + 1);
+      }
+      const programRows = [...programs].sort((a, b) => b[1] - a[1]).slice(0, 8);
+      const toolTotal = Object.values(timeline?.toolCalls ?? {}).reduce((sum, n) => sum + safeCount(n), 0);
+      const stat = (key, label, value) => h('div', { className: 'tc-stat', key },
+        h('span', null, label), h('b', null, value));
+      return Card({
+        title: t('statsTitle'),
+        meta: requests > 0 ? t('requests') + ' ' + fmtInt(requests) : null,
+        className: 'tc-col-12',
+        children: [
+          h('div', { className: 'tc-stats' },
+            stat('turns', t('turns'), String(turnCount)),
+            stat('steps', t('steps'), fmtInt(steps)),
+            stat('user', t('userMsgs'), fmtInt(counts.user)),
+            stat('answers', t('answers'), fmtInt(counts.answers)),
+            stat('skills', t('skillLoads'), fmtInt(counts.skills)),
+            stat('tools', t('toolCalls'), fmtInt(toolTotal))),
+          h('div', { className: 'tc-cols', style: { marginTop: 12 } },
+            h('div', null,
+              h('p', { className: 'tc-sub' }, t('statsTools')),
+              tools.length === 0
+                ? Empty({ text: t('toolsEmpty'), k: 'tools' })
+                : h('div', { className: 'tc-rows' }, ...tools.map(([name, value]) => MeterRow({
+                  key: name, label: name, value,
+                  max: tools[0][1] || 1, right: fmtInt(value),
+                  hint: name + ' · ' + fmtInt(value),
+                })))),
+            h('div', null,
+              h('p', { className: 'tc-sub' }, t('statsCommands')),
+              programRows.length === 0
+                ? Empty({ text: t('cmdEmpty'), k: 'cmd' })
+                : h('div', { className: 'tc-rows' }, ...programRows.map(([name, value]) => MeterRow({
+                  key: name, label: name, value,
+                  max: programRows[0][1] || 1, right: fmtInt(value),
+                  hint: name + ' · ' + fmtInt(value),
+                }))))),
+        ],
+      });
+    }
+
+    /**
+     * Shell / code executions: program distribution on top, and the ledger with
+     * status and wall time below. Filters stay inside the card (program chips +
+     * status segments + search), so no other card is disturbed.
+     */
+    function CommandsCard({ t, commands }) {
+      const all = Array.isArray(commands) ? commands : [];
+      const queryState = React.useState('');
+      const query = queryState[0];
+      const setQuery = queryState[1];
+      const statusState = React.useState('all');
+      const status = statusState[0];
+      const setStatus = statusState[1];
+      const programState = React.useState(null);
+      const program = programState[0];
+      const setProgram = programState[1];
+
+      const programs = new Map();
+      for (const command of all) {
+        const key = commandProgram(command);
+        programs.set(key, (programs.get(key) ?? 0) + 1);
+      }
+      const programRows = [...programs].sort((a, b) => b[1] - a[1]).slice(0, 8);
+
+      const needle = query.trim().toLowerCase();
+      const rows = all
+        .filter(command => status === 'all' || command.status === status)
+        .filter(command => program === null || commandProgram(command) === program)
+        .filter(command => needle === ''
+          || commandProgram(command).toLowerCase().includes(needle)
+          || String(command.call ?? '').toLowerCase().includes(needle))
+        .slice()
+        .reverse()
+        .slice(0, 60);
+
+      const failed = all.filter(command => command.status === 'error').length;
+      const running = all.filter(command => command.status === 'running').length;
+      const statusChip = (value, label, count) => h('button', {
+        key: value, type: 'button', className: 'tc-btn',
+        'aria-pressed': status === value ? 'true' : 'false',
+        onClick: () => setStatus(value),
+      }, label + (count === undefined ? '' : ' ' + fmtInt(count)));
+
+      return Card({
+        title: t('cmdTitle'),
+        meta: all.length === 0 ? null
+          : t('cmdStatus') + ' · ' + t('cmdOk') + ' ' + fmtInt(all.length - failed - running)
+            + (failed > 0 ? ' · ' + t('cmdError') + ' ' + fmtInt(failed) : ''),
+        className: 'tc-col-6',
+        children: all.length === 0
+          ? [Empty({ text: t('cmdEmpty') })]
+          : [
+            h('div', { className: 'tc-chips' },
+              ...programRows.map(([name, count]) => FilterChip({
+                key: 'p' + name, label: name, count,
+                on: program === name,
+                onClick: () => setProgram(program === name ? null : name),
+              }))),
+            h('div', { className: 'tc-toolbar' },
+              h('input', {
+                className: 'tc-input', type: 'search', value: query, placeholder: t('cmdSearch'),
+                'aria-label': t('cmdSearch'),
+                onChange: event => setQuery(event.currentTarget.value),
+              }),
+              h('div', { className: 'tc-seg', role: 'group', 'aria-label': t('cmdStatus') },
+                statusChip('all', t('cmdAll'), all.length),
+                statusChip('ok', t('cmdOk')),
+                statusChip('error', t('cmdError'), failed || undefined),
+                statusChip('running', t('cmdRunning'), running || undefined))),
+            rows.length === 0
+              ? Empty({ text: t('cmdNoMatch') })
+              : h('div', { className: 'tc-table', style: { maxHeight: 260 } }, ...rows.map((command, index) => h('div', {
+                className: 'tc-cmd', key: (command.seq ?? 0) + ':' + index,
+                title: String(command.call ?? '') + '\n' + (command.turn === null ? '' : 'T' + command.turn),
+              },
+                h('span', { className: 'tc-path', style: { direction: 'ltr' } }, commandProgram(command)),
+                h('code', null, String(command.call ?? '')),
+                h('span', { className: 'tc-meta' },
+                  command.durationMs === null || command.durationMs === undefined
+                    ? null : h('span', null, fmtDuration(command.durationMs)),
+                  h('i', {
+                    className: 'tc-chip',
+                    'data-tone': command.status === 'error' ? 'write'
+                      : (command.status === 'ok' ? 'ok' : 'read'),
+                  }, command.status === 'error' ? t('cmdError')
+                    : (command.status === 'ok' ? t('cmdOk') : t('cmdRunning'))))))),
+          ],
+      });
+    }
+
+    /**
+     * File activity: one row per touched file with read / write / search counts,
+     * the estimated `+added / −removed` line change, and an expandable operation
+     * log (one entry per call, newest first). Filters are local to the card.
+     */
+    function FileActivityCard({ t, files, fileOps }) {
+      const kindState = React.useState('all');
+      const kind = kindState[0];
+      const setKind = kindState[1];
+      const queryState = React.useState('');
+      const query = queryState[0];
+      const setQuery = queryState[1];
+      const openState = React.useState(null);
+      const openPath = openState[0];
+      const setOpenPath = openState[1];
+
+      const ops = Array.isArray(fileOps) ? fileOps : [];
+      const entries = Object.entries(files ?? {})
+        .map(([path, row]) => ({
+          path, ...row,
+          total: safeCount(row.reads) + safeCount(row.writes) + safeCount(row.searches),
+        }))
+        .filter(row => row.total > 0);
+      const totals = {
+        read: entries.reduce((sum, row) => sum + safeCount(row.reads), 0),
+        write: entries.reduce((sum, row) => sum + safeCount(row.writes), 0),
+        search: entries.reduce((sum, row) => sum + safeCount(row.searches), 0),
+      };
+      const needle = query.trim().toLowerCase();
+      const rows = entries
+        .filter(row => kind === 'all'
+          || (kind === 'read' && safeCount(row.reads) > 0)
+          || (kind === 'write' && safeCount(row.writes) > 0)
+          || (kind === 'search' && safeCount(row.searches) > 0))
+        .filter(row => needle === '' || row.path.toLowerCase().includes(needle))
+        .sort((a, b) => b.total - a.total || b.last - a.last)
+        .slice(0, 40);
+      const chip = (tone, label, value) => (value
+        ? h('i', { className: 'tc-chip', 'data-tone': tone }, label + value) : null);
+      const delta = (added, removed) => (added || removed
+        ? h('span', { className: 'tc-delta' },
+          h('b', { className: 'add' }, '+' + fmtInt(added)), ' ',
+          h('b', { className: 'del' }, '−' + fmtInt(removed)))
+        : null);
+
+      return Card({
+        title: t('filesTitle'),
+        meta: entries.length === 0 ? null : String(entries.length),
+        className: 'tc-col-6',
+        children: entries.length === 0
+          ? [Empty({ text: t('filesEmpty') })]
+          : [
+            h('div', { className: 'tc-chips' },
+              FilterChip({ label: t('filesAll'), count: entries.length, on: kind === 'all', onClick: () => setKind('all') }),
+              FilterChip({ label: t('filesRead'), count: totals.read, on: kind === 'read', tone: 'read', onClick: () => setKind('read') }),
+              FilterChip({ label: t('filesWrite'), count: totals.write, on: kind === 'write', tone: 'write', onClick: () => setKind('write') }),
+              FilterChip({ label: t('filesSearch'), count: totals.search, on: kind === 'search', onClick: () => setKind('search') })),
+            h('div', { className: 'tc-toolbar' },
+              h('input', {
+                className: 'tc-input', type: 'search', value: query, placeholder: t('filesFilter'),
+                'aria-label': t('filesFilter'),
+                onChange: event => setQuery(event.currentTarget.value),
+              })),
+            rows.length === 0
+              ? Empty({ text: t('filesNoMatch') })
+              : h('ul', { className: 'tc-list' }, ...rows.map(row => {
+                const open = openPath === row.path;
+                const history = ops.filter(op => op.path === row.path).slice(-6).reverse();
+                return h('li', {
+                  key: row.path, title: row.path,
+                  style: { flexDirection: 'column', alignItems: 'stretch', gap: 2, cursor: history.length > 0 ? 'pointer' : 'default' },
+                  onClick: () => setOpenPath(open ? null : row.path),
+                },
+                  h('span', { style: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 } },
+                    h('span', { className: 'tc-path', style: { flex: 1 } },
+                      row.path.length > 56 ? '…' + row.path.slice(-55) : row.path),
+                    delta(safeCount(row.added), safeCount(row.removed)),
+                    h('span', { style: { display: 'inline-flex', gap: 4, flex: 'none' } },
+                      chip('read', 'R', row.reads), chip('write', 'W', row.writes),
+                      chip(undefined, 'S', row.searches))),
+                  open && history.length > 0
+                    ? h('ul', { className: 'tc-log' }, ...history.map((op, index) => h('li', {
+                      key: index, className: 'tc-op',
+                    },
+                      new Date(safeCount(op.time)).toLocaleString() + ' · '
+                        + (op.kind === 'read' ? t('filesRead') : (op.kind === 'search' ? t('filesSearch') : t('filesWrite')))
+                        + (op.turn === null ? '' : ' · T' + op.turn),
+                      op.added || op.removed ? ' ' : '',
+                      op.added || op.removed ? delta(op.added, op.removed) : null)))
+                    : null);
+              })),
+          ],
+      });
+    }
+
+    /** Sub-agent sessions spawned under this session. */
+    function AgentNetworkCard({ t, sessions, sessionId }) {
+      const byId = sessions?.byId ?? {};
+      const children = Object.values(byId)
+        .filter(row => row && row.parentId === sessionId)
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+        .slice(0, 30);
+      return Card({
+        title: t('agentsTitle'),
+        meta: children.length === 0 ? null : String(children.length),
+        className: 'tc-col-6',
+        children: children.length === 0
+          ? [Empty({ text: t('agentsEmpty') })]
+          : [h('ul', { className: 'tc-list' }, ...children.map(row =>
+            h('li', { key: row.id },
+              h('span', { className: 'tc-path' }, String(row.displayTitle || row.title || row.id).slice(0, 56)),
+              h('i', { className: 'tc-chip', 'data-tone': row.running ? 'write' : 'read' },
+                row.running ? t('agentsRunning') : t('agentsIdle')))))],
+      });
+    }
+
+    /**
+     * Context events with type filters. Each chip carries the session-wide count
+     * for that kind, so the log itself can be narrowed without losing the totals.
+     */
+    function EventsCard({ t, timeline }) {
+      const all = Array.isArray(timeline?.events) ? timeline.events : [];
+      const kindState = React.useState('all');
+      const kind = kindState[0];
+      const setKind = kindState[1];
+      const kinds = { compact: 'evCompact', prune: 'evPrune', inject: 'evInject', switch: 'evSwitch', mode: 'evMode' };
+      const tone = { compact: 'write', prune: 'write', inject: 'read', switch: 'ok', mode: 'read' };
+      const counts = {};
+      for (const event of all) counts[event.kind] = (counts[event.kind] ?? 0) + 1;
+      const rows = all
+        .filter(event => kind === 'all' || event.kind === kind)
+        .slice(-60)
+        .reverse();
+      return Card({
+        title: t('eventsTitle'),
+        meta: all.length === 0 ? null : String(all.length),
+        className: 'tc-col-6',
+        children: all.length === 0
+          ? [Empty({ text: t('eventsEmpty') })]
+          : [
+            h('div', { className: 'tc-chips' },
+              FilterChip({ label: t('eventsAll'), count: all.length, on: kind === 'all', onClick: () => setKind('all') }),
+              ...Object.keys(kinds).filter(key => counts[key] > 0).map(key => FilterChip({
+                key, label: t(kinds[key]), count: counts[key],
+                tone: tone[key], on: kind === key,
+                onClick: () => setKind(kind === key ? 'all' : key),
+              }))),
+            rows.length === 0
+              ? Empty({ text: t('eventsEmpty') })
+              : h('ul', { className: 'tc-list' }, ...rows.map((event, index) =>
+                h('li', { key: index, title: new Date(safeCount(event.time)).toLocaleString() },
+                  h('span', { style: { display: 'inline-flex', gap: 6, minWidth: 0 } },
+                    h('i', { className: 'tc-chip', 'data-tone': tone[event.kind] || 'read' }, t(kinds[event.kind] ?? 'eventsTitle')),
+                    h('span', { className: 'tc-path' }, String(event.label || '').slice(0, 44))),
+                  h('span', { className: 'tc-strong' },
+                    (event.tokens ? fmtInt(event.tokens) + ' tok' : '') + (event.turn ? ' T' + event.turn : ''))))),
+          ],
+      });
+    }
+
+    /**
+     * One collapsible content item: a 300-char preview, the full text on demand
+     * (capped, since a single tool result can be megabytes), and a kind chip.
+     */
+    function ContentItem({ t, row }) {
+      const openState = React.useState(false);
+      const open = openState[0];
+      const setOpen = openState[1];
+      const LIMIT = 2400;
+      const raw = String(row.text ?? '');
+      const short = raw.length > 300 ? raw.slice(0, 300) + '…' : raw;
+      const body = open ? (raw.length > LIMIT ? raw.slice(0, LIMIT) + '\n… (' + fmtInt(raw.length - LIMIT) + ' chars left)' : raw) : short;
+      const tone = row.tone ?? (row.kind === 'tool' ? 'read' : undefined);
+      return h('div', { className: 'tc-op' },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 } },
+          h('i', { className: 'tc-chip', 'data-tone': tone }, row.label),
+          row.title ? h('span', { className: 'tc-path', style: { flex: 1 } }, row.title) : h('span', { style: { flex: 1 } }),
+          raw.length > 300
+            ? h('button', {
+              type: 'button', className: 'tc-btn', style: { padding: '0 6px', fontSize: 11 },
+              onClick: (event) => { event.stopPropagation(); setOpen(!open); },
+            }, open ? t('contentLess') : t('contentMore'))
+            : null),
+        h('pre', { className: 'tc-pre' }, body));
+    }
+
+    /**
+     * Content section for one expanded request row: user message, assistant
+     * blocks (answer / reasoning / tool calls) and the tool results produced for
+     * it. Rendered from the page's own chat snapshot, capped to 24 rows.
+     */
+    function contentSection({ t, nodes, request, previousTime }) {
+      const content = contentOfRequest(nodes, request, previousTime);
+      const rows = [];
+      if (content.user !== null && content.user.text !== '') {
+        rows.push({ label: t('contentUser'), text: content.user.text, tone: 'read' });
+      }
+      for (const block of assistantRows(content.assistant?.blocks)) {
+        if (block.kind === 'tool-call') {
+          rows.push({ label: t('contentCall'), title: block.title, text: block.text, tone: 'write' });
+        } else if (block.kind === 'reasoning') {
+          rows.push({ label: t('contentReasoning'), text: block.text });
+        } else {
+          rows.push({ label: t('contentAnswer'), text: block.text });
+        }
+      }
+      for (const tool of content.tools) {
+        rows.push({
+          label: t('contentResult'), title: tool.name + (tool.isError ? ' ✗' : ''),
+          text: tool.text !== '' ? tool.text : tool.args,
+          tone: tool.isError ? 'write' : 'ok',
+        });
+      }
+      if (rows.length === 0) return null;
+      return h('div', { className: 'tc-content' },
+        h('p', { className: 'tc-sub' }, t('contentTitle') + ' · ' + fmtInt(rows.length)),
+        ...rows.slice(0, 24).map((row, index) => h(ContentItem, { key: index, t, row })));
+    }
+
+    function BrowserCard({ t, pricing, timeline, tier, currency, nodes }) {
+      const openState = React.useState(null);
+      const openKey = openState[0];
+      const setOpenKey = openState[1];
+      const queryState = React.useState('');
+      const query = queryState[0];
+      const setQuery = queryState[1];
+      const sortState = React.useState('time');
+      const sort = sortState[0];
+      const setSort = sortState[1];
+      const copyState = React.useState('idle');   // 'idle' | 'done' | 'fail'
+      const copied = copyState[0];
+      const setCopied = copyState[1];
+
+      const priced = React.useMemo(() => {
+        const all = Array.isArray(timeline?.requests) ? timeline.requests : [];
+        return all.map((request, index) => ({
+          request, index, priced: priceRequest(pricing, request, tier, currency),
+        }));
+      }, [timeline, tier, currency, pricing]);
+
+      const filtered = React.useMemo(() => {
+        const needle = query.trim().toLowerCase();
+        const rows = needle === ''
+          ? priced.slice()
+          : priced.filter(({ request }) =>
+            String(request.model || '').toLowerCase().includes(needle)
+            || String(request.provider || '').toLowerCase().includes(needle)
+            || String(request.turn ?? '').includes(needle)
+            // The first column reads "turn/step", so accept that exact form too.
+            || (String(request.turn ?? '') + '/' + String(request.step ?? '')).includes(needle));
+        if (sort === 'cost') rows.sort((a, b) => (b.priced?.amount || 0) - (a.priced?.amount || 0));
+        else if (sort === 'tokens') rows.sort((a, b) => safeCount(b.request.totalTokens) - safeCount(a.request.totalTokens));
+        else rows.sort((a, b) => safeCount(b.request.time) - safeCount(a.request.time));
+        return rows;
+      }, [priced, query, sort]);
+
+      // A 1200-request log must stay reachable: pages grow on demand, and a new
+      // filter / sort starts from the first page again.
+      const limitState = React.useState(PAGE_SIZE);
+      const limit = limitState[0];
+      const setLimit = limitState[1];
+      React.useEffect(() => { setLimit(PAGE_SIZE); }, [query, sort]);
+
+      const visible = filtered.slice(0, limit);
+      const remaining = Math.max(0, filtered.length - visible.length);
+      const segment = (value, label) => h('button', {
+        key: value, type: 'button', className: 'tc-btn', 'aria-pressed': sort === value ? 'true' : 'false',
+        onClick: () => setSort(value),
+      }, label);
+
+      const exportCsv = () => {
+        const head = ['turn', 'step', 'time', 'provider', 'model', 'tokens', 'input', 'cacheRead', 'cacheWrite', 'output', 'cost'];
+        const lines = [head.join(',')];
+        for (const { request, priced: row } of filtered) {
+          lines.push([
+            request.turn ?? '', request.step ?? '',
+            request.time ? new Date(request.time).toISOString() : '',
+            request.provider ?? '', request.model ?? '',
+            safeCount(request.totalTokens), safeCount(request.input), safeCount(request.cacheRead),
+            safeCount(request.cacheWrite), safeCount(request.output),
+            row ? Number(row.amount.toFixed(8)) : '',
+          ].map(value => (String(value).includes(',') ? '"' + String(value).replace(/"/g, '""') + '"' : value)).join(','));
+        }
+        void copyText(lines.join('\n')).then(ok => {
+          setCopied(ok ? 'done' : 'fail');
+          window.setTimeout(() => setCopied('idle'), 1800);
+        });
+      };
+
+      const head = h('div', { className: 'tc-trow tc-thead' },
+        h('span', null, t('browserTurn')), h('span', null, t('browserModel')),
+        h('span', null, t('browserTokens')), h('span', null, t('browserCost')), h('span', null, ''));
+
+      const body = visible.map(({ request, index, priced: row }) => {
+        const key = request.seq ?? index;
+        const expanded = openKey === key;
+        const total = safeCount(request.totalTokens);
+        const cacheHit = total > 0 ? (safeCount(request.cacheRead) / total * 100).toFixed(1) + '%' : '—';
+        const tr = h('div', {
+          className: 'tc-trow', key: 'r' + key, role: 'button', tabIndex: 0,
+          'aria-expanded': expanded ? 'true' : 'false', title: t('browserExpand'),
+          onClick: () => setOpenKey(expanded ? null : key),
+          onKeyDown: (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            setOpenKey(expanded ? null : key);
+          },
+        },
+          h('span', null, String(request.turn ?? '—') + '/' + String(request.step ?? '—')),
+          h('span', null, request.model || '—'),
+          h('span', { className: 'tc-strong' }, fmtInt(total)),
+          h('span', { className: 'tc-strong' }, row ? (row.approximate ? '≈' : '') + money(pricing, row.amount, currency) : t('unknown')),
+          h('span', { 'aria-hidden': 'true' }, expanded ? '▾' : '▸'));
+        if (!expanded) return tr;
+        return h(React.Fragment, { key: 'f' + key }, tr,
+          h('dl', { className: 'tc-dl tc-detail' },
+            h('dt', null, t('browserProvider')), h('dd', null, request.provider || '—'),
+            h('dt', null, t('browserModel')), h('dd', null, request.model || '—'),
+            h('dt', null, t('input')), h('dd', null, fmtInt(request.input)),
+            h('dt', null, t('cacheRead')), h('dd', null, fmtInt(request.cacheRead)),
+            h('dt', null, t('cacheWrite')), h('dd', null, fmtInt(request.cacheWrite)),
+            h('dt', null, t('output')), h('dd', null, fmtInt(request.output)),
+            h('dt', null, t('browserCache')), h('dd', null, cacheHit),
+            h('dt', null, t('browserTier')),
+            h('dd', null, row && row.peak !== undefined
+              ? (row.peak ? t('browserPeak') : t('browserOffPeak')) : '—'),
+            h('dt', null, t('browserTime')),
+            h('dd', null, request.time ? new Date(request.time).toLocaleString() : '—')),
+          contentSection({ t, nodes, request, previousTime: index > 0 ? safeCount(priced[index - 1]?.request?.time) : 0 }));
+      });
+
+      return Card({
+        title: t('browserTitle'),
+        meta: t('browserShown', { shown: visible.length, total: filtered.length }),
+        className: 'tc-col-12',
+        children: [
+          h('div', { className: 'tc-toolbar' },
+            h('input', {
+              className: 'tc-input', type: 'search', value: query, placeholder: t('browserFilter'),
+              'aria-label': t('browserFilter'),
+              onChange: event => setQuery(event.currentTarget.value),
+            }),
+            h('div', { className: 'tc-seg', role: 'group', 'aria-label': t('browserTitle') },
+              segment('time', t('browserSortTime')),
+              segment('cost', t('browserSortCost')),
+              segment('tokens', t('browserSortTokens'))),
+            h('button', {
+              className: 'tc-btn', type: 'button', onClick: exportCsv,
+              disabled: filtered.length === 0,
+              'data-state': copied,
+            },
+              copied === 'done' ? t('browserCopied')
+                : (copied === 'fail' ? t('browserCopyFail') : t('browserCopy')))),
+          visible.length === 0
+            ? Empty({ text: query.trim() === '' ? t('browserEmpty') : t('browserNoMatch') })
+            : h('div', { className: 'tc-table' }, head, ...body),
+          remaining === 0 ? null : h('button', {
+            className: 'tc-btn tc-more', type: 'button',
+            onClick: () => setLimit(limit + PAGE_SIZE),
+          }, t('browserMore', { remaining: fmtInt(remaining) })),
+        ],
+      });
+    }
+
+    /**
+     * The cost preferences the entry chunk's badge/pill read, mounted inside this
+     * plugin's own `settings.section` page. Writes go straight to the shared
+     * persisted store, so every surface updates on the next render.
+     */
+    function SettingsRow({ t, pricing }) {
+      const preference = usePrefsOf(pricing);
+      const { prefs } = pricing;
+      const text = (title, description) => h('div', { className: 'tc-pref-text' },
+        h('div', { className: 'tc-pref-title' }, title),
+        description === undefined ? null : h('div', { className: 'tc-pref-desc' }, description));
+      const row = (key, title, description, control) => h('div', { className: 'tc-pref-row', key },
+        text(title, description), h('div', { className: 'tc-control' }, control));
+
+      const toggle = (name, label) => h('button', {
+        type: 'button', role: 'switch', className: 'tc-switch',
+        'aria-checked': preference[name] === true ? 'true' : 'false', 'aria-label': label,
+        onClick: () => prefs.set({ [name]: preference[name] !== true }),
+      }, h('i', null));
+
+      const tiers = [['auto', 'prefTierAuto'], ['peak', 'prefTierPeak'], ['offPeak', 'prefTierOffPeak']];
+      const currencies = [['CNY', 'prefCurrencyCny'], ['USD', 'prefCurrencyUsd']];
+      const segmented = (name, label, items) => h('div', { className: 'tc-seg', role: 'group', 'aria-label': t(label) },
+        ...items.map(([value, caption]) => h('button', {
+          key: value, type: 'button', className: 'tc-btn',
+          'aria-pressed': preference[name] === value ? 'true' : 'false',
+          onClick: () => prefs.set({ [name]: value }),
+        }, t(caption))));
+
+      const symbol = pricing.CURRENCY_SYMBOL[preference.currency];
+      const budget = h('div', { className: 'tc-budget' },
+        h('span', { 'aria-hidden': 'true' }, symbol),
+        h('input', {
+          type: 'number', min: '0', step: '0.5', value: preference.budget > 0 ? String(preference.budget) : '',
+          placeholder: '0', 'aria-label': t('prefBudget'),
+          onChange: (event) => prefs.set({ budget: pricing.normalizeBudget(event.currentTarget.value) }),
+        }),
+        h('button', {
+          type: 'button', className: 'tc-btn', onClick: () => prefs.set({ budget: 0 }),
+          disabled: preference.budget <= 0,
+        }, t('prefBudgetClear')));
+
+      return h('div', { className: 'tc-pref' },
+        h('h4', { className: 'tc-group-title' }, t('groupDisplay')),
+        row('badge', t('prefBadge'), t('prefBadgeDesc'), toggle('badge', t('prefBadge'))),
+        row('pill', t('prefPill'), t('prefPillDesc'), toggle('pill', t('prefPill'))),
+        h('h4', { className: 'tc-group-title' }, t('groupPricing')),
+        row('currency', t('prefCurrency'), t('prefCurrencyDesc'), segmented('currency', 'prefCurrency', currencies)),
+        row('tier', t('prefTier'), t('prefTierDesc'), segmented('tier', 'prefTier', tiers)),
+        h('h4', { className: 'tc-group-title' }, t('groupBudget')),
+        row('budget', t('prefBudget'), t('prefBudgetDesc'), budget),
+        row('reset', t('prefResetTitle'), t('prefResetDesc'),
+          h('button', { type: 'button', className: 'tc-btn', onClick: () => prefs.reset() }, t('prefReset'))));
+    }
+
+    /**
+     * `settings.section`: the plugin's own settings page. Every cost preference
+     * lives here rather than as a row borrowed from General, so the feature owns
+     * its whole directory entry (nav label, icon, page copy and controls).
+     */
+    function SettingsSection({ t, pricing }) {
+      return h('section', { className: 'tc-settings' },
+        h('h2', { className: 'tc-settings-title' }, t('nav')),
+        h('p', { className: 'tc-settings-intro' }, t('sectionIntro')),
+        h(SettingsRow, { t, pricing }));
+    }
+
+    /** Nav glyph for the settings section: a ¥ coin, matching the plugin icon. */
+    function sectionIcon(size) {
+      const px = Number.isFinite(size) && size > 0 ? size : 16;
+      const path = (d, key) => h('path', { key, d, fill: 'none', stroke: 'currentColor', strokeWidth: 1, strokeLinecap: 'round' });
+      return h('svg', { width: px, height: px, viewBox: '0 0 16 16', 'aria-hidden': 'true' },
+        path('M8 14.4a6.4 6.4 0 1 0 0-12.8 6.4 6.4 0 0 0 0 12.8Z', 'ring'),
+        path('M5.4 5.2 8 8.2l2.6-3', 'y'),
+        path('M8 8.2v4.4', 'stem'),
+        path('M5.9 9.7h4.2', 'bar1'),
+        path('M5.9 11.4h4.2', 'bar2'));
+    }
+
+    // ── §5 views ─────────────────────────────────────────────────────────────
+    function ContextView(props, pricing) {
+      const t = props.t;
+      const useProjection = props.useProjection;
+      const useChat = props.useChat;
+      const preference = usePrefsOf(pricing);
+      const tier = preference.tier;
+      const currency = preference.currency;
+      const timeline = useOptional(useProjection, 'tcTimeline');
+      const usage = useOptional(useProjection, 'tokenUsage');
+      const breakdown = useOptional(useProjection, 'contextBreakdown');
+      const pressure = useOptional(useProjection, 'contextPressure');
+      const stats = useOptional(useProjection, 'sessionStats');
+      const nodes = useOptional(useChat, s => s.legacy.nodes) ?? [];
+      const turns = new Set();
+      let steps = 0;
+      for (const node of nodes) {
+        if (node.kind === 'assistant') { turns.add(node.turn); steps += 1; }
+      }
+      const summary = summarize(pricing, timeline?.requests, tier, currency);
+      const totalTokens = summary.tokens
+        || (safeCount(usage?.uncachedInputTokens) + safeCount(usage?.cacheReadTokens)
+          + safeCount(usage?.cacheWriteTokens) + safeCount(usage?.outputTokens));
+      const cacheHit = summary.cacheHit !== null ? summary.cacheHit.toFixed(1) + '%' : '—';
+      const turnCount = turns.size || safeCount(stats?.turns);
+      // A soft budget reads as one slim band: spent / cap, what is left, and a bar.
+      const budgets = preference.budget > 0
+        ? h('div', { className: 'tc-band', 'data-over': summary.cost > preference.budget ? 'true' : 'false' },
+          h('span', { className: 'tc-band-title' }, t('prefBudget')),
+          h('b', null, money(pricing, summary.cost, currency) + ' / ' + money(pricing, preference.budget, currency)),
+          h('span', null, t('sessionBudgetRemain') + ' ' + money(pricing, preference.budget - summary.cost, currency)),
+          h('div', { className: 'tc-mini', style: { flex: '1 1 120px' }, 'aria-hidden': 'true' },
+            h('i', {
+              style: {
+                width: pct(summary.cost, preference.budget).toFixed(1) + '%',
+                background: summary.cost > preference.budget
+                  ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-state-business-primary)',
+              },
+            })))
+        : null;
+
+      return h('div', { className: 'tc-surface tc-panel' },
+        h('div', { className: 'tc-head' },
+          h('h2', null, t('sessionTitle')),
+          h('span', { className: 'tc-head-meta' }, t('kpiCost') + ' ' + money(pricing, summary.cost, currency))),
+        h('div', { className: 'tc-tiles' },
+          h(Tile, { icon: ICON.turns, label: t('turns'), value: String(turnCount) }),
+          h(Tile, { icon: ICON.steps, label: t('steps'), value: fmtInt(steps || safeCount(stats?.steps)) }),
+          h(Tile, { icon: ICON.requests, label: t('requests'), value: String(summary.known + summary.unknown) }),
+          h(Tile, { icon: ICON.tokens, label: t('kpiTokens'), value: fmtInt(totalTokens) }),
+          h(Tile, { icon: ICON.cost, label: t('kpiCost'), value: money(pricing, summary.cost, currency), tone: 'cost' }),
+          h(Tile, { icon: ICON.cache, label: t('kpiCache'), value: cacheHit })),
+        budgets,
+        h('div', { className: 'tc-grid' },
+          h(StatsCard, {
+            t, timeline, turnCount, requests: summary.known + summary.unknown,
+            steps: steps || safeCount(stats?.steps),
+          }),
+          h(CompositionCard, { t, breakdown, pressure }),
+          h(TokenCard, { t, pricing, usage, summary, currency }),
+          h(CostCard, { t, pricing, summary, currency }),
+          h(TrendCard, { t, pricing, timeline, tier, currency }),
+          h(ModelCostCard, { t, pricing, summary, currency }),
+          h(TimingCard, { t, stats }),
+          h(FileActivityCard, { t, files: timeline?.files, fileOps: timeline?.fileOps }),
+          h(CommandsCard, { t, commands: timeline?.commands }),
+          h(EventsCard, { t, timeline }),
+          h(AgentNetworkCard, { t, sessions: useOptional(props.useSessions, s => s), sessionId: props.sessionId }),
+          h(BrowserCard, { t, pricing, timeline, tier, currency, nodes })));
+    }
+
+    /**
+     * Fleet view: the Agent family around the current session — parent, self and
+     * every descendant — with each member's billed tokens and official-price cost,
+     * a family timeline by last activity, and the delegation-ish events of this
+     * session. Pure read: the session store plus the `tc*` projections.
+     */
+    function FleetView(props) {
+      const t = props.t;
+      const pricing = props.pricing;
+      const preference = usePrefsOf(pricing);
+      const currency = preference.currency;
+      const sessions = useOptional(props.useSessions, s => s);
+      const timeline = useOptional(props.useProjection, 'tcTimeline');
+      const sessionId = props.sessionId;
+      const byId = sessions?.byId ?? {};
+      const projections = sessions?.projectionsBySession ?? {};
+      const now = Date.now();
+
+      const me = byId[sessionId];
+      const parent = me?.parentId ? byId[me.parentId] : undefined;
+      const children = Object.values(byId).filter(row => row && row.parentId === sessionId);
+      const grandchildren = [];
+      for (const child of children) {
+        for (const row of Object.values(byId)) {
+          if (row && row.parentId === child.id && row.id !== sessionId) grandchildren.push(row);
+        }
+      }
+      const seen = new Set();
+      const members = [];
+      const addMember = (row, role) => {
+        if (!row || seen.has(row.id)) return;
+        seen.add(row.id);
+        members.push({ row, role });
+      };
+      addMember(parent, 'parent');
+      addMember(me, 'self');
+      for (const row of children) addMember(row, 'child');
+      for (const row of grandchildren) addMember(row, 'child');
+
+      const rows = members.map(({ row, role }) => {
+        const activity = projections[row.id]?.values?.tcActivity;
+        let tokens = 0, cost = 0;
+        for (const dayRow of Object.values(activity?.days ?? {})) {
+          tokens += safeCount(dayRow.tokens);
+          for (const [model, slot] of Object.entries(dayRow.byModel ?? {})) {
+            const amount = priceModelSlot(pricing, slot, model, preference.tier, currency, now);
+            if (amount !== null) cost += amount;
+          }
+        }
+        return {
+          id: row.id, role,
+          title: String(row.displayTitle ?? row.title ?? row.id),
+          running: row.running === true,
+          tokens, cost, updatedAt: safeCount(row.updatedAt),
+        };
+      });
+      rows.sort((a, b) => (a.role === 'self' ? -1 : b.role === 'self' ? 1 : b.updatedAt - a.updatedAt));
+
+      const roleLabel = role => (role === 'self' ? t('fleetSelf') : (role === 'parent' ? t('fleetParent') : t('fleetChild')));
+      const runningCount = rows.filter(row => row.running).length;
+      const familyTokens = rows.reduce((sum, row) => sum + row.tokens, 0);
+      const familyCost = rows.reduce((sum, row) => sum + row.cost, 0);
+      const events = Array.isArray(timeline?.events) ? timeline.events.slice(-40).reverse() : [];
+      const kinds = { compact: 'evCompact', prune: 'evPrune', inject: 'evInject', switch: 'evSwitch', mode: 'evMode' };
+
+      const stat = (key, label, value) => h('div', { className: 'tc-stat', key },
+        h('span', null, label), h('b', null, value));
+
+      return h('div', { className: 'tc-surface tc-panel' },
+        h('div', { className: 'tc-head' },
+          h('h2', null, t('fleetTitle')),
+          h('span', { className: 'tc-head-meta' }, t('fleetCost') + ' ' + money(pricing, familyCost, currency))),
+        h('div', { className: 'tc-stats' },
+          stat('members', t('fleetMembers'), String(rows.length)),
+          stat('running', t('fleetRunning'), String(runningCount)),
+          stat('children', t('fleetChildren'), String(children.length + grandchildren.length)),
+          stat('tokens', t('fleetTokens'), fmtInt(familyTokens)),
+          stat('cost', t('fleetCost'), money(pricing, familyCost, currency))),
+        h('div', { className: 'tc-grid', style: { marginTop: 12 } },
+          Card({
+            title: t('fleetNetwork'),
+            meta: rows.length === 0 ? null : String(rows.length),
+            className: 'tc-col-6',
+            children: rows.length === 0
+              ? [Empty({ text: t('fleetEmpty') })]
+              : [h('ul', { className: 'tc-list' }, ...rows.map(row => h('li', {
+                key: row.id, title: row.title,
+                style: { paddingLeft: row.role === 'child' ? 14 : 0 },
+              },
+                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 } },
+                  h('i', { className: 'tc-chip', 'data-tone': row.role === 'self' ? 'ok' : 'read' }, roleLabel(row.role)),
+                  h('span', { className: 'tc-path' }, row.title)),
+                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 8, flex: 'none' } },
+                  row.running ? h('i', { className: 'tc-chip', 'data-tone': 'write' }, t('agentsRunning')) : null,
+                  h('span', { className: 'tc-strong' }, fmtInt(row.tokens) + ' tok · ' + money(pricing, row.cost, currency))))))],
+          }),
+          Card({
+            title: t('fleetTimeline'),
+            meta: rows.length === 0 ? null : String(rows.length),
+            className: 'tc-col-6',
+            children: rows.length === 0
+              ? [Empty({ text: t('fleetEmpty') })]
+              : [h('ul', { className: 'tc-list' }, ...rows
+                .slice()
+                .sort((a, b) => b.updatedAt - a.updatedAt)
+                .map(row => h('li', { key: row.id, title: row.title },
+                  h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 } },
+                    h('span', { className: 'tc-chip' }, row.updatedAt > 0 ? new Date(row.updatedAt).toLocaleTimeString() : '—'),
+                    h('span', { className: 'tc-path' }, row.title)),
+                  h('span', { className: 'tc-strong' }, roleLabel(row.role)))))],
+          }),
+          Card({
+            title: t('fleetEvents'),
+            meta: events.length === 0 ? null : String(events.length),
+            className: 'tc-col-12',
+            children: events.length === 0
+              ? [Empty({ text: t('fleetNoEvents') })]
+              : [h('ul', { className: 'tc-list' }, ...events.slice(0, 30).map((event, index) => h('li', {
+                key: index, title: new Date(safeCount(event.time)).toLocaleString(),
+              },
+                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 } },
+                  h('i', { className: 'tc-chip' }, t(kinds[event.kind] ?? 'eventsTitle')),
+                  h('span', { className: 'tc-path' }, String(event.label ?? '').slice(0, 60))),
+                h('span', { className: 'tc-strong' }, event.turn ? 'T' + event.turn : ''))))],
+          })),
+        h('p', { className: 'tc-note', style: { marginTop: 10 } }, t('fleetTaskNote')));
+    }
+
+    function ContextModal(props) {
+      const pricing = props.pricing;
+      const t = props.t;
+      const preference = usePrefsOf(pricing);
+      const tier = preference.tier;
+      const currency = preference.currency;
+      const readOpen = typeof props.useTcModal === 'function' ? props.useTcModal : () => false;
+      // Hooks must run unconditionally, even while the dialog is closed.
+      const open = readOpen(value => value) === true;
+      const breakdown = useOptional(props.useProjection, 'contextBreakdown');
+      const pressure = useOptional(props.useProjection, 'contextPressure');
+      const timeline = useOptional(props.useProjection, 'tcTimeline');
+      const stats = useOptional(props.useProjection, 'sessionStats');
+      React.useEffect(() => {
+        if (!open) return undefined;
+        // Opening the command modal dismisses any other open popover (the
+        // composer cost panel listens for outside pointerdown).
+        try { document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); } catch { /* older engines */ }
+        const onKeyDown = (event) => { if (event.key === 'Escape') modalStore.set(false); };
+        document.addEventListener('keydown', onKeyDown);
+        return () => document.removeEventListener('keydown', onKeyDown);
+      }, [open]);
+      if (!open) return null;
+      const onClose = () => modalStore.set(false);
+      const summary = summarize(pricing, timeline?.requests, tier, currency);
+      return ReactDOM.createPortal(
+        h('div', {
+          className: 'tc-mask',
+          onMouseDown: (event) => { if (event.target === event.currentTarget) onClose(); },
+        },
+          h('div', { className: 'tc-modal tc-surface', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('modalTitle') },
+            h('div', { className: 'tc-head' },
+              h('h2', null, t('modalTitle')),
+              h('button', { className: 'tc-btn', type: 'button', onClick: onClose }, t('close'))),
+            h('div', { className: 'tc-tiles' },
+              h(Tile, { icon: ICON.cost, label: t('kpiCost'), value: money(pricing, summary.cost, currency), tone: 'cost' }),
+              h(Tile, { icon: ICON.tokens, label: t('kpiTokens'), value: fmtInt(summary.tokens) }),
+              h(Tile, { icon: ICON.cache, label: t('kpiCache'), value: summary.cacheHit !== null ? summary.cacheHit.toFixed(1) + '%' : '—' }),
+              h(Tile, { icon: ICON.requests, label: t('requests'), value: String(summary.known + summary.unknown) })),
+            h('div', { className: 'tc-grid' },
+              h(StatsCard, {
+                t, timeline, turnCount: safeCount(stats?.turns), steps: safeCount(stats?.steps),
+                requests: summary.known + summary.unknown,
+              }),
+              h(CompositionCard, { t, breakdown, pressure }),
+              h(CostCard, { t, pricing, summary, currency }),
+              h(ModelCostCard, { t, pricing, summary, currency, className: 'tc-col-4' })),
+            h('p', { className: 'tc-note', style: { marginTop: 12 } }, t('modalHint')))),
+        document.body);
+    }
+
+    /**
+     * Cross-session dashboard: KPI band, 7-day tokens/cost chart, an aligned
+     * 12-week heatmap, a model leaderboard and searchable session cards.
+     */
+    /** 7-day tokens (bars) and cost (bars) for the cross-session dashboard. */
+    function WeekChartCard({ t, pricing, week, currency }) {
+      const maxTokens = Math.max(1, ...week.map(day => day.tokens));
+      const maxCost = Math.max(0.000001, ...week.map(day => day.cost));
+      const weekTokens = week.reduce((sum, day) => sum + day.tokens, 0);
+      const weekCost = week.reduce((sum, day) => sum + day.cost, 0);
+      // 30 bars leave no room for per-bar labels; they stay tooltip-only there.
+      const labelled = week.length <= 10;
+      // Labels carry the figure, not just the shape: a 52M day and a 40K day are
+      // 3px vs 62px on a linear scale, and the small one still has to be legible.
+      const tokenBars = h('div', { className: 'tc-chart', style: { height: '96px' } }, ...week.map(day => h('div', {
+        className: 'col', key: day.key,
+        title: day.key + ' · ' + fmtInt(day.tokens) + ' tok · ' + money(pricing, day.cost, currency),
+      },
+        h('i', { style: { height: Math.max(2, day.tokens / maxTokens * 62) + 'px' } }),
+        labelled ? h('strong', null, fmtShort(day.tokens)) : null)));
+      const costBars = h('div', { className: 'tc-chart', style: { height: '56px' } }, ...week.map(day => h('div', {
+        className: 'col', key: 'c' + day.key,
+        title: day.key + ' · ' + money(pricing, day.cost, currency),
+      },
+        h('i', {
+          style: {
+            height: Math.max(2, day.cost / maxCost * 30) + 'px',
+            background: 'var(--dsw-alias-state-success-primary)',
+          },
+        }),
+        labelled ? h('span', null, day.key.slice(5)) : null,
+        labelled ? h('strong', null, money(pricing, day.cost, currency)) : null)));
+      return Card({
+        title: t('activityTitle'),
+        meta: money(pricing, weekCost, currency),
+        className: 'tc-col-6',
+        children: [
+          tokenBars,
+          h('div', { className: 'tc-legend' },
+            h('span', null, t('kpiTokens') + ' ', h('b', null, fmtInt(weekTokens))),
+            h('span', null, t('dailyTitle') + ' ', h('b', null, money(pricing, weekCost, currency)))),
+          costBars,
+        ],
+      });
+    }
+
+    /** 12-week activity heatmap: Monday-first columns, zero-filled cells. */
+    function HeatCard({ t, pricing, heatDays, heatMax, days, currency }) {
+      const cells = [];
+      const pad = mondayIndex(heatDays[0]);
+      for (let index = 0; index < pad; index += 1) {
+        cells.push(h('i', { key: 'pad' + index, className: 'blank' }));
+      }
+      for (const key of heatDays) {
+        const entry = days.get(key);
+        const value = safeCount(entry?.tokens);
+        cells.push(h('i', {
+          key,
+          title: key + ' · ' + fmtInt(value) + ' tok · ' + money(pricing, safeCount(entry?.cost), currency),
+          style: value === 0 ? undefined : {
+            background: 'var(--dsw-alias-state-business-primary)',
+            opacity: (0.2 + value / heatMax * 0.8).toFixed(2),
+          },
+        }));
+      }
+      return Card({
+        title: t('heatTitle'),
+        meta: t('heatRange') + ' · ' + heatDays[0].slice(5) + '–' + heatDays[heatDays.length - 1].slice(5),
+        className: 'tc-col-6',
+        children: [
+          h('div', { className: 'tc-heat' }, ...cells),
+          h('div', { className: 'tc-legend' },
+            h('span', null, t('heatLess')),
+            ...[0.2, 0.45, 0.7, 1].map(opacity => h('i', {
+              key: 'l' + opacity, className: 'tc-dot',
+              style: { background: 'var(--dsw-alias-state-business-primary)', opacity: String(opacity) },
+            })),
+            h('span', null, t('heatMore'))),
+        ],
+      });
+    }
+
+    /** Cross-session model leaderboard: where the money actually goes. */
+    function BoardCard({ t, pricing, modelRows, currency }) {
+      return Card({
+        title: t('boardTitle'),
+        meta: modelRows.length === 0 ? null : String(modelRows.length),
+        className: 'tc-col-6',
+        children: modelRows.length === 0
+          ? [Empty({ text: t('boardEmpty') })]
+          : [h('div', { className: 'tc-rows' }, ...modelRows.map(row => MeterRow({
+            key: row.model,
+            label: row.model,
+            color: 'var(--dsw-alias-state-business-primary)',
+            value: row.cost,
+            max: modelRows[0].cost || 1,
+            right: money(pricing, row.cost, currency) + ' · ' + fmtInt(row.tokens) + ' tok',
+            hint: row.model + ' · ' + row.requests + ' ' + t('modelRequests'),
+          })))],
+      });
+    }
+
+    /** Searchable, sortable session cards; clicking one opens that session. */
+    function SessionListCard(props) {
+      const { t, pricing, rows, sessionRows, currency, openSession, onClose, query, setQuery, sort, setSort } = props;
+      const limitState = React.useState(PAGE_SIZE);
+      const limit = limitState[0];
+      const setLimit = limitState[1];
+      React.useEffect(() => { setLimit(PAGE_SIZE); }, [query, sort]);
+      const shown = sessionRows.slice(0, limit);
+      const remaining = Math.max(0, sessionRows.length - shown.length);
+      const segment = (value, label) => h('button', {
+        key: value, type: 'button', className: 'tc-btn',
+        'aria-pressed': sort === value ? 'true' : 'false',
+        onClick: () => setSort(value),
+      }, label);
+      const open = (id) => {
+        try { openSession?.(id); } catch { /* best effort */ }
+        onClose();
+      };
+      return Card({
+        title: t('sessionsTitle'),
+        meta: t('browserShown', { shown: shown.length, total: rows.length }),
+        className: 'tc-col-6',
+        children: [
+          h('div', { className: 'tc-toolbar' },
+            h('input', {
+              className: 'tc-input', type: 'search', value: query,
+              placeholder: t('sessionSearch'), 'aria-label': t('sessionSearch'),
+              onChange: event => setQuery(event.currentTarget.value),
+            }),
+            h('div', { className: 'tc-seg', role: 'group', 'aria-label': t('sessionsTitle') },
+              segment('cost', t('sessionSortCost')),
+              segment('tokens', t('sessionSortTokens')),
+              segment('recent', t('sessionSortRecent')))),
+          sessionRows.length === 0
+            ? Empty({ text: t('noSessions') })
+            : h('div', { className: 'tc-session-grid' }, ...shown.map(row => h('div', {
+              className: 'tc-session', key: row.id, role: 'button', tabIndex: 0, title: row.title,
+              onClick: () => open(row.id),
+              onKeyDown: (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                open(row.id);
+              },
+            },
+              h('b', null, row.title),
+              h('div', { className: 'tc-session-meta' },
+                h('span', null, fmtInt(row.sessionTokens) + ' tok'),
+                h('span', null, money(pricing, row.sessionCost, currency)))))),
+          remaining === 0 ? null : h('button', {
+            className: 'tc-btn tc-more', type: 'button',
+            onClick: () => setLimit(limit + PAGE_SIZE),
+          }, t('browserMore', { remaining: fmtInt(remaining) })),
+        ],
+      });
+    }
+
+    /** One ranking card: `{[name]: count}` → bars, for the dashboard tallies. */
+    function TallyCard({ t, title, rows, empty, pending }) {
+      return Card({
+        title,
+        meta: rows.length === 0 ? null : String(rows.length),
+        className: 'tc-col-4',
+        children: rows.length === 0
+          ? [Empty({ text: pending ? t('tallyPending') : (empty ?? t('tallyEmpty')) })]
+          : [h('div', { className: 'tc-rows' }, ...rows.map(([name, count]) => MeterRow({
+            key: name, label: name, value: count, max: rows[0][1] || 1,
+            right: fmtInt(count), hint: name + ' · ' + fmtInt(count),
+          })))],
+      });
+    }
+
+    /** Range presets for the cross-session KPIs, chart, tallies and session list. */
+    const RANGES = [
+      { key: 'today', days: 1, label: 'rangeToday' },
+      { key: '7d', days: 7, label: 'range7' },
+      { key: '30d', days: 30, label: 'range30' },
+    ];
+
+    function OverviewPanel({ t, pricing, sessions, openSession, onClose, tier, currency }) {
+      const queryState = React.useState('');
+      const query = queryState[0];
+      const setQuery = queryState[1];
+      const sortState = React.useState('cost');
+      const sort = sortState[0];
+      const setSort = sortState[1];
+      const rangeState = React.useState('7d');
+      const range = rangeState[0];
+      const setRange = rangeState[1];
+
+      const ids = sessions?.ids ?? [];
+      // Day buckets only change at midnight, so the memo survives the dashboard
+      // being left open across a session.
+      const today = beijingKey(Date.now());
+
+      // 800+ sessions × every day row: without this memo each keystroke in the
+      // search box re-priced the entire history (and each tier / currency change
+      // rightly does).
+      const agg = React.useMemo(() => {
+        const byId = sessions?.byId ?? {};
+        const projections = sessions?.projectionsBySession ?? {};
+        const days = new Map();          // day -> { tokens, cost, requests, cacheRead, cacheTotal, tools, programs, skills }
+        const models = new Map();        // model -> { cost, tokens, requests, byDay: Map }
+        const rows = [];                 // per-session summary with a per-day map
+        let tokens = 0, cost = 0, cacheRead = 0, cacheTotal = 0;
+        const now = Date.now();
+
+        for (const id of ids) {
+          const activity = projections[id]?.values?.tcActivity;
+          if (activity === undefined || activity === null) continue;
+          let sessionTokens = 0, sessionCost = 0, lastDay = '';
+          const sessionDays = new Map();
+          for (const [day, dayRow] of Object.entries(activity.days ?? {})) {
+            const entry = days.get(day) ?? {
+              tokens: 0, cost: 0, requests: 0, cacheRead: 0, cacheTotal: 0,
+              tools: new Map(), programs: new Map(), skills: new Map(),
+            };
+            const dayTokens = safeCount(dayRow.tokens);
+            entry.tokens += dayTokens;
+            entry.requests += safeCount(dayRow.requests);
+            sessionTokens += dayTokens;
+            if (day > lastDay) lastDay = day;
+            const buckets = dayRow.buckets ?? {};
+            const dayCacheRead = safeCount(buckets.cacheRead);
+            const dayCacheTotal = safeCount(buckets.input) + dayCacheRead
+              + safeCount(buckets.cacheWrite) + safeCount(buckets.output);
+            entry.cacheRead += dayCacheRead;
+            entry.cacheTotal += dayCacheTotal;
+            cacheRead += dayCacheRead;
+            cacheTotal += dayCacheTotal;
+            // Cross-session tallies: names only, already bounded by the Host.
+            for (const [name, count] of Object.entries(dayRow.tools ?? {})) {
+              entry.tools.set(name, (entry.tools.get(name) ?? 0) + safeCount(count));
+            }
+            for (const [name, count] of Object.entries(dayRow.programs ?? {})) {
+              entry.programs.set(name, (entry.programs.get(name) ?? 0) + safeCount(count));
+            }
+            for (const [name, count] of Object.entries(dayRow.skills ?? {})) {
+              entry.skills.set(name, (entry.skills.get(name) ?? 0) + safeCount(count));
+            }
+            let dayCost = 0;
+            for (const [model, slot] of Object.entries(dayRow.byModel ?? {})) {
+              // Prices the slot at the tier the Host folded in (peak / off-peak),
+              // so a historical DeepSeek day is not re-priced at today's tier.
+              const amount = priceModelSlot(pricing, slot, model, tier, currency, now);
+              if (amount === null) continue;
+              entry.cost += amount;
+              sessionCost += amount;
+              dayCost += amount;
+              cost += amount;
+              const modelRow = models.get(model) ?? { model, cost: 0, tokens: 0, requests: 0, byDay: new Map() };
+              modelRow.cost += amount;
+              modelRow.tokens += slotTokens(slot);
+              modelRow.requests += 1;
+              const modelDay = modelRow.byDay.get(day) ?? { cost: 0, tokens: 0 };
+              modelRow.byDay.set(day, { cost: modelDay.cost + amount, tokens: modelDay.tokens + slotTokens(slot) });
+              models.set(model, modelRow);
+            }
+            days.set(day, entry);
+            sessionDays.set(day, { tokens: dayTokens, cost: dayCost });
+            tokens += dayTokens;
+          }
+          rows.push({
+            id, sessionTokens, sessionCost, lastDay, days: sessionDays,
+            title: String(byId[id]?.displayTitle ?? byId[id]?.title ?? id),
+          });
+        }
+        return { days, models, rows, tokens, cost, cacheRead, cacheTotal };
+      }, [sessions, tier, currency, pricing, today, ids]);
+
+      const { days, models, rows, tokens, cost, cacheRead, cacheTotal } = agg;
+      const now = Date.now();
+      const preset = RANGES.find(item => item.key === range) ?? RANGES[1];
+
+      // Calendar window of the selected range, newest first for the session list
+      // and oldest → newest for the chart.
+      const rangeKeys = [];
+      for (let offset = preset.days - 1; offset >= 0; offset -= 1) {
+        rangeKeys.push(beijingKey(now - offset * 86400000));
+      }
+      const inRange = new Set(rangeKeys);
+
+      const week = rangeKeys.map(key => {
+        const entry = days.get(key);
+        return { key, tokens: safeCount(entry?.tokens), cost: safeCount(entry?.cost) };
+      });
+      const rangeTokens = week.reduce((sum, day) => sum + day.tokens, 0);
+      const rangeCost = week.reduce((sum, day) => sum + day.cost, 0);
+      const rangeCacheRead = rangeKeys.reduce((sum, key) => sum + safeCount(days.get(key)?.cacheRead), 0);
+      const rangeCacheTotal = rangeKeys.reduce((sum, key) => sum + safeCount(days.get(key)?.cacheTotal), 0);
+      const rangeRequests = rangeKeys.reduce((sum, key) => sum + safeCount(days.get(key)?.requests), 0);
+
+      const tallyOf = field => {
+        const out = new Map();
+        for (const key of rangeKeys) {
+          for (const [name, count] of days.get(key)?.[field] ?? []) {
+            out.set(name, (out.get(name) ?? 0) + safeCount(count));
+          }
+        }
+        return [...out].sort((a, b) => b[1] - a[1]).slice(0, 8);
+      };
+      const toolRows = tallyOf('tools');
+      const programRows = tallyOf('programs');
+      const skillRows = tallyOf('skills');
+      // A dashboard against a Host generation that predates the tallies would
+      // otherwise look broken instead of uninformed.
+      const tallyPending = toolRows.length === 0 && rangeRequests > 0;
+
+      // Heatmap stays a fixed 12-week view: it answers "when do I work", which a
+      // 1-day range would erase.
+      const heatDays = [];
+      for (let offset = 12 * 7 - 1; offset >= 0; offset -= 1) heatDays.push(beijingKey(now - offset * 86400000));
+      const heatMax = Math.max(1, ...heatDays.map(key => safeCount(days.get(key)?.tokens)));
+      const cacheHit = rangeCacheTotal > 0 ? (rangeCacheRead / rangeCacheTotal * 100).toFixed(1) + '%' : '—';
+
+      const modelRows = [...models.values()]
+        .map(row => {
+          let rangeTokensOfModel = 0, rangeCostOfModel = 0, requests = 0;
+          for (const [day, entry] of row.byDay) {
+            if (!inRange.has(day)) continue;
+            rangeTokensOfModel += entry.tokens;
+            rangeCostOfModel += entry.cost;
+            requests += 1;
+          }
+          return { model: row.model, cost: rangeCostOfModel, tokens: rangeTokensOfModel, requests };
+        })
+        .filter(row => row.cost > 0 || row.tokens > 0)
+        .sort((a, b) => b.cost - a.cost)
+        .slice(0, 8);
+
+      const needle = query.trim().toLowerCase();
+      const sessionRows = rows
+        .map(row => {
+          let rangeTokensOfSession = 0, rangeCostOfSession = 0, lastDayInRange = '';
+          for (const [day, entry] of row.days) {
+            if (!inRange.has(day)) continue;
+            rangeTokensOfSession += entry.tokens;
+            rangeCostOfSession += entry.cost;
+            if (day > lastDayInRange) lastDayInRange = day;
+          }
+          return {
+            id: row.id, title: row.title, lastDay: lastDayInRange || row.lastDay,
+            sessionTokens: rangeTokensOfSession, sessionCost: rangeCostOfSession,
+          };
+        })
+        .filter(row => row.sessionTokens > 0 || row.sessionCost > 0)
+        .filter(row => needle === '' || row.title.toLowerCase().includes(needle))
+        .sort((a, b) => (sort === 'tokens'
+          ? b.sessionTokens - a.sessionTokens
+          : (sort === 'recent' ? (b.lastDay || '').localeCompare(a.lastDay || '') : b.sessionCost - a.sessionCost)));
+
+      const segment = (item) => h('button', {
+        key: item.key, type: 'button', className: 'tc-btn',
+        'aria-pressed': range === item.key ? 'true' : 'false',
+        onClick: () => setRange(item.key),
+      }, t(item.label));
+
+      return ReactDOM.createPortal(
+        h('div', {
+          className: 'tc-overlay-mask tc-surface',
+          onMouseDown: (event) => { if (event.target === event.currentTarget) onClose(); },
+        },
+          h('div', { className: 'tc-overlay', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('dashboard') },
+            h('div', { className: 'tc-head' },
+              h('h2', null, t('dashboard')),
+              h('div', { className: 'tc-seg', role: 'group', 'aria-label': t('dashboard') },
+                ...RANGES.map(segment)),
+              h('button', { className: 'tc-btn', type: 'button', onClick: onClose }, t('close'))),
+            h('div', { className: 'tc-tiles' },
+              h(Tile, {
+                icon: ICON.sessions, label: t('kpiSessions'), value: String(sessionRows.length),
+                // Only sessions whose projections are hydrated carry activity, so
+                // the tile counts what it actually priced and names the store size.
+                sub: rows.length === ids.length ? null : t('kpiSessionsSub', { total: fmtInt(ids.length) }),
+              }),
+              h(Tile, { icon: ICON.tokens, label: t('kpiTokens'), value: fmtInt(rangeTokens) }),
+              h(Tile, { icon: ICON.cost, label: t('kpiCost'), value: money(pricing, rangeCost, currency), tone: 'cost' }),
+              h(Tile, { icon: ICON.cache, label: t('kpiCache'), value: cacheHit })),
+            h('div', { className: 'tc-grid' },
+              h(WeekChartCard, { t, pricing, week, currency }),
+              h(HeatCard, { t, pricing, heatDays, heatMax, days, currency }),
+              h(BoardCard, { t, pricing, modelRows, currency }),
+              h(SessionListCard, {
+                t, pricing, rows: rows, sessionRows, currency, openSession, onClose,
+                query, setQuery, sort, setSort,
+              }),
+              h(TallyCard, { t, title: t('tallyTools'), rows: toolRows, pending: tallyPending }),
+              h(TallyCard, { t, title: t('tallyPrograms'), rows: programRows, pending: tallyPending }),
+              h(TallyCard, { t, title: t('tallySkills'), rows: skillRows, pending: tallyPending })))),
+        document.body);
+    }
+
+    /** Sidebar-foot button that also owns the portaled dashboard. */
+    function OverviewButton({ t, pricing, store, openSession, useSessions }) {
+      const open = React.useSyncExternalStore(store.subscribe, store.getSnapshot, () => false);
+      const preference = usePrefsOf(pricing);
+      const tier = preference.tier;
+      const currency = preference.currency;
+      const sessions = useOptional(useSessions, s => s);
+      React.useEffect(() => {
+        if (!open) return undefined;
+        const onKeyDown = (event) => { if (event.key === 'Escape') store.set(false); };
+        document.addEventListener('keydown', onKeyDown);
+        return () => document.removeEventListener('keydown', onKeyDown);
+      }, [open, store]);
+      const onClose = () => store.set(false);
+      return h(React.Fragment, null,
+        h('button', {
+          className: 'tc-btn', type: 'button', 'aria-expanded': open ? 'true' : 'false',
+          onClick: () => store.set(!store.getSnapshot()),
+        }, t('entry')),
+        open ? h(OverviewPanel, { t, pricing, sessions, openSession, onClose, tier, currency }) : null);
+    }
+
+    // ── §6 composition ───────────────────────────────────────────────────────
+    function apply(ctx, pricing) {
+      ctx.effect(() => {
+        const style = document.createElement('style');
+        style.textContent = STYLES;
+        style.setAttribute('data-tc-context', '');
+        document.head.appendChild(style);
+        return () => { style.remove(); };
+      }, 'tc-context: styles');
+      ctx.effect(() => ctx.locale.register(NS, LOCALE), 'tc-context: dictionaries');
+      const t = ctx.locale.bind(NS);
+      const uiWorkspace = ctx.get && ctx.get('uiWorkspace');
+      const openSession = (id) => {
+        try { uiWorkspace?.openSession?.(id); } catch (error) { console.error('[tc-context] openSession failed:', error); }
+      };
+
+      const overviewStore = createFlagStore();
+
+      // 1. `/context` command — client-owned input trigger, no Host command.
+      ctx.inject(['inputTriggers'], (ictx) => {
+        const triggers = ictx.get('inputTriggers');
+        if (!triggers || typeof triggers.registerSource !== 'function') return;
+        ictx.effect(() => triggers.registerSource({
+          trigger: '/', name: 'context', order: 2,
+          candidates: (_session, req) => {
+            if (req.position !== 'leading') return Promise.resolve([]);
+            const query = String(req.query ?? '').trim().toLowerCase();
+            const token = COMMAND_LINE.slice(1);
+            if (query !== '' && !token.startsWith(query) && !t('cmdLabel').toLowerCase().startsWith(query)) return Promise.resolve([]);
+            return Promise.resolve([{ name: token, label: t('cmdLabel'), section: t('cmdSection'), description: t('cmdDesc') }]);
+          },
+          onPick: (pick) => { modalStoreOf(pick.session?.sessionId).set(true); return 'handled'; },
+          matchEnter: (_session, line) => {
+            if (String(line).trim() !== COMMAND_LINE) return Promise.resolve(undefined);
+            modalStoreOf(_session?.sessionId).set(true);
+            return Promise.resolve('handled');
+          },
+        }), 'tc-context: command');
+      });
+
+      // 2. Centered `/context` modal.
+      ctx.effect(() => ctx.slots.inject('conversation.input.overlay', () => ctx.slots.register({
+        name: 'conversation.input.overlay', id: 'tc-context-modal', order: 20, locale: NS,
+        inject: () => ({ hooks: { tcModal: modalStore } }),
+      }, (props) => h(ContextModal, { ...props, pricing }))), 'tc-context: modal');
+
+      // 3. Session Context tab (`conversation.view`) + right-sidebar tab.
+      // A defensive wrapper keeps one bad card from blanking the whole tab and
+      // surfaces the failure in the console for diagnosis.
+      function SafeContextView(props) {
+        try { return ContextView(props, pricing); }
+        catch (error) {
+          console.error('[tc-context] ContextView failed:', error);
+          return h('div', { className: 'tc-surface tc-panel' },
+            h('section', { className: 'tc-card' },
+              h('h3', null, t('tab')),
+              h('p', { className: 'tc-note' }, String(error && error.message ? error.message : error))));
+        }
+      }
+      const viewComponent = (props) => h(SafeContextView, props);
+      ctx.effect(() => ctx.slots.inject('conversation.view', () => ctx.slots.register({
+        name: 'conversation.view', id: TAB_ID, order: 20, locale: NS, label: () => t('tab'),
+      }, viewComponent)), 'tc-context: tab');
+
+      // 3b. Fleet tab: the Agent family around this session.
+      function SafeFleetView(props) {
+        try { return FleetView({ ...props, pricing }); }
+        catch (error) {
+          console.error('[tc-context] FleetView failed:', error);
+          return h('div', { className: 'tc-surface tc-panel' },
+            h('section', { className: 'tc-card' },
+              h('h3', null, t('fleetTab')),
+              h('p', { className: 'tc-note' }, String(error && error.message ? error.message : error))));
+        }
+      }
+      ctx.effect(() => ctx.slots.inject('conversation.view', () => ctx.slots.register({
+        name: 'conversation.view', id: 'tc-fleet', order: 21, locale: NS, label: () => t('fleetTab'),
+      }, (props) => h(SafeFleetView, props))), 'tc-context: fleet tab');
+
+      ctx.inject(['sidebarRightTabs'], (ictx) => {
+        const tabs = ictx.get('sidebarRightTabs');
+        if (!tabs || typeof tabs.register !== 'function') return;
+        ictx.effect(() => tabs.register({
+          id: SIDEBAR_KIND, kind: SIDEBAR_KIND, title: () => t('tab'),
+          guide: [{ order: 30, title: () => t('tab'), description: () => t('cmdDesc') }],
+        }), 'tc-context: sidebar tab type');
+        ictx.effect(() => ictx.slots.inject('sidebar.right.pane.tab', () => ictx.slots.register({
+          name: 'sidebar.right.pane.tab', key: SIDEBAR_KIND, locale: NS,
+        }, viewComponent)), 'tc-context: sidebar tab');
+      });
+
+      // 4. Sidebar-foot button; it portals the cross-session dashboard itself,
+      //    so no dependency on a root `shell.overlay` declaration timing.
+      ctx.effect(() => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
+        name: 'sidebar.footer.action', id: 'tc-overview', order: 20, locale: NS,
+      }, (props) => h(OverviewButton, {
+        ...props, t, pricing, store: overviewStore, openSession,
+      }))), 'tc-context: sidebar button');
+
+      // 5. Settings → its own「费用」page: every cost preference (badge / pill /
+      //    currency / tier / budget) lives in the plugin's own directory entry.
+      ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
+        name: 'settings.section', id: 'turn-cost', order: 30, label: () => t('nav'), locale: NS,
+      }, (props) => h(SettingsSection, { ...props, pricing }))), 'tc-context: settings section');
+
+      ctx.effect(() => ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+        name: 'settings.section.icon', id: 'turn-cost', order: 30, label: () => t('nav'),
+      }, (props) => sectionIcon(props === undefined || props === null ? 16 : props.size))), 'tc-context: settings section icon');
+    }
+
+    return { apply };
+  },
+});

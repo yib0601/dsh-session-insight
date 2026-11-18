@@ -1,0 +1,137 @@
+modules:
+  - name: pricing
+    kind: internal
+    responsibility: "官方价目表 + 纯函数算价与金额格式化（逐轮 / 会话累计 / 请求级，CNY/USD 显示）"
+    owns: ["client.js#OFFICIAL", "client.js#FREE_MODELS", "client.js#lookupPrice", "client.js#computeTurnCost", "client.js#computeTurnRequestsTotal", "client.js#computeSessionTotal", "client.js#computeRequestsTotal", "client.js#priceBuckets", "client.js#moneyOf", "client.js#formatMoney", "client.js#USD_TO_CNY"]
+    exposes: ["PRICING_API (read-only face passed to client.context.js)"]
+    depends_on: []
+    not_responsible_for: ["会话事件折叠", "UI 渲染", "网络请求"]
+  - name: preferences
+    kind: internal
+    responsibility: "本地偏好（逐轮徽章 / 底部累计显隐、金额币种、DeepSeek 计费时段、会话预算）的持久化外部 store；budget=0 表示不设上限"
+    owns: ["client.js#prefs", "client.js#usePrefs", "client.js#PREF_DEFAULTS", "client.js#normalizeBudget"]
+    exposes: ["PRICING_API.prefs (same store, consumed by the settings row)"]
+    depends_on: ["window.localStorage"]
+    not_responsible_for: ["UI 渲染", "Host 配置表单"]
+  - name: presentation
+    kind: internal
+    responsibility: "逐轮徽章（动作行内联；无动作行的轮独占一行，明细按 token 桶给金额）+ 底部状态栏会话累计药丸（有预算时显示 花费/预算 与进度条，超支转红）"
+    owns: ["client.js#TurnCostBadge", "client.js#useMessageTurn", "client.js#useTurnTailOf", "client.js#SessionCostPill"]
+    exposes: []
+    depends_on: ["pricing", "preferences", "react (host module table)", "react-dom (createPortal)", "locale t"]
+    not_responsible_for: ["计价口径", "会话状态订阅"]
+  - name: composition
+    kind: internal
+    responsibility: "注册 assistant-actions / turnTail / composer.dock 槽位、locale，并异步加载 context chunk"
+    owns: ["client.js#apply"]
+    exposes:
+      - "conversation.chat.assistant-actions (list, id=turn-cost, order=90)"
+      - "conversation.chat.turnTail (list, id=dsh-turn-cost)"
+      - "conversation.composer.dock (list, id=session-cost, order=2)"
+      - "locale namespace turnCost (zh/en)"
+    depends_on: ["presentation", "ctx.slots", "ctx.locale", "ctx.effect"]
+    not_responsible_for: ["价格", "组件内部状态"]
+  - name: context-host
+    kind: internal
+    responsibility: "3 个 tc* session 投影（timeline / headers / activity）的纯 fold + 防御式激活；timeline 折叠工具计数 / 命令流水（程序·状态·耗时）/ 文件操作流水与逐文件行数增减 / 用户·助手·技能计数，并记录模型切换事件；activity 按请求时间折叠出 peakBuckets / offPeakBuckets（模型再分一层）"
+    owns: ["index.js", "host/schema.js", "host/fold.js", "host/projections.js"]
+    exposes:
+      - "projection keys tcTimeline / tcHeaders / tcActivity (framework wire)"
+      - "tcTimeline = { requests, events, files, fileOps, commands, toolCalls, counts, last } (stateVersion 7)"
+      - "tcActivity.days[*] = { tokens, requests, buckets, peakBuckets, offPeakBuckets, byModel: {model: {peak, offPeak}}, tools, programs, skills } (stateVersion 4)"
+    depends_on: ["ctx.sessionProjections"]
+    not_responsible_for: ["价格", "UI", "网络请求", "写会话日志"]
+  - name: context-client
+    kind: internal
+    responsibility: "6 个界面入口 + 设计系统（宿主 --dsw-* token）+ 卡片与仪表盘；含上下文统计（计数 + 工具/程序分布）、命令执行流水、文件活动（类型筛选/路径搜索/行数增减/操作日志）、Token 环形图、事件类型筛选、按模型花费、逐请求筛选/排序/CSV/分页/请求内容展开（来自页面内存里的聊天快照，不落盘）、编队页（家族网络/协作时间线/家族事件）、仪表盘时间范围与工具/程序/技能排行、7 日柱图数值标签、预算行；跨会话聚合 useMemo 缓存，历史金额按投影里的 peak / offPeak 桶分档计价"
+    owns: ["client.context.js"]
+    exposes:
+      - "conversation.view (list, id=tc-context, order=20)"
+      - "conversation.view (list, id=tc-fleet, order=21)"
+      - "settings.section (list, id=turn-cost, order=30)"
+      - "settings.section.icon (list, id=turn-cost, order=30)"
+      - "conversation.input.overlay (list, id=tc-context-modal, order=20)"
+      - "sidebar.footer.action (list, id=tc-overview, order=20)"
+      - "sidebar.right.pane.tab (keyed, key=tc-context)"
+      - "inputTriggers source context (line /context)"
+      - "locale namespace tcContext (zh/en)"
+    depends_on: ["pricing face", "react", "react-dom", "ctx.slots", "ctx.locale", "ctx.inject(inputTriggers/sidebarRightTabs)"]
+    not_responsible_for: ["价格计算", "会话事件折叠"]
+
+dependency_direction: "composition -> presentation -> pricing; context-client -> pricing face; context-client -> projections (read-only)"
+forbidden:
+  - "跨模块引用 internal 实现"
+  - "反向或循环依赖"
+  - "共享可变全局状态"
+  - "使用第三方价格表（models.dev / pi-ai catalog）"
+  - "在 client 中 require Harness Client 包"
+  - "写 Session 事件或读取原始会话日志文件"
+public_slots:
+  - key: conversation.chat.assistant-actions
+    kind: list
+    scope: session
+    id: turn-cost
+    order: 90
+    locale: turnCost
+  - key: conversation.chat.turnTail
+    kind: list
+    scope: session
+    id: dsh-turn-cost
+    order: 90
+    locale: turnCost
+  - key: conversation.composer.dock
+    kind: list
+    scope: session
+    id: session-cost
+    order: 2
+    locale: turnCost
+  - key: conversation.view
+    kind: list
+    scope: session
+    id: tc-context
+    order: 20
+    locale: tcContext
+  - key: conversation.view
+    kind: list
+    scope: session
+    id: tc-fleet
+    order: 21
+    locale: tcContext
+  - key: conversation.input.overlay
+    kind: list
+    scope: session
+    id: tc-context-modal
+    order: 20
+    locale: tcContext
+  - key: sidebar.footer.action
+    kind: list
+    scope: root
+    id: tc-overview
+    order: 20
+    locale: tcContext
+  - key: sidebar.right.pane.tab
+    kind: keyed
+    scope: session
+    key: tc-context
+    locale: tcContext
+  - key: settings.section
+    kind: list
+    scope: root
+    id: turn-cost
+    order: 30
+    locale: tcContext
+  - key: settings.section.icon
+    kind: list
+    scope: root
+    inline: true
+    id: turn-cost
+    order: 30
+    locale: tcContext
+contract_exceptions:
+  - rule: "single file <= 400 lines"
+    reason: "static dsh.client entry is served as one client.js; sibling chunks can only be loaded via async require.async"
+    mitigation: "section-separated pure pricing core independently unit-tested; Host and lazy chunk are separate files; no shared mutable state"
+replacement:
+  target: "dsh-context v0.59.0 (not installed in this profile; the plugin now owns the surfaces)"
+  kept_internal_ids: "tc* slot ids/projection keys stay prefixed so a future co-install cannot collide"
+  user_visible_names: "/context command, 「上下文」tab, 「上下文洞察」dashboard"

@@ -1,0 +1,52 @@
+{
+  "name": "@local/dsh-turn-cost",
+  "version": "1.6.0",
+  "private": true,
+  "type": "module",
+  "description": "Per-turn and session cost in CNY/USD at official list prices, plus context-insight dashboard, Context tab and /context-style command.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./client.context.js": "./client.context.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "client.context.js",
+    "host",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "contracts",
+    "test",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-input-trigger",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.2-rc.2": "compatible",
+        "0.2.2-rc.3": "compatible"
+      }
+    }
+  }
+}
