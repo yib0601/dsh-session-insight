@@ -4,6 +4,17 @@
   "private": true,
   "type": "module",
   "description": "Per-turn and session cost in CNY/USD at official list prices, plus context-insight dashboard, Context tab and /context-style command.",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek",
+    "plugin",
+    "cost-tracking",
+    "token-usage",
+    "llm-pricing",
+    "dashboard"
+  ],
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

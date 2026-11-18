@@ -1,5 +1,11 @@
 # dsh-turn-cost
 
+[![dsh plugin](https://img.shields.io/badge/DSH-plugin-4d6bfe)](https://github.com/yib0601/dsh-turn-cost)
+[![topics](https://img.shields.io/badge/topics-dsh--plugin%20%C2%B7%20deepseek--harness-2ea44f)](https://github.com/topics/dsh-plugin)
+[![version](https://img.shields.io/badge/version-1.6.0-blue)](package.json)
+
+> DSH 插件（`dsh-plugin`）。标签：`dsh` · `dsh-plugin` · `deepseek-harness` · `deepseek` · `plugin` · `cost-tracking` · `token-usage` · `llm-pricing` · `dashboard`
+
 给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）Web 端加两个能力：**按官方单价把每一轮的 token 用量换算成钱**，以及**上下文洞察面板（替代 `dsh-context`）**。
 
 - 逐轮徽章：每个 assistant 动作后面跟一枚金额徽章，点开看 input / cacheRead / cacheWrite / output 四个 token 桶各花了多少
