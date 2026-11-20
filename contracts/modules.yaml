@@ -41,13 +41,24 @@ modules:
       - "tcActivity.days[*] = { tokens, requests, buckets, peakBuckets, offPeakBuckets, byModel: {model: {peak, offPeak}}, tools, programs, skills } (stateVersion 4)"
     depends_on: ["ctx.sessionProjections"]
     not_responsible_for: ["价格", "UI", "网络请求", "写会话日志"]
+  - name: quota-host
+    kind: internal
+    responsibility: "订阅额度两条官方源：DeepSeek 余额（balance_infos → {currency,total,toppedUp,granted}）与 OpenCode Go 用量窗口（usage.rolling/weekly/monthly → {key,percent,status,resetsAt}，clamp 0–100）；按源缓存 5 分钟（失败不缓存，成功值在失败后继续服务非强制读）、12s 超时，并在 Host web server 上注册 GET /dsh-turn-cost/quota?source=&force=1；供应商密钥按次解析，只留在 Host。窗口只透传 percent 与 resetsAt：官方应答没有到期/续费字段，订阅周期结束时刻由 Client 取最长窗口（月）的 resetsAt 推出"
+    owns: ["host/quota.js"]
+    exposes:
+      - "GET /dsh-turn-cost/quota?source=deepseek|opencode-go[&force=1] -> {status: ready|failed|unconfigured, source, kind: balance|windows, available?, wallets?[], windows?[], at, reason?}"
+      - "normalizeBalance(payload) / normalizeOpenCodeUsage(payload) (pure)"
+      - "QUOTA_SOURCES / KEY_REFS / USAGE_WINDOWS / DEFAULT_SOURCE (constants)"
+      - "createQuotaReader({cacheMs,timeoutMs,fetch,now}) (pure I/O boundary, cache per source)"
+      - "mountQuotaRoute(ctx, reader, readKey) -> route disposer"
+    depends_on: ["ctx.webServer", "ctx.credentials (DEEPSEEK_API_KEY / OPENCODE_GO_API_KEY)"]
+    not_responsible_for: ["计价", "UI 渲染", "充值/告警", "把密钥或原始 payload 交给页面", "落盘缓存", "判断当前会话在用哪个源（Client 依请求历史决定）", "把 resetsAt 换算成倒计时文案（Client 做，Host 只透传时刻）"]
   - name: context-client
     kind: internal
-    responsibility: "6 个界面入口 + 设计系统（宿主 --dsw-* token）+ 卡片与仪表盘；含上下文统计（计数 + 工具/程序分布）、命令执行流水、文件活动（类型筛选/路径搜索/行数增减/操作日志）、Token 环形图、事件类型筛选、按模型花费、逐请求筛选/排序/CSV/分页/请求内容展开（来自页面内存里的聊天快照，不落盘）、编队页（家族网络/协作时间线/家族事件）、仪表盘时间范围与工具/程序/技能排行、7 日柱图数值标签、预算行；跨会话聚合 useMemo 缓存，历史金额按投影里的 peak / offPeak 桶分档计价"
+    responsibility: "5 个界面入口 + 设计系统（宿主 --dsw-* token）+ 卡片与仪表盘；含上下文统计（计数 + 工具/程序分布）、命令执行流水、文件活动（类型筛选/路径搜索/行数增减/操作日志）、Token 环形图、事件类型筛选、按模型花费、逐请求筛选/排序/CSV/分页/请求内容展开（来自页面内存里的聊天快照，不落盘）、Agent 家族卡（父/己/子/孙，各自 tokens 与费用）、仪表盘时间范围与工具/程序/技能排行、7 日柱图数值标签、预算行；侧栏脚额度卡（标题 + 订阅倒计时徽标 + 三条窗口计量条，折叠成 36px 导轨时收成一枚百分比/倒计时方块，倒计时按最长窗口 resetsAt 取整、≤7 天黄 ≤3 天红）；跨会话聚合 useMemo 缓存，历史金额按投影里的 peak / offPeak 桶分档计价"
     owns: ["client.context.js"]
     exposes:
       - "conversation.view (list, id=tc-context, order=20)"
-      - "conversation.view (list, id=tc-fleet, order=21)"
       - "settings.section (list, id=turn-cost, order=30)"
       - "settings.section.icon (list, id=turn-cost, order=30)"
       - "conversation.input.overlay (list, id=tc-context-modal, order=20)"
@@ -55,10 +66,10 @@ modules:
       - "sidebar.right.pane.tab (keyed, key=tc-context)"
       - "inputTriggers source context (line /context)"
       - "locale namespace tcContext (zh/en)"
-    depends_on: ["pricing face", "react", "react-dom", "ctx.slots", "ctx.locale", "ctx.inject(inputTriggers/sidebarRightTabs)"]
+    depends_on: ["pricing face", "react", "react-dom", "ctx.slots", "ctx.locale", "ctx.inject(inputTriggers/sidebarRightTabs)", "quota-host route (HTTP only)"]
     not_responsible_for: ["价格计算", "会话事件折叠"]
 
-dependency_direction: "composition -> presentation -> pricing; context-client -> pricing face; context-client -> projections (read-only)"
+dependency_direction: "composition -> presentation -> pricing; context-client -> pricing face; context-client -> projections (read-only); context-client -> quota-host over one same-origin HTTP route (no import)"
 forbidden:
   - "跨模块引用 internal 实现"
   - "反向或循环依赖"
@@ -66,6 +77,8 @@ forbidden:
   - "使用第三方价格表（models.dev / pi-ai catalog）"
   - "在 client 中 require Harness Client 包"
   - "写 Session 事件或读取原始会话日志文件"
+  - "让供应商密钥或官方原始 payload 进入页面"
+  - "把余额缓存到磁盘"
 public_slots:
   - key: conversation.chat.assistant-actions
     kind: list
@@ -90,12 +103,6 @@ public_slots:
     scope: session
     id: tc-context
     order: 20
-    locale: tcContext
-  - key: conversation.view
-    kind: list
-    scope: session
-    id: tc-fleet
-    order: 21
     locale: tcContext
   - key: conversation.input.overlay
     kind: list
@@ -134,4 +141,4 @@ contract_exceptions:
 replacement:
   target: "dsh-context v0.59.0 (not installed in this profile; the plugin now owns the surfaces)"
   kept_internal_ids: "tc* slot ids/projection keys stay prefixed so a future co-install cannot collide"
-  user_visible_names: "/context command, 「上下文」tab, 「上下文洞察」dashboard"
+  user_visible_names: "/context command, 「上下文」tab, 「用量总览」overview at the sidebar foot"

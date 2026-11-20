@@ -2,9 +2,9 @@
 
 ## Boundary (three sentences)
 
-- **负责什么**: 用官方单价把 DSH 已算好的 token 用量换算成钱（逐轮徽章 + 底部会话累计），并提供 `dsh-context` 的上下文洞察界面（跨会话仪表盘、会话「上下文」页签、`/context` 命令弹窗、右侧栏 Context 页签、费用偏好设置行），已完全替代该插件。
-- **不负责什么**: 不改写会话日志、不 append 任何 Session 事件、不改动其他插件的 UI、不使用任何第三方价格（models.dev、pi-ai catalog 等）；不统计联网搜索/OCR 等按次计费项；不拉取 models.dev 或 npm 注册表；不读取原始会话日志文件；不持久化聊天正文（上下文浏览器的「请求内容」只渲染页面已在内存里的聊天快照，关页即消失）。
-- **对外只暴露什么**: `conversation.chat.assistant-actions`（`turn-cost`）、`conversation.chat.turnTail`（`dsh-turn-cost`）、`conversation.composer.dock`（`session-cost`）、`conversation.view`（`tc-context` / `tc-fleet`）、`conversation.input.overlay`（`tc-context-modal`）、`sidebar.footer.action` / `sidebar.right.pane.tab`（`tc-overview` / `tc-context`）、`settings.section` + `settings.section.icon`（`turn-cost`，插件自有设置页）、`inputTriggers` 命令源 `context`（`/context`），以及两个 locale 命名空间 `turnCost` / `tcContext`。三个 `tc*` session 投影为内部数据源。
+- **负责什么**: 用官方单价把 DSH 已算好的 token 用量换算成钱（逐轮徽章 + 底部会话累计），并提供 `dsh-context` 的那套界面（跨会话「用量总览」、会话「上下文」页签、`/context` 命令弹窗、右侧栏 Context 页签、费用偏好设置行），外加侧栏脚「订阅额度」——按当前会话最近一次请求所在的供应商，把对应官方额度（DeepSeek 余额 / OpenCode Go 的 5 小时·周·月用量）与**订阅周期倒计时**（最长窗口重置时刻）显示在「用量总览」卡片上；已完全替代该插件。
+- **不负责什么**: 不改写会话日志、不 append 任何 Session 事件、不改动其他插件的 UI、不使用任何第三方价格（models.dev、pi-ai catalog 等）；不统计联网搜索/OCR 等按次计费项；不拉取 models.dev 或 npm 注册表；不读取原始会话日志文件；不持久化聊天正文（上下文浏览器的「请求内容」只渲染页面已在内存里的聊天快照，关页即消失）；不做充值、不做额度告警、不缓存额度到磁盘、不让供应商密钥进入页面、不代替供应商统计用量（只读官方口径）。
+- **对外只暴露什么**: `conversation.chat.assistant-actions`（`turn-cost`）、`conversation.chat.turnTail`（`dsh-turn-cost`）、`conversation.composer.dock`（`session-cost`）、`conversation.view`（`tc-context`）、`conversation.input.overlay`（`tc-context-modal`）、`sidebar.footer.action` / `sidebar.right.pane.tab`（`tc-overview` / `tc-context`）、`settings.section` + `settings.section.icon`（`turn-cost`，插件自有设置页）、`inputTriggers` 命令源 `context`（`/context`），以及两个 locale 命名空间 `turnCost` / `tcContext`。三个 `tc*` session 投影为内部数据源。
 
 ## Modules
 
@@ -15,9 +15,10 @@
 | `presentation` (internal) | `client.js` §2 (`TurnCostBadge`, `SessionCostPill`, `useMessageTurn`, `useTurnTailOf`) | 逐轮徽章（动作行内联 / 无动作行时独占一行，明细按 token 桶给金额）+ 底部状态栏会话累计药丸（有预算时显示 花费/预算 与进度条，超支转红） | React（宿主模块表）、`react-dom`、locale `t` |
 | `composition` | `client.js` §3 (`apply`) | 注册 `assistant-actions` / `turnTail` / `composer.dock` 槽位条目、locale，并异步加载 context chunk | `ctx.slots`, `ctx.locale`, `ctx.effect` |
 | `context-host` | `index.js`, `host/schema.js`, `host/fold.js`, `host/projections.js` | 3 个 `tc*` session 投影（timeline / headers / activity）；timeline 额外折叠工具调用计数、命令执行流水（程序名 / 状态 / 墙钟耗时）、文件操作流水与逐文件行数增减、用户 / 助手消息 / 技能加载计数，并记录模型切换事件；activity 按请求时间把 token 桶分进 `peakBuckets` / `offPeakBuckets` 并按模型再分一层；`ctx.inject(['sessionProjections'])` 延迟激活，纯 Node + 防御式 | `ctx.sessionProjections` |
-| `context-client` (lazy chunk) | `client.context.js` | 5 个界面入口 + 设计系统（宿主 `--dsw-*` token）+ 卡片与仪表盘：KPI 磁贴、上下文统计（轮次 / 步骤 / 用户输入 / 助手消息 / 技能加载 / 工具调用 + 工具与程序分布）、构成 / Token（环形图）/ 费用构成 / 趋势（可切指标）/ 按模型花费 / 时序 / 文件活动（类型筛选·路径搜索·行数增减·操作日志）/ 命令执行（程序筛选·状态筛选·搜索）/ 事件（类型筛选）/ Agent / 逐请求浏览器（筛选·排序·CSV·分页·请求内容展开）+ 编队页（家族网络 / 协作时间线 / 家族事件），仪表盘含 7 日双指标图（带数值标签）、周对齐热力图、模型花费榜与可搜索分页会话卡片；跨会话聚合 `useMemo` 缓存，历史金额按 Host 折叠的 `peak` / `offPeak` 桶分档计价 | `react`, `react-dom`, `pricing` face |
+| `quota-host` (internal) | `host/quota.js` | 两条官方额度源：DeepSeek 余额（`balance_infos` → `{currency,total,toppedUp,granted}`）与 OpenCode Go 用量窗口（`usage.rolling/weekly/monthly` → `{key,percent,status,resetsAt}`，clamp 0–100）。按源分别缓存 5 分钟（失败不缓存，成功值在失败后继续服务非强制读）、12s 超时，并在 `webServer` 上注册 `GET /dsh-turn-cost/quota?source=<deepseek|opencode-go>&force=1`（未知 source → 400）。密钥只在 Host 侧按次解析，页面拿不到 | `ctx.webServer`, `ctx.credentials` |
+| `context-client` (lazy chunk) | `client.context.js` | 5 个界面入口 + 设计系统（宿主 `--dsw-*` token）+ 卡片与仪表盘：KPI 磁贴、上下文统计（轮次 / 步骤 / 用户输入 / 助手消息 / 技能加载 / 工具调用 + 工具与程序分布）、构成 / Token（环形图）/ 费用构成 / 趋势（可切指标）/ 按模型花费 / 时序 / 文件活动（类型筛选·路径搜索·行数增减·操作日志）/ 命令执行（程序筛选·状态筛选·搜索）/ 事件（类型筛选）/ Agent / 逐请求浏览器（筛选·排序·CSV·分页·请求内容展开）+ Agent 家族（父 / 己 / 子 / 孙，各自 tokens 与官方价费用，一张卡），仪表盘含 7 日双指标图（带数值标签）、周对齐热力图、模型花费榜与可搜索分页会话卡片；跨会话聚合 `useMemo` 缓存，历史金额按 Host 折叠的 `peak` / `offPeak` 桶分档计价 | `react`, `react-dom`, `pricing` face |
 
-依赖方向：`composition → presentation → pricing`、`presentation → preferences`（单向，无反向/循环）；`context-client → pricing`（经显式传入的只读 face），`context-client → 内置/自建投影`（只读）。所有 Client 代码分布在 `client.js` 与其懒加载 sibling chunk `client.context.js`（Host 的 `require.async` 协议）；`client.js` 约 1200 行、`client.context.js` 约 1480 行，Host 侧按文件分模块。
+依赖方向：`composition → presentation → pricing`、`presentation → preferences`（单向，无反向/循环）；`context-client → pricing`（经显式传入的只读 face），`context-client → 内置/自建投影`（只读），`context-client → quota-host`（只走 HTTP 路由，不 import Host 代码），`quota-host` 不依赖任何 Client 代码。所有 Client 代码分布在 `client.js` 与其懒加载 sibling chunk `client.context.js`（Host 的 `require.async` 协议）；`client.js` 约 1200 行、`client.context.js` 约 2800 行，Host 侧按文件分模块。
 
 **项目级边界例外（单文件 400 行红线）**：`dsh.client` 静态包由 Host 以 `client.js` 入口产物服务，跨文件同步 `require` 不可靠（chunk 只能异步 `require.async`），因此入口内 `pricing` / `presentation` / `composition` 必须共用一个文件。该文件按 § 分区划分职责，`pricing` 段零 DSH 依赖并被 `test/pricing.test.js` 独立抽取测试；四个职责段无共享可变状态、无反向依赖。此例外只放宽「单文件行数」，不放宽低耦合/高内聚/单向依赖等其余红线。Host 侧与 lazy chunk 已按职责拆成独立文件。
 
@@ -92,27 +93,27 @@ tcActivity.days['YYYY-MM-DD'] -> {
 - [x] 写明「负责 / 不负责 / 公开接口」
 - [x] 无跨模块 `internal/` 引用（单 bundle 内按 § 分区，见上方项目级例外）
 - [x] 无反向依赖、无循环依赖
-- [x] 单模块对外依赖未增加（只依赖宿主已有的 `slots`（含 `settings.section` / `settings.section.icon`）/`locale`/`react`/`react-dom`/`inputTriggers`/`sidebarRightTabs`，以及浏览器 `localStorage`）
+- [x] 单模块对外依赖未增加（只依赖宿主已有的 `slots`（含 `settings.section` / `settings.section.icon`）/`locale`/`react`/`react-dom`/`inputTriggers`/`sidebarRightTabs`、Host 的 `webServer`/`credentials`，以及浏览器 `localStorage` 与同源 `fetch`）
 - [x] `pricing` 与 `context-host` 为纯函数，可在 Node 中独立测试（`test/pricing.test.js`、`test/host-fold.test.js`）
 - [x] `docs/ARCHITECTURE.md` 与 `contracts/modules.yaml` 已同步
 - [x] 改动前跑过 `codegraph_explore`（该 npm 安装无 `.codegraph` 索引，按规则回退 grep/read）
 
 ## Replication status (goal: fully replace dsh-context)
 
-`dsh-context` 未安装在该 profile 中，用户可见入口已归位到它的原名：命令 `/context`、页面「上下文」、仪表盘「上下文洞察」；只有内部 slot id / 投影 key 保留 `tc*` 前缀，避免将来共存时撞车。
+`dsh-context` 未安装在该 profile 中，用户可见入口已归位到它的原名：命令 `/context`、页面「上下文」、仪表盘「用量总览」；只有内部 slot id / 投影 key 保留 `tc*` 前缀，避免将来共存时撞车。
 
 **已交付**
 
 - Host：三个 `tc*` 投影（真实 fold + 单测），`ctx.inject(['sessionProjections'])` 延迟激活 —— 直接 `ctx.get` 会在插件先于 projection 服务加载时拿到 `undefined`，导致所有上下文卡片永久为空。activity 投影把每笔请求按时间分进 `peak` / `offPeak` 桶（含模型维度），仪表盘的历史金额因此不随「现在几点」漂移。
-- 五个界面入口：侧栏脚「上下文洞察」按钮 + portal 仪表盘、会话「上下文」页签、`/context` 命令弹窗、右侧栏 Context 页签、设置 → 费用（插件自有设置页）。。右上主视图的「上下文」页签与右侧栏 Context 页签是同一份视图的两个挂载点，消息动作行不再重复提供跳转按钮。
+- 五个界面入口：侧栏脚「用量总览」按钮 + portal 总览、会话「上下文」页签、`/context` 命令弹窗、右侧栏 Context 页签、设置 → 费用（插件自有设置页）。。右上主视图的「上下文」页签与右侧栏 Context 页签是同一份视图的两个挂载点，消息动作行不再重复提供跳转按钮。
 - 九张卡片 + 仪表盘：KPI、当前上下文构成、Token 统计、时序统计、费用（官方价）、上下文趋势、文件活动（含 `apply_patch` 补丁内路径）、Agent 网络、上下文事件、上下文浏览器（逐请求可展开 token 桶 / 缓存命中 / 计费时段）、近 7 日用量与费用、活跃热力图、会话卡片。
 - 费用：会话累计改为读 Host 请求日志逐请求精确计价（模型 + 高峰/空闲档），只有日志被截断时才按比例补齐并标 `≈`。
 - 偏好：逐轮徽章显隐、底部会话累计显隐、金额币种（人民币 / 美元）、DeepSeek 计费时段（自动 / 高峰 / 空闲）、会话预算，存 `localStorage`。
 - v1.3 视觉与功能：宿主 token 设计系统（KPI 磁贴、卡片头、堆叠条、面积 sparkline、chip、开关与分段控件）；费用按桶与按模型拆分；趋势可切 Tokens / 费用 / 缓存命中；逐请求浏览器支持筛选、排序与 CSV 导出；仪表盘热力图按周对齐、会话可搜索排序、新增跨会话模型花费榜；设置页分组并新增预算行；修掉深色主题下分段控件白底白字（`--dsw-alias-brand-primary` 在深色里是近白色）。
 - v1.4 准确性与可用性：仪表盘按「每笔请求当时的计费时段」计价（Host 折叠出 `peak` / `offPeak` 桶，历史金额不再受打开面板的时刻影响）；仪表盘聚合走 `useMemo`，搜索框打字不再重算全历史；上下文浏览器与会话卡改为每页 60 条 +「显示更多」，长会话（1200 条请求）不再被截断；近 7 日柱图带数值标签；「会话」磁贴改报已折叠出用量的会话数并附总数；模型切换真正记入上下文事件（此前 `request/context` / `model/selection` 被提前 return，`switch` 分支永远不会命中）。
 - v1.5 卡片补齐（对齐 dsh-context 的能力面）：新增「上下文统计」卡（轮次 / 步骤 / 用户输入 / 助手消息 / 技能加载 / 工具调用 + 工具调用分布 + 命令程序分布）、「命令执行」卡（程序 chip 筛选 + 状态筛选 + 搜索 + 墙钟耗时与状态）；文件活动升级为类型筛选 / 路径搜索 / 逐文件 `+added / −removed` / 可展开操作日志；Token 统计加环形图；上下文事件加类型筛选 chip。全部数据来自 Host 折叠的计数与元数据（不含工具输出正文），`tcTimeline` 升至 `stateVersion 7`。
-- v1.6 对齐面收官：① 上下文浏览器展开「请求内容」（用户消息 / 思考 / 回答 / 工具调用参数 / 工具结果，默认 300 字预览）；② 新增**编队**页签（家族成员、各自费用、协作时间线、家族事件）；③ 仪表盘加时间范围（今天 / 7 / 30 天）与工具 / 程序 / 技能三张跨会话排行；④ Host 的 `tcActivity` 增每日名称计数（`stateVersion 4`），旧世代 Host 下三张排行卡显示「需重启」提示而不是空数据。
+- v1.6 对齐面收官：① 上下文浏览器展开「请求内容」（用户消息 / 思考 / 回答 / 工具调用参数 / 工具结果，默认 300 字预览）；② 上下文页内新增**Agent 家族**卡（父 / 己 / 子 / 孙，各自费用，不再单开页签）；③ 仪表盘加时间范围（今天 / 7 / 30 天）与工具 / 程序 / 技能三张跨会话排行；④ Host 的 `tcActivity` 增每日名称计数（`stateVersion 4`），旧世代 Host 下三张排行卡显示「需重启」提示而不是空数据。
 
-**实现注意（部署形态）**：Client chunk 按 rev 重新加载，Host 的 JS 是每个进程一份模块世代；就地改 `host/*.js` 后，正在运行的 Host 仍执行旧折叠代码，直到 DSH 重启（或该 bundle 重新加载一次）。因此 `commands[].program` 在 Client 侧做了兜底重算：Host 存的值若是包装根（`cd` / `sudo` / `env` …）就用 `call` 文本重新提取，避免就地升级后程序分布一直显示 `cd`。
+**实现注意（部署形态）**：Client chunk 按 rev 重新加载，Host 的 JS 是每个进程一份模块世代；就地改 `host/*.js` 或 `index.js` 后，正在运行的 Host 仍执行旧代码，直到 DSH 重启（或该 bundle 重新加载一次）。新增的 `GET /dsh-turn-cost/quota` 因此也要重启后才注册：重启前按钮显示「额度不可用」，重启后自动换成真实余额，无需再改客户端。同一原因的另一个表现：`commands[].program` 在 Client 侧做了兜底重算：Host 存的值若是包装根（`cd` / `sudo` / `env` …）就用 `call` 文本重新提取，避免就地升级后程序分布一直显示 `cd`。
 
-**仍缺（不影响替代）**：DeepSeek 账户余额（需要 Host 侧调用官方余额接口，属另一条网关联通问题）、除中英以外的语言包（DSH 其余 6 种语言会回落到英文）、编队页里的**协作任务**（任务板数据不在本插件读模型内，现在只有一行说明）。
+**仍缺（不影响替代）**：除中英以外的语言包（DSH 其余 6 种语言会回落到英文）、家族卡里的**协作任务**（任务板数据不在本插件读模型内，现在只有一行说明）。

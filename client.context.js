@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
     // ── §1 locale ────────────────────────────────────────────────────────────
     const LOCALE = {
       zh: {
-        tab: '上下文', entry: '上下文洞察', dashboard: '上下文洞察仪表盘',
+        tab: '上下文', entry: '用量总览', dashboard: '用量总览',
         cmdLabel: '上下文', cmdDesc: '查看当前上下文构成与费用', cmdSection: '上下文',
         close: '关闭', loading: '读取中…',
         kpiSessions: '会话', kpiSessionsSub: '共 {total} 个会话', kpiTokens: '计费 tokens', kpiCost: '估算费用', kpiCache: '缓存命中',
@@ -72,11 +72,7 @@ window.__ModuleLoader__.load({
         contentCall: '调用', contentResult: '结果', contentMore: '展开', contentLess: '收起',
         tallyTools: '工具调用排行', tallyPrograms: '命令程序排行', tallySkills: '技能加载',
         tallyEmpty: '所选时间范围内没有记录', tallyPending: '统计字段要等 DSH 重启后由 Host 折叠出来',
-        fleetTab: '编队', fleetTitle: '编队总览', fleetMembers: '成员', fleetRunning: '运行中',
-        fleetChildren: '子 Agent', fleetTokens: '家族 tokens', fleetCost: '家族费用',
-        fleetNetwork: 'Agent 网络', fleetTimeline: '跨 Agent 协作', fleetEvents: '家族事件',
-        fleetSelf: '当前', fleetParent: '父级', fleetChild: '子级',
-        fleetEmpty: '本会话没有子 Agent，也没有父级', fleetNoEvents: '暂无家族事件',
+        fleetCost: '家族费用', fleetSelf: '当前', fleetParent: '父级', fleetChild: '子级',
         fleetTaskNote: '家族成员来自会话树（父 / 子 / 孙），费用按各自会话日志的官方价目表估算；任务板数据不在本插件的读模型内。',
         agentsTitle: 'Agent 网络', agentsEmpty: '本会话暂无子智能体',
         agentsRunning: '运行中', agentsIdle: '空闲',
@@ -103,12 +99,27 @@ window.__ModuleLoader__.load({
         prefBudget: '会话预算', prefBudgetDesc: '设成 0 表示不设上限；设置后底部累计显示「花费 / 预算」，超出转红',
         prefBudgetClear: '清除',
         sessionBudgetRemain: '剩余额度',
-        sessionTitle: '上下文洞察',
+        sessionTitle: '本会话上下文',
         prefResetTitle: '重置偏好', prefResetDesc: '把上面各项恢复为默认值。',
         prefReset: '恢复默认',
+        quotaTitle: '订阅额度', quotaTileOf: '{source} 额度',
+        quotaSourceDeepseek: 'DeepSeek', quotaSourceOpencode: 'OpenCode Go',
+        quotaWinRolling: '5h', quotaWinWeekly: '周', quotaWinMonthly: '月',
+        quotaWinRollingLong: '5 小时', quotaWinWeeklyLong: '本周', quotaWinMonthlyLong: '本月',
+        quotaWindowLine: '{label}：已用 {percent}%，{reset}',
+        quotaLeftSuffix: '（{left}）',
+        quotaWindowResets: '{time} 重置', quotaWindowResetUnknown: '重置时间未知',
+        quotaCycleLine: '订阅周期 {time} 结束（{left}）',
+        quotaRemainDays: '剩 {n} 天', quotaRemainHours: '剩 {n} 小时', quotaRemainMinutes: '剩 {n} 分',
+        quotaDaysShort: '{n}天', quotaHoursShort: '{n}时', quotaExpiredShort: '过期',
+        quotaExpired: '已到期', quotaCycleHint: '天数取最长额度窗口的重置时间：那个窗口重置即订阅周期结束',
+        quotaTotal: '当前余额 {amount}', quotaSplit: '充值 {toppedUp} · 赠送 {granted}',
+        quotaUnavailable: '余额不足，无法发起新任务',
+        quotaUpdated: '{time} 更新', quotaLoading: '读取中…', quotaFailed: '额度不可用',
+        quotaUnconfigured: '未配置密钥', quotaEmpty: '零余额', quotaRefresh: '点按刷新额度',
       },
       en: {
-        tab: 'Context', entry: 'Context insights', dashboard: 'Context insights dashboard',
+        tab: 'Context', entry: 'Usage overview', dashboard: 'Usage overview',
         cmdLabel: 'Context', cmdDesc: 'Inspect current context composition and cost', cmdSection: 'Context',
         close: 'Close', loading: 'Loading…',
         kpiSessions: 'Sessions', kpiSessionsSub: '{total} sessions in total', kpiTokens: 'Billed tokens', kpiCost: 'Estimated cost', kpiCache: 'Cache hit',
@@ -146,11 +157,7 @@ window.__ModuleLoader__.load({
         contentCall: 'Call', contentResult: 'Result', contentMore: 'More', contentLess: 'Less',
         tallyTools: 'Tool calls', tallyPrograms: 'Commands by program', tallySkills: 'Skill loads',
         tallyEmpty: 'Nothing in this range', tallyPending: 'Tallies need a DSH restart to be folded by the Host',
-        fleetTab: 'Fleet', fleetTitle: 'Fleet overview', fleetMembers: 'Members', fleetRunning: 'Running',
-        fleetChildren: 'Sub-agents', fleetTokens: 'Family tokens', fleetCost: 'Family cost',
-        fleetNetwork: 'Agent network', fleetTimeline: 'Cross-agent timeline', fleetEvents: 'Family events',
-        fleetSelf: 'This agent', fleetParent: 'Parent', fleetChild: 'Child',
-        fleetEmpty: 'No sub-agents and no parent for this session', fleetNoEvents: 'No family events yet',
+        fleetCost: 'Family cost', fleetSelf: 'This agent', fleetParent: 'Parent', fleetChild: 'Child',
         fleetTaskNote: 'Members come from the session tree (parent / self / children / grandchildren) and each cost is estimated from that session\'s own log at official list prices; task-board data is outside this plugin\'s read model.',
         agentsTitle: 'Agent network', agentsEmpty: 'No sub-agent sessions',
         agentsRunning: 'running', agentsIdle: 'idle',
@@ -177,9 +184,24 @@ window.__ModuleLoader__.load({
         prefBudget: 'Session budget', prefBudgetDesc: 'Zero means no cap; with a cap the session total reads “spent / cap” and turns red past it',
         prefBudgetClear: 'Clear',
         sessionBudgetRemain: 'Remaining',
-        sessionTitle: 'Context insights',
+        sessionTitle: 'Session context',
         prefResetTitle: 'Reset preferences', prefResetDesc: 'Restore every setting above to its default.',
         prefReset: 'Reset to defaults',
+        quotaTitle: 'Subscription quota', quotaTileOf: '{source} quota',
+        quotaSourceDeepseek: 'DeepSeek', quotaSourceOpencode: 'OpenCode Go',
+        quotaWinRolling: '5h', quotaWinWeekly: 'wk', quotaWinMonthly: 'mo',
+        quotaWinRollingLong: 'Rolling 5h', quotaWinWeeklyLong: 'This week', quotaWinMonthlyLong: 'This month',
+        quotaWindowLine: '{label}: {percent}% used · {reset}',
+        quotaLeftSuffix: ' ({left})',
+        quotaWindowResets: 'resets {time}', quotaWindowResetUnknown: 'reset time unknown',
+        quotaCycleLine: 'Billing period ends {time} ({left})',
+        quotaRemainDays: '{n}d left', quotaRemainHours: '{n}h left', quotaRemainMinutes: '{n}m left',
+        quotaDaysShort: '{n}d', quotaHoursShort: '{n}h', quotaExpiredShort: 'out',
+        quotaExpired: 'expired', quotaCycleHint: 'Days left use the longest window\'s reset as the period end',
+        quotaTotal: 'Balance {amount}', quotaSplit: 'top-up {toppedUp} · bonus {granted}',
+        quotaUnavailable: 'No balance left for a new task',
+        quotaUpdated: 'updated {time}', quotaLoading: 'Loading…', quotaFailed: 'Balance unavailable',
+        quotaUnconfigured: 'No provider key', quotaEmpty: 'Zero balance', quotaRefresh: 'Tap to refresh the balance',
       },
     };
 
@@ -309,6 +331,49 @@ window.__ModuleLoader__.load({
 .tc-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .tc-btn:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
 .tc-btn[data-active='true']{background:var(--dsw-alias-button-primary-fill);border-color:transparent;color:var(--dsw-alias-label-primary-foreground)}
+/* Sidebar foot: a two-row card — entry + countdown, then one gauge per window. */
+.tc-entry{box-sizing:border-box;width:100%;display:flex;flex-direction:column;align-items:stretch;gap:7px;
+  padding:8px 10px 9px;border-radius:var(--tc-radius-sm);border:1px solid transparent;background:transparent;
+  font:inherit;text-align:left;line-height:1.3}
+.tc-entry:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.tc-entry[aria-expanded='true']{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l1)}
+.tc-entry-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.tc-entry-label{font-size:12px;color:var(--dsw-alias-label-secondary);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-entry-remain{flex:none;padding:0 6px;height:16px;display:inline-flex;align-items:center;border-radius:9px;
+  font-size:10px;font-weight:600;letter-spacing:.01em;font-variant-numeric:tabular-nums;white-space:nowrap;
+  color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2)}
+.tc-entry-remain[data-tone='warn']{color:var(--dsw-alias-state-warn-primary);
+  background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 16%,transparent)}
+.tc-entry-remain[data-tone='crit']{color:var(--dsw-alias-state-error-primary);
+  background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 16%,transparent)}
+.tc-entry-quota{font-size:15px;font-weight:600;line-height:20px;letter-spacing:-.01em;
+  color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-entry-quota[data-state='ready']{color:var(--dsw-alias-label-primary)}
+.tc-entry-gauges{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;min-width:0}
+.tc-meter{display:flex;flex-direction:column;gap:4px;min-width:0;cursor:default}
+.tc-meter-head{display:flex;align-items:baseline;justify-content:space-between;gap:2px;min-width:0}
+.tc-meter-label{font-style:normal;font-size:11px;letter-spacing:.02em;color:var(--dsw-alias-label-tertiary);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-meter-value{font-size:11px;font-weight:600;line-height:14px;color:var(--dsw-alias-label-secondary);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.tc-meter-track{display:block;height:3px;border-radius:2px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
+.tc-meter-fill{display:block;height:100%;border-radius:2px;min-width:2px;
+  background:var(--dsw-alias-state-business-primary);transition:width 180ms var(--ds-ease-in-out,ease-out)}
+.tc-meter[data-tone='warn'] .tc-meter-value{color:var(--dsw-alias-state-warn-primary)}
+.tc-meter[data-tone='warn'] .tc-meter-fill{background:var(--dsw-alias-state-warn-primary)}
+.tc-meter[data-tone='crit'] .tc-meter-value{color:var(--dsw-alias-state-error-primary)}
+.tc-meter[data-tone='crit'] .tc-meter-fill{background:var(--dsw-alias-state-error-primary)}
+.tc-entry-rail{box-sizing:border-box;width:36px;height:36px;padding:0;gap:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;border-radius:var(--dsw-radius-sm)}
+.tc-entry-rail b{max-width:32px;font-size:10px;font-weight:600;line-height:12px;color:var(--dsw-alias-label-primary);
+  font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-entry-rail b[data-tone='warn']{color:var(--dsw-alias-state-warn-primary)}
+.tc-entry-rail b[data-tone='crit']{color:var(--dsw-alias-state-error-primary)}
+.tc-entry-rail i{font-style:normal;font-size:8px;line-height:10px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.tc-entry-rail i[data-tone='warn']{color:var(--dsw-alias-state-warn-primary)}
+.tc-entry-rail i[data-tone='crit']{color:var(--dsw-alias-state-error-primary)}
 .tc-input{box-sizing:border-box;height:26px;padding:0 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:var(--tc-radius-sm);
   background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;min-width:0}
 .tc-input::placeholder{color:var(--dsw-alias-label-tertiary)}
@@ -569,6 +634,422 @@ window.__ModuleLoader__.load({
       return typeof hook === 'function' ? hook(selector) : undefined;
     }
 
+    // ── §2.5 subscription quota ──────────────────────────────────────────────
+    // What is left of the subscription backing the current work, shown at the
+    // sidebar foot. The Host route owns the platform request and the provider
+    // key; this chunk only formats the body it returns, so nothing here prices
+    // anything and no secret reaches the page. Two source shapes exist — a
+    // wallet balance (DeepSeek) and consumption windows (OpenCode Go) — and the
+    // source follows whatever the most recent request actually ran on.
+    /** Client poll cadence; the Host caches its own read per source. */
+    const QUOTA_POLL_MS = 5 * 60 * 1000;
+    /** Same-origin route registered by the Host half. */
+    const QUOTA_URL = '/dsh-turn-cost/quota';
+    /** Source used while no request history names one. */
+    const QUOTA_DEFAULT_SOURCE = 'deepseek';
+    const WALLET_SIGN = { CNY: '¥', USD: '$' };
+
+    function money2(amount, currency) {
+      const value = Number(amount);
+      if (!Number.isFinite(value)) return '';
+      return (WALLET_SIGN[currency] || '') + value.toFixed(2);
+    }
+
+    /** `¥12.34 · $3.00` for a wallet list. */
+    function moneyList(wallets) {
+      const parts = [];
+      for (const wallet of Array.isArray(wallets) ? wallets : []) {
+        const text = money2(wallet && wallet.total, wallet && wallet.currency);
+        if (text !== '') parts.push(text);
+      }
+      return parts.join(' · ');
+    }
+
+    /** Beijing `HH:MM` — same clock every other card reads. */
+    function clock(ms) {
+      const date = new Date(safeCount(ms) + 8 * 3600 * 1000);
+      return String(date.getUTCHours()).padStart(2, '0') + ':' + String(date.getUTCMinutes()).padStart(2, '0');
+    }
+
+    /** Beijing `MM-DD HH:MM` for an ISO timestamp; empty when unusable. */
+    function stampOf(iso) {
+      const ms = Date.parse(String(iso || ''));
+      if (!Number.isFinite(ms)) return '';
+      const date = new Date(ms + 8 * 3600 * 1000);
+      const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(date.getUTCDate()).padStart(2, '0');
+      return month + '-' + day + ' ' + clock(ms);
+    }
+
+    /** Milliseconds from `now` to an ISO instant; `null` when the stamp is unusable. */
+    function msUntil(iso, now) {
+      const at = Date.parse(String(iso || ''));
+      if (!Number.isFinite(at)) return null;
+      return at - (Number.isFinite(now) ? now : Date.now());
+    }
+
+    /**
+     * Countdown of a millisecond span — `剩 12 天` / `剩 5 小时` / `剩 40 分`, or
+     * `已到期`. Whole days floor rather than round: a countdown may never promise
+     * time the account does not have.
+     */
+    function remainText(ms, t) {
+      if (!Number.isFinite(ms)) return '';
+      if (ms <= 0) return t('quotaExpired');
+      const day = 86400000;
+      const hour = 3600000;
+      if (ms >= day) return t('quotaRemainDays', { n: Math.floor(ms / day) });
+      if (ms >= hour) return t('quotaRemainHours', { n: Math.floor(ms / hour) });
+      return t('quotaRemainMinutes', { n: Math.max(1, Math.floor(ms / 60000)) });
+    }
+
+    /** Countdown squeezed for the collapsed rail: `12天` / `5时` / `过期`. */
+    function remainCompact(ms, t) {
+      if (!Number.isFinite(ms)) return '';
+      if (ms <= 0) return t('quotaExpiredShort');
+      const day = 86400000;
+      const hour = 3600000;
+      if (ms >= day) return t('quotaDaysShort', { n: Math.floor(ms / day) });
+      if (ms >= hour) return t('quotaHoursShort', { n: Math.floor(ms / hour) });
+      return t('quotaHoursShort', { n: 1 });
+    }
+
+    /** Tone of a countdown: the paid time runs out this week ⇒ warn, in 3 days ⇒ crit. */
+    function remainTone(ms) {
+      if (!Number.isFinite(ms)) return 'calm';
+      if (ms <= 3 * 86400000) return 'crit';
+      if (ms <= 7 * 86400000) return 'warn';
+      return 'calm';
+    }
+
+    /**
+     * The subscription cycle behind a window source. Its longest window is the
+     * billing period (monthly on OpenCode Go), so that window's reset is when the
+     * paid time ends — the only expiry the vendor's usage answer exposes. Returns
+     * `{ at, ms, window }`, or `null` for a wallet source and for a window without
+     * a usable reset stamp.
+     */
+    function quotaCycleOf(snapshot, now) {
+      if (snapshot === null || snapshot === undefined) return null;
+      if (snapshot.status !== 'ready' || snapshot.kind !== 'windows') return null;
+      let best = null;
+      for (const window of snapshot.windows) {
+        const at = Date.parse(String(window.resetsAt || ''));
+        if (!Number.isFinite(at)) continue;
+        if (best === null || at > best.at) best = { at, window };
+      }
+      if (best === null) return null;
+      const anchor = Number.isFinite(now) ? now : Date.now();
+      return { at: best.at, ms: best.at - anchor, window: best.window };
+    }
+
+    /** One window's reset clause: `11-23 08:00 重置（剩 2 天）`. */
+    function resetClauseOf(window, t, now) {
+      const reset = stampOf(window.resetsAt);
+      if (reset === '') return t('quotaWindowResetUnknown');
+      const left = remainText(msUntil(window.resetsAt, now), t);
+      const clause = t('quotaWindowResets', { time: reset });
+      return left === '' ? clause : clause + t('quotaLeftSuffix', { left });
+    }
+
+    /** One window's hover line: label, used percent and the reset clause. */
+    function windowLineOf(window, t, now) {
+      return t('quotaWindowLine', {
+        label: windowLong(window.key, t),
+        percent: Math.round(safeCount(window.percent)),
+        reset: resetClauseOf(window, t, now),
+      });
+    }
+
+    /** Short window label used in dense figures (`5h16%`). */
+    function windowShort(key, t) {
+      if (key === 'rolling') return t('quotaWinRolling');
+      if (key === 'weekly') return t('quotaWinWeekly');
+      if (key === 'monthly') return t('quotaWinMonthly');
+      return String(key);
+    }
+
+    /**
+     * Tone of one usage window: colour carries "which limit is about to bite",
+     * so three bare numbers stay readable at a glance — 90%+ errors, 70%+ warns,
+     * everything else stays a plain secondary label.
+     */
+    function windowTone(percent) {
+      const value = safeCount(percent);
+      if (value >= 90) return 'crit';
+      if (value >= 70) return 'warn';
+      return 'calm';
+    }
+
+    /** Long window label used in tooltips and tiles. */
+    function windowLong(key, t) {
+      if (key === 'rolling') return t('quotaWinRollingLong');
+      if (key === 'weekly') return t('quotaWinWeeklyLong');
+      if (key === 'monthly') return t('quotaWinMonthlyLong');
+      return String(key);
+    }
+
+    /** Display name of one quota source. */
+    function sourceName(source, t) {
+      if (source === 'opencode-go') return t('quotaSourceOpencode');
+      if (source === 'deepseek') return t('quotaSourceDeepseek');
+      return String(source || '');
+    }
+
+    /**
+     * Normalize one Host route body. `unconfigured` (no provider key) and
+     * `failed` stay distinct from a real zero balance, which would read as
+     * "out of credit".
+     */
+    function quotaSnapshotOf(payload) {
+      const base = { source: QUOTA_DEFAULT_SOURCE, kind: null, wallets: [], windows: [], available: true };
+      if (payload === null || typeof payload !== 'object') {
+        return { ...base, status: 'failed', at: 0 };
+      }
+      const source = typeof payload.source === 'string' && payload.source !== '' ? payload.source : QUOTA_DEFAULT_SOURCE;
+      if (payload.status !== 'ready') {
+        return {
+          ...base,
+          source,
+          status: payload.status === 'unconfigured' ? 'unconfigured' : 'failed',
+          at: safeCount(payload.at),
+        };
+      }
+      if (payload.kind === 'windows') {
+        const windows = [];
+        for (const window of Array.isArray(payload.windows) ? payload.windows : []) {
+          if (window === null || typeof window !== 'object') continue;
+          const percent = Number(window.percent);
+          if (!Number.isFinite(percent)) continue;
+          windows.push({
+            key: String(window.key || ''),
+            percent: Math.max(0, Math.min(100, percent)),
+            status: typeof window.status === 'string' ? window.status : 'ok',
+            resetsAt: typeof window.resetsAt === 'string' ? window.resetsAt : null,
+          });
+        }
+        return { ...base, source, status: 'ready', kind: 'windows', windows, at: safeCount(payload.at) };
+      }
+      const wallets = [];
+      for (const wallet of Array.isArray(payload.wallets) ? payload.wallets : []) {
+        if (wallet === null || typeof wallet !== 'object') continue;
+        const total = Number(wallet.total);
+        if (!Number.isFinite(total)) continue;
+        wallets.push({
+          currency: wallet.currency === 'USD' ? 'USD' : 'CNY',
+          total,
+          toppedUp: Number.isFinite(Number(wallet.toppedUp)) ? Number(wallet.toppedUp) : 0,
+          granted: Number.isFinite(Number(wallet.granted)) ? Number(wallet.granted) : 0,
+        });
+      }
+      return {
+        ...base,
+        source,
+        status: 'ready',
+        kind: 'balance',
+        available: payload.available !== false,
+        wallets,
+        at: safeCount(payload.at),
+      };
+    }
+
+    /** Compact figure for the sidebar foot. */
+    function quotaFigure(snapshot, t) {
+      if (snapshot.status === 'ready') {
+        if (snapshot.kind === 'windows') {
+          if (snapshot.windows.length === 0) return t('quotaEmpty');
+          return snapshot.windows
+            .map((window) => windowShort(window.key, t) + ' ' + Math.round(window.percent) + '%')
+            .join(' · ');
+        }
+        const total = moneyList(snapshot.wallets);
+        return total === '' ? t('quotaEmpty') : total;
+      }
+      if (snapshot.status === 'loading') return t('quotaLoading');
+      if (snapshot.status === 'unconfigured') return t('quotaUnconfigured');
+      if (snapshot.status === 'failed') return t('quotaFailed');
+      return '';
+    }
+
+    /**
+     * KPI figure: the window closest to its cap, because a tile is narrower than
+     * the foot card and "which limit is about to bite" is the question it
+     * answers. The other windows stay in the foot gauges and the hover text.
+     */
+    function quotaTileValue(snapshot, t) {
+      if (snapshot.status === 'ready' && snapshot.kind === 'windows') {
+        if (snapshot.windows.length === 0) return t('quotaEmpty');
+        let tightest = snapshot.windows[0];
+        for (const window of snapshot.windows) if (window.percent > tightest.percent) tightest = window;
+        return windowShort(tightest.key, t) + ' ' + Math.round(tightest.percent) + '%';
+      }
+      return quotaFigure(snapshot, t) || '—';
+    }
+
+    /**
+     * Hover text: the source, how long the subscription has left, every window or
+     * wallet, and the read time. The countdown is the answer to "when does my paid
+     * time end", which no single window label states.
+     */
+    function quotaDetail(snapshot, t, now) {
+      const lines = [t('quotaTitle') + (snapshot.status === 'ready' ? '（' + sourceName(snapshot.source, t) + '）' : '')];
+      if (snapshot.status === 'ready' && snapshot.kind === 'windows') {
+        const cycle = quotaCycleOf(snapshot, now);
+        if (cycle !== null) {
+          lines.push(t('quotaCycleLine', {
+            time: stampOf(cycle.window.resetsAt),
+            left: remainText(cycle.ms, t),
+          }));
+          lines.push(t('quotaCycleHint'));
+        }
+        for (const window of snapshot.windows) lines.push(windowLineOf(window, t, now));
+        if (snapshot.at > 0) lines.push(t('quotaUpdated', { time: clock(snapshot.at) }));
+        lines.push(t('quotaRefresh'));
+      } else if (snapshot.status === 'ready') {
+        lines.push(t('quotaTotal', { amount: moneyList(snapshot.wallets) || t('quotaEmpty') }));
+        for (const wallet of snapshot.wallets) {
+          lines.push(t('quotaSplit', {
+            toppedUp: money2(wallet.toppedUp, wallet.currency),
+            granted: money2(wallet.granted, wallet.currency),
+          }));
+        }
+        if (snapshot.available === false) lines.push(t('quotaUnavailable'));
+        if (snapshot.at > 0) lines.push(t('quotaUpdated', { time: clock(snapshot.at) }));
+        lines.push(t('quotaRefresh'));
+      } else if (snapshot.status === 'unconfigured') {
+        lines.push(t('quotaUnconfigured'));
+      } else if (snapshot.status === 'failed') {
+        lines.push(t('quotaFailed'));
+      }
+      return lines.join('\n');
+    }
+
+    /**
+     * KPI sub-line for the dashboard: the countdown, then the read time. The tile
+     * value already names the tightest window and the hover text lists them all,
+     * so repeating three percentages here only pushed the countdown onto a second
+     * line.
+     */
+    function quotaSubOf(snapshot, t, now) {
+      if (snapshot.status !== 'ready') return null;
+      const parts = [];
+      if (snapshot.kind === 'windows') {
+        const cycle = quotaCycleOf(snapshot, now);
+        if (cycle !== null) parts.push(remainText(cycle.ms, t));
+      } else {
+        for (const wallet of snapshot.wallets) {
+          parts.push(t('quotaSplit', {
+            toppedUp: money2(wallet.toppedUp, wallet.currency),
+            granted: money2(wallet.granted, wallet.currency),
+          }));
+        }
+      }
+      if (parts.length === 0) return null;
+      parts.push(t('quotaUpdated', { time: clock(snapshot.at) }));
+      return parts.length === 0 ? null : parts.join(' · ');
+    }
+
+    /**
+     * Pick the quota source the current work runs on: the newest request across
+     * the loaded sessions decides, so switching the model switches the quota.
+     * Falls back to the default source while no request history is hydrated.
+     */
+    function sourceOfSessions(sessions) {
+      const projections = sessions === undefined || sessions === null ? undefined : sessions.projectionsBySession;
+      if (projections === undefined || projections === null) return QUOTA_DEFAULT_SOURCE;
+      let best = null;
+      for (const id of Array.isArray(sessions.ids) ? sessions.ids : Object.keys(projections)) {
+        const timeline = projections[id] === undefined ? undefined : projections[id].values;
+        const requests = timeline === undefined || timeline === null ? undefined : timeline.tcTimeline;
+        const list = requests === undefined || requests === null ? undefined : requests.requests;
+        const last = Array.isArray(list) && list.length > 0 ? list[list.length - 1] : undefined;
+        if (last === undefined) continue;
+        const time = safeCount(last.time);
+        if (best === null || time > best.time) best = { time, provider: last.provider, model: last.model };
+      }
+      if (best === null) return QUOTA_DEFAULT_SOURCE;
+      const text = String(best.model || '') + ' ' + String(best.provider || '');
+      // OpenCode's own model names carry the product name; the `ai-router`
+      // gateway fronts the same account, so its routes belong to that quota too.
+      if (/opencode/i.test(text)) return 'opencode-go';
+      if (/ai-router/i.test(text)) return 'opencode-go';
+      return QUOTA_DEFAULT_SOURCE;
+    }
+
+    /**
+     * Quota store. `attach(reader)` installs a reader plus its poll;
+     * `detach()` withdraws both while keeping the React subscribers, so a route
+     * that disappears and comes back leaves the button in place. `setSource`
+     * re-reads whenever the session starts running on another vendor.
+     */
+    function createQuotaStore(options = {}) {
+      const pollMs = options.pollMs ?? QUOTA_POLL_MS;
+      const listeners = new Set();
+      let snapshot = { status: 'idle', source: QUOTA_DEFAULT_SOURCE, kind: null, wallets: [], windows: [], at: 0 };
+      let reader = null;
+      let inflight = null;
+      let timer = null;
+      const publish = (next) => {
+        snapshot = next;
+        for (const listener of [...listeners]) listener();
+      };
+      const refresh = (force) => {
+        if (reader === null) return Promise.resolve(false);
+        if (inflight !== null) return inflight;
+        if (snapshot.status === 'idle') publish({ ...snapshot, status: 'loading' });
+        inflight = Promise.resolve()
+          .then(() => reader(snapshot.source, force === true))
+          .then((payload) => { publish(quotaSnapshotOf(payload)); return true; },
+            () => { publish({ status: 'failed', source: snapshot.source, kind: null, wallets: [], windows: [], at: 0 }); return false; })
+          .finally(() => { inflight = null; });
+        return inflight;
+      };
+      const detach = () => {
+        if (timer !== null) clearInterval(timer);
+        timer = null;
+        reader = null;
+        if (snapshot.status === 'loading') publish({ ...snapshot, status: 'idle' });
+      };
+      return {
+        subscribe(listener) {
+          listeners.add(listener);
+          return () => { listeners.delete(listener); };
+        },
+        getSnapshot() { return snapshot; },
+        attach(read) {
+          reader = typeof read === 'function' ? read : null;
+          if (reader === null) return;
+          if (timer === null) timer = setInterval(() => { void refresh(false); }, pollMs);
+          void refresh(false);
+        },
+        detach,
+        refresh,
+        /** Point the store at one source; a change drops the stale figure. */
+        setSource(source) {
+          const next = typeof source === 'string' && source !== '' ? source : QUOTA_DEFAULT_SOURCE;
+          if (next === snapshot.source) return;
+          publish({ status: 'idle', source: next, kind: null, wallets: [], windows: [], at: 0 });
+          if (reader !== null) void refresh(false);
+        },
+        dispose() { detach(); listeners.clear(); },
+      };
+    }
+
+    /** Subscribe one component to the quota store. */
+    function useQuota(store) {
+      return React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+    }
+
+    /** Read the Host route; a non-2xx answer is a failure, never a zero balance. */
+    async function readQuotaRoute(source, force, fetchImpl) {
+      const params = new URLSearchParams({ source: String(source || QUOTA_DEFAULT_SOURCE) });
+      if (force === true) params.set('force', '1');
+      const response = await fetchImpl(QUOTA_URL + '?' + params.toString(), { headers: { accept: 'application/json' } });
+      if (!response.ok) throw new Error('quota route ' + String(response.status));
+      return response.json();
+    }
+
+
     function pct(part, whole) {
       if (!(whole > 0)) return 0;
       return Math.max(0, Math.min(100, part / whole * 100));
@@ -630,8 +1111,8 @@ window.__ModuleLoader__.load({
     }
 
     /** One KPI tile: an icon + label line, the figure, and an optional sub line. */
-    function Tile({ label, value, sub, tone, icon }) {
-      return h('div', { className: 'tc-tile', 'data-tone': tone || 'plain' },
+    function Tile({ label, value, sub, tone, icon, hint }) {
+      return h('div', { className: 'tc-tile', 'data-tone': tone || 'plain', title: hint },
         h('div', { className: 'tc-tile-top' },
           typeof icon === 'string' ? h('span', { 'aria-hidden': 'true', dangerouslySetInnerHTML: { __html: icon } }) : icon,
           h('span', null, label)),
@@ -647,6 +1128,7 @@ window.__ModuleLoader__.load({
       cost: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M8 1.5v13M11.2 4.4H6.1a2 2 0 0 0 0 4h3.8a2 2 0 0 1 0 4H4.6"/></svg>',
       cache: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M8 1.6 14 5v6L8 14.4 2 11V5l6-3.4ZM2 5l6 3.4L14 5M8 8.4V14.4"/></svg>',
       sessions: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5 6.5h6M5 9.5h4"/></svg>',
+      wallet: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2.4 5.1A1.6 1.6 0 0 1 4 3.5h8a1.6 1.6 0 0 1 1.6 1.6v6.6A1.6 1.6 0 0 1 12 13.3H4a1.6 1.6 0 0 1-1.6-1.6V5.1Z"/><path d="M2.4 6.4h11.2"/><circle cx="10.9" cy="9.8" r=".75" fill="currentColor" stroke="none"/></svg>',
     };
 
     /** Stacked proportion bar from `[{value,color,label}]`. */
@@ -1247,24 +1729,80 @@ window.__ModuleLoader__.load({
       });
     }
 
-    /** Sub-agent sessions spawned under this session. */
-    function AgentNetworkCard({ t, sessions, sessionId }) {
+    /**
+     * The Agent family around one session: parent, self, children and
+     * grandchildren, each carrying the tokens and official-price cost of its own
+     * session log. Members come from the session tree (`parentId`); the task
+     * board is outside this plugin's read model.
+     */
+    function familyRows(sessions, sessionId, pricing, tier, currency, now) {
       const byId = sessions?.byId ?? {};
-      const children = Object.values(byId)
-        .filter(row => row && row.parentId === sessionId)
-        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-        .slice(0, 30);
+      const projections = sessions?.projectionsBySession ?? {};
+      const me = byId[sessionId];
+      const parent = me?.parentId ? byId[me.parentId] : undefined;
+      const children = Object.values(byId).filter(row => row && row.parentId === sessionId);
+      const grandchildren = [];
+      for (const child of children) {
+        for (const row of Object.values(byId)) {
+          if (row && row.parentId === child.id && row.id !== sessionId) grandchildren.push(row);
+        }
+      }
+      const seen = new Set();
+      const members = [];
+      const add = (row, role) => {
+        if (!row || seen.has(row.id)) return;
+        seen.add(row.id);
+        members.push({ row, role, activity: projections[row.id]?.values?.tcActivity });
+      };
+      add(parent, 'parent');
+      add(me, 'self');
+      for (const row of children) add(row, 'child');
+      for (const row of grandchildren) add(row, 'child');
+      const rows = members.map(({ row, role, activity }) => {
+        let tokens = 0;
+        let cost = 0;
+        for (const dayRow of Object.values(activity?.days ?? {})) {
+          tokens += safeCount(dayRow.tokens);
+          for (const [model, slot] of Object.entries(dayRow.byModel ?? {})) {
+            const amount = priceModelSlot(pricing, slot, model, tier, currency, now);
+            if (amount !== null) cost += amount;
+          }
+        }
+        return {
+          id: row.id, role,
+          title: String(row.displayTitle ?? row.title ?? row.id),
+          running: row.running === true,
+          tokens, cost, updatedAt: safeCount(row.updatedAt),
+        };
+      });
+      rows.sort((a, b) => (a.role === 'self' ? -1 : b.role === 'self' ? 1 : b.updatedAt - a.updatedAt));
+      return rows;
+    }
+
+    /** This session's Agent family, priced from each member's own log. */
+    function AgentNetworkCard({ t, pricing, sessions, sessionId, tier, currency }) {
+      const rows = familyRows(sessions, sessionId, pricing, tier, currency, Date.now());
+      const familyCost = rows.reduce((sum, row) => sum + row.cost, 0);
+      const roleLabel = role => (role === 'self' ? t('fleetSelf') : (role === 'parent' ? t('fleetParent') : t('fleetChild')));
       return Card({
         title: t('agentsTitle'),
-        meta: children.length === 0 ? null : String(children.length),
+        meta: rows.length === 0 ? null : t('fleetCost') + ' ' + money(pricing, familyCost, currency),
         className: 'tc-col-6',
-        children: children.length === 0
+        children: rows.length === 0
           ? [Empty({ text: t('agentsEmpty') })]
-          : [h('ul', { className: 'tc-list' }, ...children.map(row =>
-            h('li', { key: row.id },
-              h('span', { className: 'tc-path' }, String(row.displayTitle || row.title || row.id).slice(0, 56)),
-              h('i', { className: 'tc-chip', 'data-tone': row.running ? 'write' : 'read' },
-                row.running ? t('agentsRunning') : t('agentsIdle')))))],
+          : [
+            h('ul', { className: 'tc-list' }, ...rows.map(row => h('li', {
+              key: row.id, title: row.title,
+              style: { paddingLeft: row.role === 'child' ? 14 : 0 },
+            },
+              h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 } },
+                h('i', { className: 'tc-chip', 'data-tone': row.role === 'self' ? 'ok' : 'read' }, roleLabel(row.role)),
+                h('span', { className: 'tc-path' }, row.title.slice(0, 48))),
+              h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 8, flex: 'none' } },
+                row.running ? h('i', { className: 'tc-chip', 'data-tone': 'write' }, t('agentsRunning')) : null,
+                h('span', { className: 'tc-strong' }, fmtInt(row.tokens) + ' tok · ' + money(pricing, row.cost, currency)))))),
+            h('p', { className: 'tc-note', style: { marginTop: 8 } }, t('fleetTaskNote')),
+          ],
       });
     }
 
@@ -1662,136 +2200,11 @@ window.__ModuleLoader__.load({
           h(FileActivityCard, { t, files: timeline?.files, fileOps: timeline?.fileOps }),
           h(CommandsCard, { t, commands: timeline?.commands }),
           h(EventsCard, { t, timeline }),
-          h(AgentNetworkCard, { t, sessions: useOptional(props.useSessions, s => s), sessionId: props.sessionId }),
+          h(AgentNetworkCard, {
+            t, pricing, tier, currency,
+            sessions: useOptional(props.useSessions, s => s), sessionId: props.sessionId,
+          }),
           h(BrowserCard, { t, pricing, timeline, tier, currency, nodes })));
-    }
-
-    /**
-     * Fleet view: the Agent family around the current session — parent, self and
-     * every descendant — with each member's billed tokens and official-price cost,
-     * a family timeline by last activity, and the delegation-ish events of this
-     * session. Pure read: the session store plus the `tc*` projections.
-     */
-    function FleetView(props) {
-      const t = props.t;
-      const pricing = props.pricing;
-      const preference = usePrefsOf(pricing);
-      const currency = preference.currency;
-      const sessions = useOptional(props.useSessions, s => s);
-      const timeline = useOptional(props.useProjection, 'tcTimeline');
-      const sessionId = props.sessionId;
-      const byId = sessions?.byId ?? {};
-      const projections = sessions?.projectionsBySession ?? {};
-      const now = Date.now();
-
-      const me = byId[sessionId];
-      const parent = me?.parentId ? byId[me.parentId] : undefined;
-      const children = Object.values(byId).filter(row => row && row.parentId === sessionId);
-      const grandchildren = [];
-      for (const child of children) {
-        for (const row of Object.values(byId)) {
-          if (row && row.parentId === child.id && row.id !== sessionId) grandchildren.push(row);
-        }
-      }
-      const seen = new Set();
-      const members = [];
-      const addMember = (row, role) => {
-        if (!row || seen.has(row.id)) return;
-        seen.add(row.id);
-        members.push({ row, role });
-      };
-      addMember(parent, 'parent');
-      addMember(me, 'self');
-      for (const row of children) addMember(row, 'child');
-      for (const row of grandchildren) addMember(row, 'child');
-
-      const rows = members.map(({ row, role }) => {
-        const activity = projections[row.id]?.values?.tcActivity;
-        let tokens = 0, cost = 0;
-        for (const dayRow of Object.values(activity?.days ?? {})) {
-          tokens += safeCount(dayRow.tokens);
-          for (const [model, slot] of Object.entries(dayRow.byModel ?? {})) {
-            const amount = priceModelSlot(pricing, slot, model, preference.tier, currency, now);
-            if (amount !== null) cost += amount;
-          }
-        }
-        return {
-          id: row.id, role,
-          title: String(row.displayTitle ?? row.title ?? row.id),
-          running: row.running === true,
-          tokens, cost, updatedAt: safeCount(row.updatedAt),
-        };
-      });
-      rows.sort((a, b) => (a.role === 'self' ? -1 : b.role === 'self' ? 1 : b.updatedAt - a.updatedAt));
-
-      const roleLabel = role => (role === 'self' ? t('fleetSelf') : (role === 'parent' ? t('fleetParent') : t('fleetChild')));
-      const runningCount = rows.filter(row => row.running).length;
-      const familyTokens = rows.reduce((sum, row) => sum + row.tokens, 0);
-      const familyCost = rows.reduce((sum, row) => sum + row.cost, 0);
-      const events = Array.isArray(timeline?.events) ? timeline.events.slice(-40).reverse() : [];
-      const kinds = { compact: 'evCompact', prune: 'evPrune', inject: 'evInject', switch: 'evSwitch', mode: 'evMode' };
-
-      const stat = (key, label, value) => h('div', { className: 'tc-stat', key },
-        h('span', null, label), h('b', null, value));
-
-      return h('div', { className: 'tc-surface tc-panel' },
-        h('div', { className: 'tc-head' },
-          h('h2', null, t('fleetTitle')),
-          h('span', { className: 'tc-head-meta' }, t('fleetCost') + ' ' + money(pricing, familyCost, currency))),
-        h('div', { className: 'tc-stats' },
-          stat('members', t('fleetMembers'), String(rows.length)),
-          stat('running', t('fleetRunning'), String(runningCount)),
-          stat('children', t('fleetChildren'), String(children.length + grandchildren.length)),
-          stat('tokens', t('fleetTokens'), fmtInt(familyTokens)),
-          stat('cost', t('fleetCost'), money(pricing, familyCost, currency))),
-        h('div', { className: 'tc-grid', style: { marginTop: 12 } },
-          Card({
-            title: t('fleetNetwork'),
-            meta: rows.length === 0 ? null : String(rows.length),
-            className: 'tc-col-6',
-            children: rows.length === 0
-              ? [Empty({ text: t('fleetEmpty') })]
-              : [h('ul', { className: 'tc-list' }, ...rows.map(row => h('li', {
-                key: row.id, title: row.title,
-                style: { paddingLeft: row.role === 'child' ? 14 : 0 },
-              },
-                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 } },
-                  h('i', { className: 'tc-chip', 'data-tone': row.role === 'self' ? 'ok' : 'read' }, roleLabel(row.role)),
-                  h('span', { className: 'tc-path' }, row.title)),
-                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 8, flex: 'none' } },
-                  row.running ? h('i', { className: 'tc-chip', 'data-tone': 'write' }, t('agentsRunning')) : null,
-                  h('span', { className: 'tc-strong' }, fmtInt(row.tokens) + ' tok · ' + money(pricing, row.cost, currency))))))],
-          }),
-          Card({
-            title: t('fleetTimeline'),
-            meta: rows.length === 0 ? null : String(rows.length),
-            className: 'tc-col-6',
-            children: rows.length === 0
-              ? [Empty({ text: t('fleetEmpty') })]
-              : [h('ul', { className: 'tc-list' }, ...rows
-                .slice()
-                .sort((a, b) => b.updatedAt - a.updatedAt)
-                .map(row => h('li', { key: row.id, title: row.title },
-                  h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 } },
-                    h('span', { className: 'tc-chip' }, row.updatedAt > 0 ? new Date(row.updatedAt).toLocaleTimeString() : '—'),
-                    h('span', { className: 'tc-path' }, row.title)),
-                  h('span', { className: 'tc-strong' }, roleLabel(row.role)))))],
-          }),
-          Card({
-            title: t('fleetEvents'),
-            meta: events.length === 0 ? null : String(events.length),
-            className: 'tc-col-12',
-            children: events.length === 0
-              ? [Empty({ text: t('fleetNoEvents') })]
-              : [h('ul', { className: 'tc-list' }, ...events.slice(0, 30).map((event, index) => h('li', {
-                key: index, title: new Date(safeCount(event.time)).toLocaleString(),
-              },
-                h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 } },
-                  h('i', { className: 'tc-chip' }, t(kinds[event.kind] ?? 'eventsTitle')),
-                  h('span', { className: 'tc-path' }, String(event.label ?? '').slice(0, 60))),
-                h('span', { className: 'tc-strong' }, event.turn ? 'T' + event.turn : ''))))],
-          })),
-        h('p', { className: 'tc-note', style: { marginTop: 10 } }, t('fleetTaskNote')));
     }
 
     function ContextModal(props) {
@@ -2025,7 +2438,8 @@ window.__ModuleLoader__.load({
       { key: '30d', days: 30, label: 'range30' },
     ];
 
-    function OverviewPanel({ t, pricing, sessions, openSession, onClose, tier, currency }) {
+    function OverviewPanel({ t, pricing, sessions, openSession, onClose, tier, currency, quota }) {
+      const balance = useQuota(quota);
       const queryState = React.useState('');
       const query = queryState[0];
       const setQuery = queryState[1];
@@ -2216,6 +2630,13 @@ window.__ModuleLoader__.load({
               h('button', { className: 'tc-btn', type: 'button', onClick: onClose }, t('close'))),
             h('div', { className: 'tc-tiles' },
               h(Tile, {
+                icon: ICON.wallet,
+                label: t('quotaTileOf', { source: sourceName(balance.source, t) }),
+                value: quotaTileValue(balance, t),
+                sub: quotaSubOf(balance, t), tone: 'cost',
+                hint: quotaDetail(balance, t),
+              }),
+              h(Tile, {
                 icon: ICON.sessions, label: t('kpiSessions'), value: String(sessionRows.length),
                 // Only sessions whose projections are hydrated carry activity, so
                 // the tile counts what it actually priced and names the store size.
@@ -2238,13 +2659,34 @@ window.__ModuleLoader__.load({
         document.body);
     }
 
-    /** Sidebar-foot button that also owns the portaled dashboard. */
-    function OverviewButton({ t, pricing, store, openSession, useSessions }) {
+    /**
+     * Sidebar-foot button that also owns the portaled dashboard. The button
+     * carries the live subscription figure on its right edge, so the quota is
+     * visible without opening anything; pressing it refreshes the read while
+     * opening the dashboard.
+     */
+    function OverviewButton({ t, pricing, store, openSession, useSessions, quota, wide }) {
       const open = React.useSyncExternalStore(store.subscribe, store.getSnapshot, () => false);
       const preference = usePrefsOf(pricing);
       const tier = preference.tier;
       const currency = preference.currency;
       const sessions = useOptional(useSessions, s => s);
+      const balance = useQuota(quota);
+      const figure = quotaFigure(balance, t);
+      // Windows read as three mini gauges — label, percent and a fill that carries
+      // the magnitude — so the foot answers "how much is left" at a glance instead
+      // of running three numbers together into one string.
+      const windows = balance.status === 'ready' && balance.kind === 'windows' && balance.windows.length > 0
+        ? balance.windows
+        : null;
+      // The paid time ends when the longest window resets: that countdown is what
+      // "when does my subscription run out" means for a window-based vendor.
+      const cycle = quotaCycleOf(balance);
+      const remain = cycle === null ? '' : remainText(cycle.ms, t);
+      // The quota follows the vendor the newest request ran on, so switching
+      // models switches the figure instead of showing another plan's numbers.
+      const source = sourceOfSessions(sessions);
+      React.useEffect(() => { quota.setSource(source); }, [source, quota]);
       React.useEffect(() => {
         if (!open) return undefined;
         const onKeyDown = (event) => { if (event.key === 'Escape') store.set(false); };
@@ -2252,12 +2694,57 @@ window.__ModuleLoader__.load({
         return () => document.removeEventListener('keydown', onKeyDown);
       }, [open, store]);
       const onClose = () => store.set(false);
+      const head = h('span', { className: 'tc-entry-head' },
+        h('span', { className: 'tc-entry-label' }, t('entry')),
+        remain === '' ? null : h('span', {
+          className: 'tc-entry-remain', 'data-tone': remainTone(cycle.ms),
+          title: t('quotaCycleLine', { time: stampOf(cycle.window.resetsAt), left: remain }),
+        }, remain));
+      const body = figure === ''
+        ? null
+        : windows === null
+          ? h('span', { className: 'tc-entry-quota', 'data-state': balance.status }, figure)
+          : h('span', { className: 'tc-entry-gauges' },
+            windows.map((window) => {
+              const percent = Math.round(safeCount(window.percent));
+              return h('span', {
+                key: window.key, className: 'tc-meter', 'data-tone': windowTone(window.percent),
+                title: windowLineOf(window, t),
+              },
+                h('span', { className: 'tc-meter-head' },
+                  h('i', { className: 'tc-meter-label' }, windowShort(window.key, t)),
+                  h('b', { className: 'tc-meter-value' }, percent + '%')),
+                h('span', { className: 'tc-meter-track', 'aria-hidden': 'true' },
+                  h('i', { className: 'tc-meter-fill', style: { width: percent + '%' } })));
+            }));
+      // The collapsed sidebar is a 36px rail: a two-row card cannot fit, so it
+      // collapses to the tightest window plus the countdown, both still live.
+      if (wide === false) {
+        let tightest = null;
+        for (const window of windows === null ? [] : windows) {
+          if (tightest === null || window.percent > tightest.percent) tightest = window;
+        }
+        return h(React.Fragment, null,
+          h('button', {
+            className: 'tc-btn tc-entry-rail', type: 'button', 'aria-expanded': open ? 'true' : 'false',
+            title: quotaDetail(balance, t),
+            'aria-label': t('entry') + ' ' + figure,
+            onClick: () => { void quota.refresh(true); store.set(!store.getSnapshot()); },
+          },
+            h('b', { 'data-tone': tightest === null ? 'calm' : windowTone(tightest.percent) },
+              tightest === null ? (balance.status === 'ready' ? figure || '—' : '—') : Math.round(safeCount(tightest.percent)) + '%'),
+            remain === '' ? null : h('i', { 'data-tone': remainTone(cycle.ms) }, remainCompact(cycle.ms, t))),
+          open ? h(OverviewPanel, { t, pricing, sessions, openSession, onClose, tier, currency, quota }) : null);
+      }
       return h(React.Fragment, null,
         h('button', {
-          className: 'tc-btn', type: 'button', 'aria-expanded': open ? 'true' : 'false',
-          onClick: () => store.set(!store.getSnapshot()),
-        }, t('entry')),
-        open ? h(OverviewPanel, { t, pricing, sessions, openSession, onClose, tier, currency }) : null);
+          className: 'tc-btn tc-entry', type: 'button', 'aria-expanded': open ? 'true' : 'false',
+          title: quotaDetail(balance, t),
+          onClick: () => { void quota.refresh(true); store.set(!store.getSnapshot()); },
+        },
+          head,
+          body),
+        open ? h(OverviewPanel, { t, pricing, sessions, openSession, onClose, tier, currency, quota }) : null);
     }
 
     // ── §6 composition ───────────────────────────────────────────────────────
@@ -2277,6 +2764,10 @@ window.__ModuleLoader__.load({
       };
 
       const overviewStore = createFlagStore();
+
+      // Subscription balance shown at the sidebar foot; §4b installs its reader.
+      const quotaStore = createQuotaStore();
+      ctx.effect(() => () => quotaStore.dispose(), 'tc-context: quota store');
 
       // 1. `/context` command — client-owned input trigger, no Host command.
       ctx.inject(['inputTriggers'], (ictx) => {
@@ -2324,21 +2815,6 @@ window.__ModuleLoader__.load({
         name: 'conversation.view', id: TAB_ID, order: 20, locale: NS, label: () => t('tab'),
       }, viewComponent)), 'tc-context: tab');
 
-      // 3b. Fleet tab: the Agent family around this session.
-      function SafeFleetView(props) {
-        try { return FleetView({ ...props, pricing }); }
-        catch (error) {
-          console.error('[tc-context] FleetView failed:', error);
-          return h('div', { className: 'tc-surface tc-panel' },
-            h('section', { className: 'tc-card' },
-              h('h3', null, t('fleetTab')),
-              h('p', { className: 'tc-note' }, String(error && error.message ? error.message : error))));
-        }
-      }
-      ctx.effect(() => ctx.slots.inject('conversation.view', () => ctx.slots.register({
-        name: 'conversation.view', id: 'tc-fleet', order: 21, locale: NS, label: () => t('fleetTab'),
-      }, (props) => h(SafeFleetView, props))), 'tc-context: fleet tab');
-
       ctx.inject(['sidebarRightTabs'], (ictx) => {
         const tabs = ictx.get('sidebarRightTabs');
         if (!tabs || typeof tabs.register !== 'function') return;
@@ -2352,12 +2828,21 @@ window.__ModuleLoader__.load({
       });
 
       // 4. Sidebar-foot button; it portals the cross-session dashboard itself,
-      //    so no dependency on a root `shell.overlay` declaration timing.
+      //    so no dependency on a root `shell.overlay` declaration timing. The
+      //    same button carries the live subscription balance.
       ctx.effect(() => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
         name: 'sidebar.footer.action', id: 'tc-overview', order: 20, locale: NS,
       }, (props) => h(OverviewButton, {
-        ...props, t, pricing, store: overviewStore, openSession,
+        ...props, t, pricing, store: overviewStore, openSession, quota: quotaStore,
       }))), 'tc-context: sidebar button');
+
+      // 4b. Subscription quota reader. The Host route owns the platform call and
+      //     the provider key, so this is one same-origin fetch with no secret in
+      //     the page. A missing route (an older Host, or a Host without the
+      //     web-server route slot) leaves a plain button: the first read fails
+      //     silently and the label stays empty.
+      quotaStore.attach((source, force) => readQuotaRoute(source, force, (url, init) => fetch(url, init)));
+      ctx.effect(() => () => quotaStore.detach(), 'tc-context: quota reader');
 
       // 5. Settings → its own「费用」page: every cost preference (badge / pill /
       //    currency / tier / budget) lives in the plugin's own directory entry.

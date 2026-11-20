@@ -18,8 +18,28 @@
  * (Host touch 6 — forces a module reload after host/ edits.)
  */
 import { contextProjections } from './host/projections.js';
+import { createQuotaReader, mountQuotaRoute } from './host/quota.js';
 
 export function apply(ctx) {
+  // Subscription balance route: one same-origin GET that the Client renders at
+  // the sidebar foot. `webServer` and `credentials` are both optional for this
+  // plugin — without either, the route is simply absent and the Client keeps a
+  // plain overview button, so a bare Host still gets the cost features.
+  ctx.inject(['webServer', 'credentials'], (scoped) => {
+    const webServer = scoped.get ? scoped.get('webServer') : scoped.webServer;
+    const credentials = scoped.get ? scoped.get('credentials') : scoped.credentials;
+    if (webServer === undefined || webServer === null || typeof webServer.register !== 'function') return;
+    if (credentials === undefined || credentials === null || typeof credentials.resolve !== 'function') return;
+    const reader = createQuotaReader();
+    // The route names a credential reference per source; resolution happens on
+    // every read so a rotated key reaches the next poll without a restart.
+    const readKey = async (ref) => {
+      const resolved = await credentials.resolve(ref);
+      return resolved === undefined || resolved === null ? undefined : resolved.value;
+    };
+    scoped.effect(() => mountQuotaRoute(scoped, reader, readKey), 'dsh-turn-cost: quota route');
+  });
+
   ctx.inject(['sessionProjections'], (scoped) => {
     const projections = scoped.get
       ? scoped.get('sessionProjections')

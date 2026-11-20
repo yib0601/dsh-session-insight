@@ -2,17 +2,18 @@
 
 [![dsh plugin](https://img.shields.io/badge/DSH-plugin-4d6bfe)](https://github.com/yib0601/dsh-turn-cost)
 [![topics](https://img.shields.io/badge/topics-dsh--plugin%20%C2%B7%20deepseek--harness-2ea44f)](https://github.com/topics/dsh-plugin)
-[![version](https://img.shields.io/badge/version-1.6.0-blue)](package.json)
+[![version](https://img.shields.io/badge/version-1.8.0-blue)](package.json)
 
 > DSH 插件（`dsh-plugin`）。标签：`dsh` · `dsh-plugin` · `deepseek-harness` · `deepseek` · `plugin` · `cost-tracking` · `token-usage` · `llm-pricing` · `dashboard`
 
-给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）Web 端加两个能力：**按官方单价把每一轮的 token 用量换算成钱**，以及**上下文洞察面板（替代 `dsh-context`）**。
+给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）Web 端加两个能力：**按官方单价把每一轮的 token 用量换算成钱**，以及**跨会话「用量总览」（替代 `dsh-context`）**。
 
 - 逐轮徽章：每个 assistant 动作后面跟一枚金额徽章，点开看 input / cacheRead / cacheWrite / output 四个 token 桶各花了多少
 - 底部会话累计：状态栏一枚药丸显示本会话累计花费；设了预算后显示 `花费 / 预算` 与进度条，超支转红
 - 币种 CNY（默认）/ USD 可切：CNY 优先用厂商官方人民币行，缺省按汇率折算并标 `fx`
 - DeepSeek 峰谷分时计价：历史金额按请求发生时刻落档，不按「现在」重定价
-- 上下文洞察：跨会话仪表盘（KPI、构成、环形图、趋势、模型花费榜、7 日双指标、周对齐热力图）、会话「上下文」页签、`/context` 命令弹窗、右侧栏 Context 页签、Agent 编队页、逐请求浏览器（筛选 / 排序 / CSV / 分页）
+- 用量总览：跨会话仪表盘（KPI、构成、环形图、趋势、模型花费榜、7 日双指标、周对齐热力图）、会话「上下文」页签、`/context` 命令弹窗、右侧栏 Context 页签、Agent 家族卡（上下文页内）、逐请求浏览器（筛选 / 排序 / CSV / 分页）
+- 订阅额度 + 到期倒计时：侧栏脚「用量总览」是一条两行卡片——第一行标题右侧是「剩 12 天」倒计时（取最长额度窗口的重置时刻，≤7 天转黄、≤3 天转红），第二行是 5 小时 / 周 / 月三条微型计量条；侧栏折叠时收成一枚「54% / 12天」小方块。按会话最新一次请求的供应商自动选源：OpenCode Go 给三档用量窗口，DeepSeek 给账户余额（充值 / 赠送拆项在悬浮明细里）。仪表盘磁贴主数字是最紧那档、副行是倒计时。Host 侧读密钥、按源 5 分钟缓存，页面拿不到密钥
 - 费用偏好、预算、显隐开关全在插件自有设置页，`localStorage` 本地持久化
 
 | 逐轮徽章 | 会话累计与预算 |
@@ -22,6 +23,10 @@
 | 上下文页签 | 设置页 |
 |---|---|
 | ![context tab](docs/shots/context-tab.png) | ![settings](docs/shots/settings-page.png) |
+
+| 订阅余额（侧栏脚 + 仪表盘磁贴） |
+|---|
+| ![subscription balance](docs/shots/subscription-balance.png) |
 
 更多截图见 [`docs/shots/`](docs/shots/)。
 
@@ -44,7 +49,7 @@ dsh plugin --profile web add "link:$PWD"
 | `index.js` | Host 入口：注册 3 个 `tc*` session 投影（timeline / headers / activity） |
 | `host/schema.js`、`host/fold.js`、`host/projections.js` | Host 侧折叠：token 桶、峰谷分档、命令 / 文件 / 工具调用流水（纯 Node，防御式） |
 | `client.js` | Client 入口：官方价目表与算价纯函数、本地偏好 store、徽章 / 药丸、槽位注册 |
-| `client.context.js` | 懒加载 chunk：仪表盘、上下文页签、`/context` 弹窗、编队页 |
+| `client.context.js` | 懒加载 chunk：仪表盘、上下文页签（含 Agent 家族卡）、`/context` 弹窗 |
 | `locale/{zh,en}.json` | 两个 locale 命名空间 `turnCost` / `tcContext` |
 | `contracts/modules.yaml` | 模块契约（负责 / 不负责 / 对外暴露） |
 | `test/` | `node --test test/`，价目表与 Host 折叠的纯函数测试 |
