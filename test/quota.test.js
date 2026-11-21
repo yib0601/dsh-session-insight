@@ -48,7 +48,8 @@ const ctx = runInNewContext(
       quotaSnapshotOf, quotaFigure, quotaDetail, quotaSubOf, quotaTileValue, sourceOfSessions,
       sourceOfRoute, routeOfSession, readStoredSource, storeSource, NO_SOURCE,
       createQuotaStore, readQuotaRoute, QUOTA_URL, QUOTA_POLL_MS, QUOTA_DEFAULT_SOURCE,
-      QUOTA_SOURCE_KEY })`,
+      QUOTA_SOURCE_KEY, QUOTA_CACHE_KEY, QUOTA_CACHE_TTL_MS,
+      readCachedQuota, writeCachedQuota })`,
   sandbox,
 );
 
@@ -58,6 +59,7 @@ const {
   quotaSnapshotOf, quotaFigure, quotaDetail, quotaSubOf, quotaTileValue, sourceOfSessions,
   sourceOfRoute, routeOfSession, readStoredSource, storeSource, NO_SOURCE,
   createQuotaStore, readQuotaRoute, QUOTA_URL, QUOTA_POLL_MS, QUOTA_DEFAULT_SOURCE, QUOTA_SOURCE_KEY,
+  QUOTA_CACHE_KEY, QUOTA_CACHE_TTL_MS, readCachedQuota, writeCachedQuota,
 } = ctx;
 
 /** Minimal dictionary so the formatters can be asserted without the locale service. */
@@ -78,6 +80,7 @@ const t = (key, params = {}) => {
     quotaUnavailable: '余额不足，无法发起新任务',
     quotaUpdated: '{time} 更新', quotaLoading: '读取中…', quotaFailed: '额度不可用',
     quotaUnconfigured: '未配置密钥', quotaEmpty: '零余额', quotaRefresh: '点按刷新额度',
+    quotaStale: '显示的是上次成功读数，正在后台重试',
     quotaNoSource: '此供应商无额度可查',
     quotaNoSourceHint: '当前路由是自建网关：它按上游密钥分别计费，网关本身不设配额，所以没有可显示的额度或到期时间',
   };
@@ -407,11 +410,34 @@ store.attach(async (source) => {
 await Promise.all([store.refresh(), store.refresh(), store.refresh()]);
 assert.equal(slowCalls, 1, 'concurrent refreshes coalesce');
 
-// A throwing reader surfaces as failed, not as zero.
+// A throwing reader on a surface that has nothing yet surfaces as failed, not as zero.
+const empty = createQuotaStore();
+empty.attach(async () => { throw new Error('refused'); });
+empty.setSource('deepseek');
+await empty.refresh();
+assert.equal(empty.getSnapshot().status, 'failed');
+assert.equal(quotaFigure(empty.getSnapshot(), t), '额度不可用');
+empty.dispose();
+
+// ...but a good figure is never thrown away by one failed read: it stays up and
+// is flagged stale, so the foot keeps answering instead of flashing「额度不可用」.
 store.attach(async () => { throw new Error('refused'); });
 await store.refresh();
-assert.equal(store.getSnapshot().status, 'failed');
-assert.equal(quotaFigure(store.getSnapshot(), t), '额度不可用');
+assert.equal(store.getSnapshot().status, 'ready', 'the last good figure survives a failed read');
+assert.equal(store.getSnapshot().stale, true, 'and it is marked as a stale reading');
+assert.ok(quotaFigure(store.getSnapshot(), t).includes('¥'), 'the figure still renders');
+assert.ok(quotaDetail(store.getSnapshot(), t).includes('显示的是上次成功读数'), 'the hover text owns up to it');
+// A later success clears the flag.
+store.attach(async (source) => ({ status: 'ready', source, kind: 'balance', at: 6, wallets: [{ currency: 'CNY', total: '7.00' }] }));
+await store.refresh();
+assert.equal(store.getSnapshot().stale, undefined, 'a successful read clears the stale flag');
+assert.equal(quotaFigure(store.getSnapshot(), t), '¥7.00');
+
+// A Host-side `failed` body (HTTP 200, vendor broken) is treated the same way.
+store.attach(async (source) => ({ status: 'failed', source, reason: 'timeout', at: 7 }));
+await store.refresh();
+assert.equal(store.getSnapshot().status, 'ready', 'a Host-reported failure does not blank a good figure either');
+assert.equal(store.getSnapshot().stale, true);
 
 // An unconfigured Host says so instead of showing zero.
 store.attach(async (source) => ({ status: 'unconfigured', source, at: 4 }));
@@ -432,5 +458,130 @@ assert.equal(timers.size, 0, 'detach clears the poll');
 unsubscribe();
 store.dispose();
 assert.equal(await store.refresh(), false, 'a disposed store reads nothing');
+
+// ── persisted last-good figure ──────────────────────────────────────────────
+// The store is rebuilt empty every time the chunk reloads, so a figure the
+// previous load had is kept in localStorage and painted before the first read.
+storage.delete(QUOTA_CACHE_KEY);
+assert.equal(readCachedQuota('deepseek'), null, 'nothing cached before the first success');
+
+const t0 = 1_700_000_000_000;
+const goodBalance = quotaSnapshotOf({
+  status: 'ready', source: 'deepseek', kind: 'balance', available: true, at: t0,
+  wallets: [{ currency: 'CNY', total: '12.30', toppedUp: '12.30', granted: '0.00' }],
+});
+writeCachedQuota(goodBalance);
+const painted = readCachedQuota('deepseek', t0 + 60_000);
+assert.equal(painted.status, 'ready');
+assert.equal(painted.cached, true, 'a persisted figure is flagged as one');
+assert.equal(quotaFigure(painted, t), '¥12.30', 'and it renders the same figure as the live one');
+assert.equal(readCachedQuota('opencode-go'), null, 'another vendor is not answered by this one');
+assert.equal(readCachedQuota(null), null, 'no vendor means nothing to cache');
+assert.equal(readCachedQuota(NO_SOURCE), null, 'a quota-less provider has no figure to remember');
+
+// State that is not a real reading is never persisted: caching it would make
+// the next load paint「额度不可用」as if it were the account's balance.
+writeCachedQuota({ status: 'failed', source: 'opencode-go', at: t0 });
+writeCachedQuota({ status: 'loading', source: 'opencode-go', at: t0 });
+writeCachedQuota({ status: 'nostore', source: 'opencode-go', at: t0 });
+writeCachedQuota({ status: 'ready', source: 'opencode-go', kind: 'windows', windows: [], at: 0 });
+assert.equal(readCachedQuota('opencode-go'), null, 'failed / loading / nostore / undated are not cached');
+
+// A day-old percentage is worse than a spinner: it claims the plan sits where
+// it no longer does.
+assert.equal(readCachedQuota('deepseek', t0 + QUOTA_CACHE_TTL_MS + 1), null, 'an expired figure is dropped');
+assert.ok(readCachedQuota('deepseek', t0 + QUOTA_CACHE_TTL_MS - 1) !== null, 'and the boundary still holds');
+
+// View flags never travel to the next load.
+writeCachedQuota({ ...goodBalance, cached: true, stale: true });
+const clean = readCachedQuota('deepseek', t0 + 1000);
+assert.equal(clean.stale, undefined, 'a stale flag from the last load is not remembered');
+
+// A window whose reset has already passed describes a period that ended, so its
+// percentage must not be carried into the new period.
+const t1 = Date.UTC(2026, 10, 19, 4, 44);
+const windowed = quotaSnapshotOf({
+  status: 'ready', source: 'opencode-go', kind: 'windows', at: t1,
+  windows: [
+    { key: 'rolling', percent: 47, status: 'ok', resetsAt: '2026-11-19T07:07:04.000Z' },
+    { key: 'monthly', percent: 59, status: 'ok', resetsAt: '2026-12-02T15:30:38.000Z' },
+  ],
+});
+writeCachedQuota(windowed);
+assert.ok(readCachedQuota('opencode-go', t1 + 60_000) !== null, 'a live window figure is painted');
+assert.equal(readCachedQuota('opencode-go', Date.parse('2026-11-19T07:07:05.000Z')), null,
+  'once the shortest window has reset, the whole cached figure is dropped');
+assert.ok(readCachedQuota('opencode-go', Date.parse('2026-11-19T07:07:03.000Z')) !== null,
+  'and it is kept right up to that reset');
+
+// A corrupt entry is a miss, not a crash.
+storage.set(QUOTA_CACHE_KEY, '{not json');
+assert.equal(readCachedQuota('deepseek'), null, 'unparsable storage reads as nothing cached');
+storage.set(QUOTA_CACHE_KEY, '[]');
+assert.equal(readCachedQuota('deepseek'), null, 'a non-object table reads as nothing cached');
+storage.delete(QUOTA_CACHE_KEY);
+
+// The store paints that figure on `setSource` and never flashes「读取中…」.
+writeCachedQuota(goodBalance);
+const warm = createQuotaStore({ now: () => t0 + 120_000 });
+warm.attach(() => new Promise(() => {}));   // a read that never answers
+warm.setSource('deepseek');
+assert.equal(warm.getSnapshot().status, 'ready', 'a remembered figure is up before any read answers');
+assert.equal(warm.getSnapshot().cached, true);
+assert.equal(quotaFigure(warm.getSnapshot(), t), '¥12.30');
+warm.dispose();
+
+// Without one it still says it is reading, exactly as before.
+storage.delete(QUOTA_CACHE_KEY);
+const cold = createQuotaStore({ now: () => t0 });
+cold.attach(() => new Promise(() => {}));
+cold.setSource('deepseek');
+assert.equal(cold.getSnapshot().status, 'loading', 'nothing cached still shows the loader');
+cold.dispose();
+
+// A successful read is written through, so the next reload is warm.
+const writer = createQuotaStore({ now: () => t0 });
+writer.attach(async () => ({ status: 'ready', source: 'deepseek', kind: 'balance', at: t0, wallets: [{ currency: 'CNY', total: '4.40' }] }));
+writer.setSource('deepseek');
+await writer.refresh();
+assert.equal(quotaFigure(readCachedQuota('deepseek', t0 + 1000), t), '¥4.40', 'a good read is remembered for the next load');
+writer.dispose();
+
+// Switching the model while a read is in flight: the old answer must not land on
+// the new vendor's card, and the new vendor is still read.
+storage.delete(QUOTA_CACHE_KEY);   // start cold, or the cached figure hides the loader
+const switching = createQuotaStore({ now: () => t0 });
+let releaseSlow;
+const slowAnswers = new Map();
+switching.attach((source) => new Promise((resolve) => { slowAnswers.set(source, resolve); }));
+switching.setSource('deepseek');
+assert.equal(switching.getSnapshot().status, 'loading', 'the first read starts on the named vendor');
+await new Promise((resolve) => setImmediate(resolve));
+assert.ok(slowAnswers.has('deepseek'), 'the read reached the DeepSeek source');
+switching.setSource('opencode-go');
+await new Promise((resolve) => setImmediate(resolve));
+assert.ok(slowAnswers.has('opencode-go'), 'the new vendor is read instead of waiting for the old one');
+assert.equal(switching.getSnapshot().source, 'opencode-go', 'the card moves to the new vendor at once');
+slowAnswers.get('deepseek')({ status: 'ready', source: 'deepseek', kind: 'balance', at: t0, wallets: [{ currency: 'CNY', total: '99.00' }] });
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(switching.getSnapshot().source, 'opencode-go', 'the late DeepSeek answer does not take the card back');
+assert.notEqual(quotaFigure(switching.getSnapshot(), t), '¥99.00', 'and its wallet is not painted on the OpenCode card');
+slowAnswers.get('opencode-go')(windowsBody);
+await new Promise((resolve) => setImmediate(resolve));
+assert.equal(switching.getSnapshot().kind, 'windows', 'the new vendor is read on its own');
+assert.equal(quotaFigure(switching.getSnapshot(), t), '5h 16% · 周 25% · 月 47%');
+switching.dispose();
+
+// revalidate() re-reads the named source but stays quiet when nothing is named.
+let revalidations = 0;
+const revisiting = createQuotaStore({ now: () => t0 });
+revisiting.attach(async (source) => { revalidations += 1; return { status: 'ready', source, kind: 'balance', at: t0, wallets: [] }; });
+assert.equal(await revisiting.revalidate(), false, 'nothing named yet: nothing to revalidate');
+revisiting.setSource('deepseek');
+await revisiting.refresh();
+const beforeRevalidate = revalidations;
+await revisiting.revalidate();
+assert.equal(revalidations, beforeRevalidate + 1, 'coming back to the tab re-reads the live figure');
+revisiting.dispose();
 
 console.log('quota.test.js: all assertions passed');

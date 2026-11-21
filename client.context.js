@@ -117,6 +117,7 @@ window.__ModuleLoader__.load({
         quotaUnavailable: '余额不足，无法发起新任务',
         quotaUpdated: '{time} 更新', quotaLoading: '读取中…', quotaFailed: '额度不可用',
         quotaUnconfigured: '未配置密钥', quotaEmpty: '零余额', quotaRefresh: '点按刷新额度',
+        quotaStale: '显示的是上次成功读数，正在后台重试', quotaCached: '缓存读数',
         quotaNoSource: '此供应商无额度可查',
         quotaNoSourceHint: '当前路由是自建网关：它按上游密钥分别计费，网关本身不设配额，所以没有可显示的额度或到期时间',
       },
@@ -204,6 +205,7 @@ window.__ModuleLoader__.load({
         quotaUnavailable: 'No balance left for a new task',
         quotaUpdated: 'updated {time}', quotaLoading: 'Loading…', quotaFailed: 'Balance unavailable',
         quotaUnconfigured: 'No provider key', quotaEmpty: 'Zero balance', quotaRefresh: 'Tap to refresh the balance',
+        quotaStale: 'Showing the last good reading; retrying in the background', quotaCached: 'cached reading',
         quotaNoSource: 'This provider has no quota to read',
         quotaNoSourceHint: 'The current route is your own gateway: it bills per upstream key and sets no allowance of its own, so there is no quota or expiry to show',
       },
@@ -355,6 +357,9 @@ window.__ModuleLoader__.load({
   color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tc-entry-quota[data-state='ready']{color:var(--dsw-alias-label-primary)}
+/* A remembered (or not-yet-reconfirmed) reading keeps its figure but drops the
+   emphasis of a live one, so「旧数」and「刚读到」stay distinguishable at a glance. */
+.tc-entry-quota[data-fresh='stale'],.tc-entry-gauges[data-fresh='stale']{opacity:.62}
 /* A provider with no allowance is an explanation, not a figure: keep it quiet
    and let it wrap, so the sentence stays readable instead of truncating. */
 .tc-entry-quota[data-state='nostore']{font-size:12px;font-weight:400;line-height:16px;
@@ -662,6 +667,19 @@ window.__ModuleLoader__.load({
     const QUOTA_DEFAULT_SOURCE = 'deepseek';
     /** Remembers the last vendor a session named, for blank sessions with no history. */
     const QUOTA_SOURCE_KEY = 'dsh-turn-cost:quota-source';
+    /**
+     * Last successful read per source, so a reload paints the figure it already
+     * had instead of flashing「读取中…」while the Host answers. The value is only
+     * a starting point: the read that follows always replaces it.
+     */
+    const QUOTA_CACHE_KEY = 'dsh-turn-cost:quota-cache';
+    /**
+     * How old a persisted read may be and still stand in for the live one. The
+     * shortest vendor window (OpenCode's rolling 5h) resets within this span, so
+     * anything older describes a period that has already ended; past it a spinner
+     * is the honest answer.
+     */
+    const QUOTA_CACHE_TTL_MS = 5 * 60 * 60 * 1000;
     const WALLET_SIGN = { CNY: '¥', USD: '$' };
 
     function money2(amount, currency) {
@@ -920,6 +938,9 @@ window.__ModuleLoader__.load({
         }
         for (const window of snapshot.windows) lines.push(windowLineOf(window, t, now));
         if (snapshot.at > 0) lines.push(t('quotaUpdated', { time: clock(snapshot.at) }));
+        // A cached first paint and a failed retry both leave a real figure on
+        // screen, so the hover text has to say which one it is looking at.
+        if (snapshot.stale === true) lines.push(t('quotaStale'));
         lines.push(t('quotaRefresh'));
       } else if (snapshot.status === 'ready') {
         lines.push(t('quotaTotal', { amount: moneyList(snapshot.wallets) || t('quotaEmpty') }));
@@ -931,6 +952,7 @@ window.__ModuleLoader__.load({
         }
         if (snapshot.available === false) lines.push(t('quotaUnavailable'));
         if (snapshot.at > 0) lines.push(t('quotaUpdated', { time: clock(snapshot.at) }));
+        if (snapshot.stale === true) lines.push(t('quotaStale'));
         lines.push(t('quotaRefresh'));
       } else if (snapshot.status === 'nostore') {
         // Say what is true: this provider bills per upstream key, so no single
@@ -967,6 +989,9 @@ window.__ModuleLoader__.load({
       }
       if (parts.length === 0) return null;
       parts.push(t('quotaUpdated', { time: clock(snapshot.at) }));
+      // The dashboard tile is a readout with no refresh gesture of its own, so it
+      // says outright when the number is the last load's instead of a live read.
+      if (snapshot.cached === true || snapshot.stale === true) parts.push(t('quotaCached'));
       return parts.length === 0 ? null : parts.join(' · ');
     }
 
@@ -1066,6 +1091,72 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Last good figure persisted for one source, or `null`.
+     *
+     * The point is the first paint after a reload: the store is rebuilt empty
+     * every time the chunk loads, so without this the foot flashes「读取中…」
+     * for a whole Host round-trip even though the number it had five seconds
+     * ago is still the best answer available. A read older than
+     * {@link QUOTA_CACHE_TTL_MS} is dropped — a stale percentage claims the plan
+     * sits where it no longer does.
+     *
+     * @param source - the source id the surface is pointed at.
+     * @param now - anchor for the age check; defaults to `Date.now()`.
+     * @returns a `ready` snapshot flagged `cached: true`, or `null`.
+     */
+    function readCachedQuota(source, now) {
+      if (typeof source !== 'string' || source === '' || source === NO_SOURCE) return null;
+      let table;
+      try {
+        const raw = window.localStorage.getItem(QUOTA_CACHE_KEY);
+        if (typeof raw !== 'string' || raw === '') return null;
+        table = JSON.parse(raw);
+      } catch { return null; }
+      if (table === null || typeof table !== 'object' || Array.isArray(table)) return null;
+      const entry = table[source];
+      if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return null;
+      const snapshot = quotaSnapshotOf(entry.snapshot);
+      if (snapshot.status !== 'ready' || snapshot.source !== source) return null;
+      const at = safeCount(snapshot.at) > 0 ? safeCount(snapshot.at) : safeCount(entry.at);
+      if (at <= 0) return null;
+      const anchor = Number.isFinite(now) ? now : Date.now();
+      const age = anchor - at;
+      if (age > QUOTA_CACHE_TTL_MS) return null;
+      // A window that already reset has its percentage replaced by the vendor,
+      // not carried over: painting it would claim the new period is already at
+      // the old period's usage.
+      if (snapshot.kind === 'windows') {
+        for (const window of snapshot.windows) {
+          const reset = Date.parse(String(window.resetsAt || ''));
+          if (Number.isFinite(reset) && reset <= anchor) return null;
+        }
+      }
+      return { ...snapshot, at, cached: true };
+    }
+
+    /** Persist one ready figure per source; loading/failed/nostore are never cached. */
+    function writeCachedQuota(snapshot) {
+      if (snapshot === null || typeof snapshot !== 'object') return;
+      if (snapshot.status !== 'ready') return;
+      if (typeof snapshot.source !== 'string' || snapshot.source === '' || snapshot.source === NO_SOURCE) return;
+      if (safeCount(snapshot.at) <= 0) return;
+      let table = {};
+      try {
+        const raw = window.localStorage.getItem(QUOTA_CACHE_KEY);
+        const parsed = typeof raw === 'string' && raw !== '' ? JSON.parse(raw) : null;
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) table = parsed;
+      } catch { table = {}; }
+      // `cached`/`stale` are view flags, not state to hand to the next load.
+      const saved = { ...snapshot };
+      delete saved.cached;
+      delete saved.stale;
+      table[snapshot.source] = { at: saved.at, snapshot: saved };
+      try {
+        window.localStorage.setItem(QUOTA_CACHE_KEY, JSON.stringify(table));
+      } catch { /* storage disabled or full: the next read simply paints later */ }
+    }
+
+    /**
      * Pick the quota source the current work runs on: the newest route among the
      * hydrated sessions decides, so switching the model switches the plan being
      * measured.
@@ -1113,17 +1204,30 @@ window.__ModuleLoader__.load({
      * `NO_SOURCE` is a settled answer, not a missing one: the route was read and
      * the provider has no quota. The store then reports `nostore` so the surface
      * can explain itself instead of leaving a silent blank.
+     *
+     * A figure the last load already had is painted from {@link QUOTA_CACHE_KEY}
+     * *before* the first read and then replaced silently: `loading` is only ever
+     * shown when there is nothing to paint, which is what the foot showed on
+     * every chunk reload. A read that fails while a good figure is on screen
+     * keeps the figure and flags it `stale` rather than blanking it to「额度不可用」.
      */
     function createQuotaStore(options = {}) {
       const pollMs = options.pollMs ?? QUOTA_POLL_MS;
+      const now = options.now ?? (() => Date.now());
       const listeners = new Set();
       let snapshot = { status: 'idle', source: null, kind: null, wallets: [], windows: [], at: 0 };
       let reader = null;
-      let inflight = null;
+      /** Source id → the read currently running for it. */
+      const inflight = new Map();
       let timer = null;
       const publish = (next) => {
         snapshot = next;
         for (const listener of [...listeners]) listener();
+      };
+      /** Publish a read result and remember it for the next load. */
+      const settle = (next) => {
+        publish(next);
+        writeCachedQuota(next);
       };
       const refresh = (force) => {
         if (reader === null) return Promise.resolve(false);
@@ -1132,19 +1236,52 @@ window.__ModuleLoader__.load({
         // Nothing named the vendor yet: reading would answer for a plan that may
         // not be the one paying, so wait for `setSource` instead.
         if (typeof snapshot.source !== 'string' || snapshot.source === '') return Promise.resolve(false);
-        if (inflight !== null) return inflight;
+        // Only a surface with nothing to show says so; a cached figure stays up
+        // while the read runs in the background.
         if (snapshot.status === 'idle') publish({ ...snapshot, status: 'loading' });
-        inflight = Promise.resolve()
-          .then(() => reader(snapshot.source, force === true))
-          .then((payload) => { publish(quotaSnapshotOf(payload)); return true; },
-            () => { publish({ status: 'failed', source: snapshot.source, kind: null, wallets: [], windows: [], at: 0 }); return false; })
-          .finally(() => { inflight = null; });
-        return inflight;
+        // Reads are keyed by the source they asked about, for two reasons: the same
+        // vendor's concurrent refreshes coalesce into one request, and switching
+        // the model mid-flight neither lets the old answer land on the new
+        // vendor's card nor makes the new vendor wait out the old request.
+        const asking = snapshot.source;
+        const pending = inflight.get(asking);
+        if (pending !== undefined) return pending;
+        const run = Promise.resolve()
+          .then(() => reader(asking, force === true))
+          .then((payload) => {
+            if (snapshot.source !== asking) return false;
+            const next = quotaSnapshotOf(payload);
+            // The Host answers `failed` with HTTP 200 when the vendor call breaks;
+            // that is not news worth a blank card either, so a good figure stays
+            // up until a read actually succeeds.
+            if (next.status === 'failed' && snapshot.status === 'ready') {
+              publish({ ...snapshot, stale: true });
+              return false;
+            }
+            settle(next);
+            return true;
+          },
+            () => {
+              // A failed read must not throw away a good figure: keep it, mark it
+              // stale, and let the next poll repair it.
+              if (snapshot.source !== asking) return false;
+              if (snapshot.status === 'ready') publish({ ...snapshot, stale: true });
+              else publish({ status: 'failed', source: asking, kind: null, wallets: [], windows: [], at: 0 });
+              return false;
+            });
+        const promise = run.finally(() => {
+          if (inflight.get(asking) === promise) inflight.delete(asking);
+        });
+        inflight.set(asking, promise);
+        return promise;
       };
       const detach = () => {
         if (timer !== null) clearInterval(timer);
         timer = null;
         reader = null;
+        // Reads already in flight may still land, but a re-attached store must not
+        // be blocked by them: a re-provisioned route starts from a clean slate.
+        inflight.clear();
         if (snapshot.status === 'loading') publish({ ...snapshot, status: 'idle' });
       };
       return {
@@ -1159,19 +1296,40 @@ window.__ModuleLoader__.load({
           if (timer === null) timer = setInterval(() => { void refresh(false); }, pollMs);
           void refresh(false);
         },
+        /**
+         * Read again when the page comes back from a hidden tab or from a
+         * suspended laptop, where no interval fired for hours. Cheap on the Host
+         * side: a non-forced read reuses its own cache inside the freshness
+         * window.
+         */
+        revalidate() {
+          if (snapshot.source === null || snapshot.source === NO_SOURCE) return Promise.resolve(false);
+          return refresh(false);
+        },
         detach,
         refresh,
         /**
-         * Point the store at one source; a change drops the stale figure.
-         * `null` = not known yet (idle), `NO_SOURCE` = known to have no quota
-         * (`nostore`). Neither issues a read.
+         * Point the store at one source. A change first paints that source's
+         * remembered figure (if any), then reads in the background; without one
+         * the surface shows `loading`. `null` = not known yet (idle), `NO_SOURCE`
+         * = known to have no quota (`nostore`); neither issues a read for it.
          */
         setSource(source) {
           const next = typeof source === 'string' && source !== '' ? source : null;
           if (next === snapshot.source) return;
-          const status = next === NO_SOURCE ? 'nostore' : 'idle';
-          publish({ status, source: next, kind: null, wallets: [], windows: [], at: 0 });
-          if (next !== null && next !== NO_SOURCE && reader !== null) void refresh(false);
+          if (next === NO_SOURCE) {
+            publish({ status: 'nostore', source: next, kind: null, wallets: [], windows: [], at: 0 });
+            return;
+          }
+          if (next === null) {
+            publish({ status: 'idle', source: null, kind: null, wallets: [], windows: [], at: 0 });
+            return;
+          }
+          const cached = readCachedQuota(next, now());
+          publish(cached !== null
+            ? { ...cached, source: next }
+            : { status: 'idle', source: next, kind: null, wallets: [], windows: [], at: 0 });
+          if (reader !== null) void refresh(false);
         },
         dispose() { detach(); listeners.clear(); },
       };
@@ -2815,6 +2973,10 @@ window.__ModuleLoader__.load({
       const sessions = useOptional(useSessions, s => s);
       const balance = useQuota(quota);
       const figure = quotaFigure(balance, t);
+      // A figure the client remembers from the last load (or one whose refresh
+      // just failed) is dimmed rather than hidden: the number is still the best
+      // answer available, it is only not confirmed by this session's own read.
+      const fresh = balance.cached === true || balance.stale === true ? 'stale' : balance.status;
       // Windows read as three mini gauges — label, percent and a fill that carries
       // the magnitude — so the foot answers "how much is left" at a glance instead
       // of running three numbers together into one string.
@@ -2852,8 +3014,8 @@ window.__ModuleLoader__.load({
       const body = figure === ''
         ? null
         : windows === null
-          ? h('span', { className: 'tc-entry-quota', 'data-state': balance.status }, figure)
-          : h('span', { className: 'tc-entry-gauges' },
+          ? h('span', { className: 'tc-entry-quota', 'data-state': balance.status, 'data-fresh': fresh }, figure)
+          : h('span', { className: 'tc-entry-gauges', 'data-fresh': fresh },
             windows.map((window) => {
               const percent = Math.round(safeCount(window.percent));
               return h('span', {
@@ -2992,6 +3154,23 @@ window.__ModuleLoader__.load({
       //     silently and the label stays empty.
       quotaStore.attach((source, force) => readQuotaRoute(source, force, (url, init) => fetch(url, init)));
       ctx.effect(() => () => quotaStore.detach(), 'tc-context: quota reader');
+      // 4c. A tab that was hidden (or a laptop that was asleep) fired no interval
+      //     for however long it was away, so the figure on screen is hours old by
+      //     the time it is looked at again. Re-read on the return instead of
+      //     waiting out the next tick; a non-forced read is served from the
+      //     Host's own cache when that is still fresh.
+      ctx.effect(() => {
+        const onVisible = () => {
+          if (document.visibilityState === 'visible') void quotaStore.revalidate();
+        };
+        const onOnline = () => { void quotaStore.revalidate(); };
+        document.addEventListener('visibilitychange', onVisible);
+        window.addEventListener('online', onOnline);
+        return () => {
+          document.removeEventListener('visibilitychange', onVisible);
+          window.removeEventListener('online', onOnline);
+        };
+      }, 'tc-context: quota revalidate');
 
       // 5. Settings → its own「费用」page: every cost preference (badge / pill /
       //    currency / tier / budget) lives in the plugin's own directory entry.
