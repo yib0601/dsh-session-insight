@@ -37,7 +37,7 @@ modules:
     owns: ["index.js", "host/schema.js", "host/fold.js", "host/projections.js"]
     exposes:
       - "projection keys tcTimeline / tcHeaders / tcActivity (framework wire)"
-      - "tcTimeline = { requests, events, files, fileOps, commands, toolCalls, counts, last } (stateVersion 7)"
+      - "tcTimeline = { requests, events, files, fileOps, commands, toolCalls, counts, last, current } (stateVersion 7); `current` = 会话被设定到的路由 {provider, model, time}（model/selection 与 request/header 都会写，切模型先于计价生效）"
       - "tcActivity.days[*] = { tokens, requests, buckets, peakBuckets, offPeakBuckets, byModel: {model: {peak, offPeak}}, tools, programs, skills } (stateVersion 4)"
     depends_on: ["ctx.sessionProjections"]
     not_responsible_for: ["价格", "UI", "网络请求", "写会话日志"]
@@ -52,7 +52,7 @@ modules:
       - "createQuotaReader({cacheMs,timeoutMs,fetch,now}) (pure I/O boundary, cache per source)"
       - "mountQuotaRoute(ctx, reader, readKey) -> route disposer"
     depends_on: ["ctx.webServer", "ctx.credentials (DEEPSEEK_API_KEY / OPENCODE_GO_API_KEY)"]
-    not_responsible_for: ["计价", "UI 渲染", "充值/告警", "把密钥或原始 payload 交给页面", "落盘缓存", "判断当前会话在用哪个源（Client 依请求历史决定）", "把 resetsAt 换算成倒计时文案（Client 做，Host 只透传时刻）"]
+    not_responsible_for: ["计价", "UI 渲染", "充值/告警", "把密钥或原始 payload 交给页面", "落盘缓存", "判断当前会话在用哪个源（Client 依 provider id 决定，不看模型名；provider 已知但无额度则归 NO_SOURCE 并一次都不读，完全认不出则留白）", "把 resetsAt 换算成倒计时文案（Client 做，Host 只透传时刻）"]
   - name: context-client
     kind: internal
     responsibility: "5 个界面入口 + 设计系统（宿主 --dsw-* token）+ 卡片与仪表盘；含上下文统计（计数 + 工具/程序分布）、命令执行流水、文件活动（类型筛选/路径搜索/行数增减/操作日志）、Token 环形图、事件类型筛选、按模型花费、逐请求筛选/排序/CSV/分页/请求内容展开（来自页面内存里的聊天快照，不落盘）、Agent 家族卡（父/己/子/孙，各自 tokens 与费用）、仪表盘时间范围与工具/程序/技能排行、7 日柱图数值标签、预算行；侧栏脚额度卡（标题 + 订阅倒计时徽标 + 三条窗口计量条，折叠成 36px 导轨时收成一枚百分比/倒计时方块，倒计时按最长窗口 resetsAt 取整、≤7 天黄 ≤3 天红）；跨会话聚合 useMemo 缓存，历史金额按投影里的 peak / offPeak 桶分档计价"

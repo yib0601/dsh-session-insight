@@ -70,7 +70,7 @@ export function initTimeline() {
     requests: [], events: [], files: {},
     commands: [], fileOps: [], toolCalls: {},
     counts: { user: 0, answers: 0, skills: 0 },
-    last: null, current: { provider: '', model: '' },
+    last: null, current: { provider: '', model: '', time: 0 },
   };
 }
 
@@ -368,12 +368,17 @@ export function applyTimeline(state, event) {
   const seq = count(event?.seq) || (Number.isFinite(event?.seq) ? event.seq : 0);
   const co = coordinates(event);
 
-  // A request envelope announces the model that serves the following steps.
-  // A changed model is also a context event: the switch, not the envelope, is
-  // what explains why later requests bill at a different price row.
+  // A request envelope announces the model that serves the following steps, and
+  // a `model/selection` records the switch before any request runs. Either way
+  // `current` carries the moment it was recorded: consumers comparing sessions
+  // need to know which session's route is the newest, and a switch that never
+  // billed still has to win over an older session's last request. A changed
+  // model is also a context event: the switch, not the envelope, is what
+  // explains why later requests bill at a different price row.
   if (type === 'request/header' || type === 'request/context' || type === 'model/selection') {
-    const next = modelOf(event);
-    if (next.model === '') return state;
+    const route = modelOf(event);
+    if (route.model === '') return state;
+    const next = { provider: route.provider, model: route.model, time };
     const previous = state.current.model;
     const changed = previous !== '' && previous !== next.model;
     if (!changed) return { ...state, current: next };
@@ -433,11 +438,17 @@ export function applyTimeline(state, event) {
   return { ...state, events };
 }
 
+/**
+ * Timeline view. `current` is the route the session is *set to* — a model
+ * switch records it before any request runs — while `requests[*]` are the
+ * routes that actually billed. Consumers asking "which plan pays for the next
+ * turn" read `current`; those asking "what was spent" read `requests`.
+ */
 export function viewTimeline(state) {
   return {
     requests: state.requests, events: state.events, files: state.files,
     commands: state.commands, fileOps: state.fileOps, toolCalls: state.toolCalls,
-    counts: state.counts, last: state.last,
+    counts: state.counts, last: state.last, current: state.current,
   };
 }
 
@@ -473,7 +484,7 @@ export function viewHeaders(state) {
 // ── tcActivity ────────────────────────────────────────────────────────────────
 
 export function initActivity() {
-  return { days: {}, current: { provider: '', model: '' } };
+  return { days: {}, current: { provider: '', model: '', time: 0 } };
 }
 
 /** Per-Beijing-day billed tokens and per-model buckets (dashboard heatmap/chart). */

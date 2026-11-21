@@ -117,6 +117,8 @@ window.__ModuleLoader__.load({
         quotaUnavailable: '余额不足，无法发起新任务',
         quotaUpdated: '{time} 更新', quotaLoading: '读取中…', quotaFailed: '额度不可用',
         quotaUnconfigured: '未配置密钥', quotaEmpty: '零余额', quotaRefresh: '点按刷新额度',
+        quotaNoSource: '此供应商无额度可查',
+        quotaNoSourceHint: '当前路由是自建网关：它按上游密钥分别计费，网关本身不设配额，所以没有可显示的额度或到期时间',
       },
       en: {
         tab: 'Context', entry: 'Usage overview', dashboard: 'Usage overview',
@@ -202,6 +204,8 @@ window.__ModuleLoader__.load({
         quotaUnavailable: 'No balance left for a new task',
         quotaUpdated: 'updated {time}', quotaLoading: 'Loading…', quotaFailed: 'Balance unavailable',
         quotaUnconfigured: 'No provider key', quotaEmpty: 'Zero balance', quotaRefresh: 'Tap to refresh the balance',
+        quotaNoSource: 'This provider has no quota to read',
+        quotaNoSourceHint: 'The current route is your own gateway: it bills per upstream key and sets no allowance of its own, so there is no quota or expiry to show',
       },
     };
 
@@ -351,6 +355,10 @@ window.__ModuleLoader__.load({
   color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tc-entry-quota[data-state='ready']{color:var(--dsw-alias-label-primary)}
+/* A provider with no allowance is an explanation, not a figure: keep it quiet
+   and let it wrap, so the sentence stays readable instead of truncating. */
+.tc-entry-quota[data-state='nostore']{font-size:12px;font-weight:400;line-height:16px;
+  color:var(--dsw-alias-label-tertiary);white-space:normal;overflow:visible;text-overflow:clip}
 .tc-entry-gauges{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;min-width:0}
 .tc-meter{display:flex;flex-direction:column;gap:4px;min-width:0;cursor:default}
 .tc-meter-head{display:flex;align-items:baseline;justify-content:space-between;gap:2px;min-width:0}
@@ -645,8 +653,15 @@ window.__ModuleLoader__.load({
     const QUOTA_POLL_MS = 5 * 60 * 1000;
     /** Same-origin route registered by the Host half. */
     const QUOTA_URL = '/dsh-turn-cost/quota';
-    /** Source used while no request history names one. */
+    /**
+     * Route-parameter fallback only. It is never used to *decide* what to show:
+     * a read waits until the session names a vendor (see `sourceOfSessions`),
+     * because guessing here paints DeepSeek's official wallet on an account
+     * that is running on someone else's subscription.
+     */
     const QUOTA_DEFAULT_SOURCE = 'deepseek';
+    /** Remembers the last vendor a session named, for blank sessions with no history. */
+    const QUOTA_SOURCE_KEY = 'dsh-turn-cost:quota-source';
     const WALLET_SIGN = { CNY: '¥', USD: '$' };
 
     function money2(amount, currency) {
@@ -866,6 +881,7 @@ window.__ModuleLoader__.load({
         return total === '' ? t('quotaEmpty') : total;
       }
       if (snapshot.status === 'loading') return t('quotaLoading');
+      if (snapshot.status === 'nostore') return t('quotaNoSource');
       if (snapshot.status === 'unconfigured') return t('quotaUnconfigured');
       if (snapshot.status === 'failed') return t('quotaFailed');
       return '';
@@ -916,6 +932,11 @@ window.__ModuleLoader__.load({
         if (snapshot.available === false) lines.push(t('quotaUnavailable'));
         if (snapshot.at > 0) lines.push(t('quotaUpdated', { time: clock(snapshot.at) }));
         lines.push(t('quotaRefresh'));
+      } else if (snapshot.status === 'nostore') {
+        // Say what is true: this provider bills per upstream key, so no single
+        // allowance exists to display. A countdown here would be a lie.
+        lines.push(t('quotaNoSource'));
+        lines.push(t('quotaNoSourceHint'));
       } else if (snapshot.status === 'unconfigured') {
         lines.push(t('quotaUnconfigured'));
       } else if (snapshot.status === 'failed') {
@@ -950,30 +971,131 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Pick the quota source the current work runs on: the newest request across
-     * the loaded sessions decides, so switching the model switches the quota.
-     * Falls back to the default source while no request history is hydrated.
+     * Provider id → the quota source that can actually answer for it.
+     *
+     * Provider ids are the authoritative signal: a model id says nothing about
+     * whose account pays. The same `deepseek-v4.1-flash` is served by the
+     * DeepSeek platform, by OpenCode, and by a self-hosted gateway, and only the
+     * provider says which one.
+     *
+     * A provider that is *absent* here has no quota to display — that is a
+     * deliberate outcome, not a gap to fill:
+     *
+     *   - `ai-router` is the user's own multi-backend gateway (`ai.lighthouses.net`
+     *     style). It fans out to oc-go / oc-zen / openrouter / gemini / … and bills
+     *     per *upstream key*, with `quota_requests`/`quota_tokens` null on the
+     *     gateway key itself. Its `/health` describes *backends*, never the
+     *     caller's allowance, so there is no honest number to show. Reading the
+     *     OpenCode windows here would be wrong twice over: the gateway may route
+     *     to any backend, and those windows belong to a different key.
+     *   - `deepseek` / `opencode*` are the first-party platforms, where a wallet
+     *     or consumption window really does describe what is left.
+     */
+    const SOURCE_OF_PROVIDER = {
+      'opencode': 'opencode-go',
+      'opencode-go': 'opencode-go',
+      'opencode-go-v41': 'opencode-go',
+      'deepseek': 'deepseek',
+      'deepseek-account': 'deepseek',
+      'deepseek-official': 'deepseek',
+    };
+
+    /**
+     * The route's provider has no quota to read. Distinct from "no route yet":
+     * the first waits for information, this one has the information and it says
+     * there is nothing to show. The foot renders no figure in both cases, but
+     * only this one keeps the hover text explaining *why*.
+     */
+    const NO_SOURCE = 'none';
+
+    /**
+     * Classify one request route.
+     * @param provider - provider id recorded on the request.
+     * @param model - model id recorded on the request.
+     * @returns the quota source, `NO_SOURCE` when the provider is known to have
+     *   no quota to read, or `null` when the route names no vendor at all.
+     */
+    function sourceOfRoute(provider, model) {
+      const id = String(provider || '').trim().toLowerCase();
+      if (id !== '' && SOURCE_OF_PROVIDER[id] !== undefined) return SOURCE_OF_PROVIDER[id];
+      if (id !== '') return NO_SOURCE;
+      // Without a provider only OpenCode's own product name can classify a
+      // route; a bare model id names no plan, and neither does a gateway.
+      const text = String(model || '');
+      if (/opencode/i.test(text)) return 'opencode-go';
+      return null;
+    }
+
+    /**
+     * Route one session's timeline is *set to*.
+     *
+     * The timeline exposes `current` (written by a model switch before any
+     * request runs, stamped with its own time) and `requests` (the routes that
+     * actually billed). A switch must move the foot immediately — asking the user
+     * to send a message before the quota catches up is the same bug in slower
+     * form — but a stale switch must not outrank a newer request elsewhere, so
+     * `current` carries a time and is compared like any other route.
+     */
+    function routeOfSession(projections, id) {
+      const values = projections[id] === undefined ? undefined : projections[id].values;
+      const timeline = values === undefined || values === null ? undefined : values.tcTimeline;
+      if (timeline === undefined || timeline === null) return undefined;
+      const list = timeline.requests;
+      const last = Array.isArray(list) && list.length > 0 ? list[list.length - 1] : undefined;
+      const current = timeline.current;
+      if (current === null || typeof current !== 'object') return last;
+      if (typeof current.model !== 'string' || current.model === '') return last;
+      const currentTime = safeCount(current.time);
+      if (last !== undefined && safeCount(last.time) >= currentTime) return last;
+      return { time: currentTime, provider: current.provider, model: current.model };
+    }
+
+    /** Read the remembered vendor; `null` when absent or unreadable. */
+    function readStoredSource() {
+      try {
+        const stored = window.localStorage.getItem(QUOTA_SOURCE_KEY);
+        return typeof stored === 'string' && stored !== '' ? stored : null;
+      } catch { return null; }
+    }
+
+    /** Remember the vendor so a fresh blank session opens on the same plan. */
+    function storeSource(source) {
+      try {
+        if (typeof source === 'string' && source !== '') window.localStorage.setItem(QUOTA_SOURCE_KEY, source);
+      } catch { /* storage disabled */ }
+    }
+
+    /**
+     * Pick the quota source the current work runs on: the newest route among the
+     * hydrated sessions decides, so switching the model switches the plan being
+     * measured.
+     *
+     * Precedence: the newest route's provider → the vendor remembered from the
+     * last session → none. Two deliberate non-answers:
+     *   - `NO_SOURCE` — the newest route is a provider with no quota (a
+     *     self-hosted gateway). The remembered vendor is **not** consulted here:
+     *     yesterday's OpenCode window must not stand in for today's gateway.
+     *   - `null` — nothing has named a route yet. The foot shows no figure
+     *     rather than presenting some other plan's numbers.
+     *
+     * @param sessions - the session list snapshot, or `undefined` before it arrives.
+     * @returns a source id, `NO_SOURCE`, or `null` while nothing is known.
      */
     function sourceOfSessions(sessions) {
       const projections = sessions === undefined || sessions === null ? undefined : sessions.projectionsBySession;
-      if (projections === undefined || projections === null) return QUOTA_DEFAULT_SOURCE;
+      if (projections === undefined || projections === null) return readStoredSource();
       let best = null;
       for (const id of Array.isArray(sessions.ids) ? sessions.ids : Object.keys(projections)) {
-        const timeline = projections[id] === undefined ? undefined : projections[id].values;
-        const requests = timeline === undefined || timeline === null ? undefined : timeline.tcTimeline;
-        const list = requests === undefined || requests === null ? undefined : requests.requests;
-        const last = Array.isArray(list) && list.length > 0 ? list[list.length - 1] : undefined;
-        if (last === undefined) continue;
-        const time = safeCount(last.time);
-        if (best === null || time > best.time) best = { time, provider: last.provider, model: last.model };
+        const route = routeOfSession(projections, id);
+        if (route === undefined) continue;
+        const time = safeCount(route.time);
+        if (best === null || time > best.time) best = { time, provider: route.provider, model: route.model };
       }
-      if (best === null) return QUOTA_DEFAULT_SOURCE;
-      const text = String(best.model || '') + ' ' + String(best.provider || '');
-      // OpenCode's own model names carry the product name; the `ai-router`
-      // gateway fronts the same account, so its routes belong to that quota too.
-      if (/opencode/i.test(text)) return 'opencode-go';
-      if (/ai-router/i.test(text)) return 'opencode-go';
-      return QUOTA_DEFAULT_SOURCE;
+      if (best !== null) {
+        const known = sourceOfRoute(best.provider, best.model);
+        if (known !== null) return known;
+      }
+      return readStoredSource();
     }
 
     /**
@@ -981,11 +1103,21 @@ window.__ModuleLoader__.load({
      * `detach()` withdraws both while keeping the React subscribers, so a route
      * that disappears and comes back leaves the button in place. `setSource`
      * re-reads whenever the session starts running on another vendor.
+     *
+     * The store starts with **no** source and stays idle until one is named.
+     * Polling a guessed vendor is what made an OpenCode subscription display the
+     * DeepSeek wallet: the route parameter defaulted to `deepseek`, so the very
+     * first read after a reload ran against the wrong vendor and painted its
+     * number before the session's own route was known.
+     *
+     * `NO_SOURCE` is a settled answer, not a missing one: the route was read and
+     * the provider has no quota. The store then reports `nostore` so the surface
+     * can explain itself instead of leaving a silent blank.
      */
     function createQuotaStore(options = {}) {
       const pollMs = options.pollMs ?? QUOTA_POLL_MS;
       const listeners = new Set();
-      let snapshot = { status: 'idle', source: QUOTA_DEFAULT_SOURCE, kind: null, wallets: [], windows: [], at: 0 };
+      let snapshot = { status: 'idle', source: null, kind: null, wallets: [], windows: [], at: 0 };
       let reader = null;
       let inflight = null;
       let timer = null;
@@ -995,6 +1127,11 @@ window.__ModuleLoader__.load({
       };
       const refresh = (force) => {
         if (reader === null) return Promise.resolve(false);
+        // A provider without quota is settled: never ask, never guess another.
+        if (snapshot.source === NO_SOURCE) return Promise.resolve(false);
+        // Nothing named the vendor yet: reading would answer for a plan that may
+        // not be the one paying, so wait for `setSource` instead.
+        if (typeof snapshot.source !== 'string' || snapshot.source === '') return Promise.resolve(false);
         if (inflight !== null) return inflight;
         if (snapshot.status === 'idle') publish({ ...snapshot, status: 'loading' });
         inflight = Promise.resolve()
@@ -1024,12 +1161,17 @@ window.__ModuleLoader__.load({
         },
         detach,
         refresh,
-        /** Point the store at one source; a change drops the stale figure. */
+        /**
+         * Point the store at one source; a change drops the stale figure.
+         * `null` = not known yet (idle), `NO_SOURCE` = known to have no quota
+         * (`nostore`). Neither issues a read.
+         */
         setSource(source) {
-          const next = typeof source === 'string' && source !== '' ? source : QUOTA_DEFAULT_SOURCE;
+          const next = typeof source === 'string' && source !== '' ? source : null;
           if (next === snapshot.source) return;
-          publish({ status: 'idle', source: next, kind: null, wallets: [], windows: [], at: 0 });
-          if (reader !== null) void refresh(false);
+          const status = next === NO_SOURCE ? 'nostore' : 'idle';
+          publish({ status, source: next, kind: null, wallets: [], windows: [], at: 0 });
+          if (next !== null && next !== NO_SOURCE && reader !== null) void refresh(false);
         },
         dispose() { detach(); listeners.clear(); },
       };
@@ -2683,10 +2825,17 @@ window.__ModuleLoader__.load({
       // "when does my subscription run out" means for a window-based vendor.
       const cycle = quotaCycleOf(balance);
       const remain = cycle === null ? '' : remainText(cycle.ms, t);
-      // The quota follows the vendor the newest request ran on, so switching
+      // The quota follows the route the newest request ran on, so switching
       // models switches the figure instead of showing another plan's numbers.
+      // `null` (nothing known) and `NO_SOURCE` (a gateway with no allowance) both
+      // leave the foot without a figure — better blank than another vendor's
+      // wallet — but only `NO_SOURCE` is remembered, so a new blank session on
+      // the same gateway does not fall back to somebody else's plan.
       const source = sourceOfSessions(sessions);
-      React.useEffect(() => { quota.setSource(source); }, [source, quota]);
+      React.useEffect(() => {
+        quota.setSource(source);
+        if (source !== null) storeSource(source);
+      }, [source, quota]);
       React.useEffect(() => {
         if (!open) return undefined;
         const onKeyDown = (event) => { if (event.key === 'Escape') store.set(false); };

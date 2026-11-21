@@ -177,6 +177,21 @@ const switchedView = byKey.tcTimeline.wire.view(switched);
 assert.equal(switchedView.events.length, 1, 'a changed model is recorded');
 assert.equal(switchedView.events[0].kind, 'switch');
 assert.equal(switchedView.events[0].label, 'deepseek-flash → claude-sonnet-5-5');
+// The view carries the route the session is set to, with the moment it was
+// recorded, so a consumer can tell a fresh switch from another session's older
+// request without waiting for it to bill.
+assert.equal(switchedView.current.provider, 'anthropic');
+assert.equal(switchedView.current.model, 'claude-sonnet-5-5');
+assert.equal(switchedView.current.time, t1, 'a switch is stamped with its own event time');
+let fresh = byKey.tcTimeline.init();
+assert.equal(byKey.tcTimeline.wire.view(fresh).current.model, '', 'a blank session names no model');
+fresh = byKey.tcTimeline.apply(fresh, {
+  type: 'model/selection', seq: 9, time: t2, data: { provider: 'opencode-go', model: 'deepseek-v4.1-flash' },
+});
+const freshView = byKey.tcTimeline.wire.view(fresh);
+assert.equal(freshView.current.provider, 'opencode-go', 'a switch before any request still names the route');
+assert.equal(freshView.current.time, t2);
+assert.equal(freshView.requests.length, 0, 'and it has billed nothing yet');
 
 // Unknown events are ignored and never throw.
 let s = byKey.tcTimeline.init();

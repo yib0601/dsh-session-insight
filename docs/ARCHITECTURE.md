@@ -2,7 +2,7 @@
 
 ## Boundary (three sentences)
 
-- **负责什么**: 用官方单价把 DSH 已算好的 token 用量换算成钱（逐轮徽章 + 底部会话累计），并提供 `dsh-context` 的那套界面（跨会话「用量总览」、会话「上下文」页签、`/context` 命令弹窗、右侧栏 Context 页签、费用偏好设置行），外加侧栏脚「订阅额度」——按当前会话最近一次请求所在的供应商，把对应官方额度（DeepSeek 余额 / OpenCode Go 的 5 小时·周·月用量）与**订阅周期倒计时**（最长窗口重置时刻）显示在「用量总览」卡片上；已完全替代该插件。
+- **负责什么**: 用官方单价把 DSH 已算好的 token 用量换算成钱（逐轮徽章 + 底部会话累计），并提供 `dsh-context` 的那套界面（跨会话「用量总览」、会话「上下文」页签、`/context` 命令弹窗、右侧栏 Context 页签、费用偏好设置行），外加侧栏脚「订阅额度」——按**请求记录的 provider id**（不看模型名：同一个模型可由多个账号服务）选定额度源，把对应官方额度（DeepSeek 余额 / OpenCode Go 的 5 小时·周·月用量）与**订阅周期倒计时**（最长窗口重置时刻）显示在「用量总览」卡片上；自建网关（如 `ai-router`）按上游密钥计费、网关自身不设配额，归为「无额度源」——不显示数字也不发请求，只说明原因；没有证据时同样留白而不猜源；已完全替代该插件。
 - **不负责什么**: 不改写会话日志、不 append 任何 Session 事件、不改动其他插件的 UI、不使用任何第三方价格（models.dev、pi-ai catalog 等）；不统计联网搜索/OCR 等按次计费项；不拉取 models.dev 或 npm 注册表；不读取原始会话日志文件；不持久化聊天正文（上下文浏览器的「请求内容」只渲染页面已在内存里的聊天快照，关页即消失）；不做充值、不做额度告警、不缓存额度到磁盘、不让供应商密钥进入页面、不代替供应商统计用量（只读官方口径）。
 - **对外只暴露什么**: `conversation.chat.assistant-actions`（`turn-cost`）、`conversation.chat.turnTail`（`dsh-turn-cost`）、`conversation.composer.dock`（`session-cost`）、`conversation.view`（`tc-context`）、`conversation.input.overlay`（`tc-context-modal`）、`sidebar.footer.action` / `sidebar.right.pane.tab`（`tc-overview` / `tc-context`）、`settings.section` + `settings.section.icon`（`turn-cost`，插件自有设置页）、`inputTriggers` 命令源 `context`（`/context`），以及两个 locale 命名空间 `turnCost` / `tcContext`。三个 `tc*` session 投影为内部数据源。
 

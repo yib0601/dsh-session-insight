@@ -27,17 +27,28 @@ const block = source.slice(safeStart - 4, safeEnd + 1) + '\n' + source.slice(quo
 /** The chunk polls with `setInterval`; the VM gets counted timers instead of real ones. */
 const timers = new Map();
 let nextTimerId = 1;
+/** In-memory stand-in for the browser's localStorage the source memory uses. */
+const storage = new Map();
 const sandbox = {
   setInterval: (fn, ms) => { const id = nextTimerId++; timers.set(id, { fn, ms }); return id; },
   clearInterval: (id) => { timers.delete(id); },
   URLSearchParams,
+  window: {
+    localStorage: {
+      getItem: (key) => (storage.has(key) ? storage.get(key) : null),
+      setItem: (key, value) => { storage.set(key, String(value)); },
+      removeItem: (key) => { storage.delete(key); },
+    },
+  },
 };
 const ctx = runInNewContext(
   `${block}
    ({ money2, moneyList, clock, stampOf, windowShort, windowLong, sourceName,
       msUntil, remainText, remainTone, quotaCycleOf, windowLineOf, resetClauseOf,
       quotaSnapshotOf, quotaFigure, quotaDetail, quotaSubOf, quotaTileValue, sourceOfSessions,
-      createQuotaStore, readQuotaRoute, QUOTA_URL, QUOTA_POLL_MS, QUOTA_DEFAULT_SOURCE })`,
+      sourceOfRoute, routeOfSession, readStoredSource, storeSource, NO_SOURCE,
+      createQuotaStore, readQuotaRoute, QUOTA_URL, QUOTA_POLL_MS, QUOTA_DEFAULT_SOURCE,
+      QUOTA_SOURCE_KEY })`,
   sandbox,
 );
 
@@ -45,7 +56,8 @@ const {
   money2, moneyList, clock, stampOf, windowShort, windowLong, sourceName,
   msUntil, remainText, remainTone, quotaCycleOf, windowLineOf, resetClauseOf,
   quotaSnapshotOf, quotaFigure, quotaDetail, quotaSubOf, quotaTileValue, sourceOfSessions,
-  createQuotaStore, readQuotaRoute, QUOTA_URL, QUOTA_POLL_MS, QUOTA_DEFAULT_SOURCE,
+  sourceOfRoute, routeOfSession, readStoredSource, storeSource, NO_SOURCE,
+  createQuotaStore, readQuotaRoute, QUOTA_URL, QUOTA_POLL_MS, QUOTA_DEFAULT_SOURCE, QUOTA_SOURCE_KEY,
 } = ctx;
 
 /** Minimal dictionary so the formatters can be asserted without the locale service. */
@@ -66,6 +78,8 @@ const t = (key, params = {}) => {
     quotaUnavailable: '余额不足，无法发起新任务',
     quotaUpdated: '{time} 更新', quotaLoading: '读取中…', quotaFailed: '额度不可用',
     quotaUnconfigured: '未配置密钥', quotaEmpty: '零余额', quotaRefresh: '点按刷新额度',
+    quotaNoSource: '此供应商无额度可查',
+    quotaNoSourceHint: '当前路由是自建网关：它按上游密钥分别计费，网关本身不设配额，所以没有可显示的额度或到期时间',
   };
   return String(table[key] ?? key).replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? ''));
 };
@@ -209,19 +223,37 @@ assert.equal(quotaSnapshotOf('nope').status, 'failed');
 assert.deepEqual(quotaDetail({ status: 'failed' }, t).split('\n'), ['订阅额度', '额度不可用']);
 assert.deepEqual(quotaDetail({ status: 'unconfigured' }, t).split('\n'), ['订阅额度', '未配置密钥']);
 
+// ── sourceOfRoute: the provider decides, never the model id ────────────────
+assert.equal(sourceOfRoute('opencode-go', 'deepseek-v4.1-flash'), 'opencode-go',
+  'the OpenCode gateway serving a DeepSeek model draws on the OpenCode quota');
+assert.equal(sourceOfRoute('ai-router', 'deepseek-v4.1-flash'), 'none',
+  'a self-hosted gateway bills per upstream key and sets no allowance, so it has no quota to read');
+assert.equal(sourceOfRoute('ai-router', 'OpenCode Go · 付费 · Qwen3.8-Max'), 'none',
+  'the gateway keeps no quota even when it fronts an OpenCode account');
+assert.equal(sourceOfRoute('some-other-gateway', 'deepseek-v4.1-flash'), 'none',
+  'any unrecognised provider is treated as quota-less rather than guessed at');
+assert.equal(sourceOfRoute('opencode', 'big-pickle'), 'opencode-go');
+assert.equal(sourceOfRoute('deepseek', 'deepseek-v4.1-flash'), 'deepseek');
+assert.equal(sourceOfRoute('deepseek-account', 'deepseek-v4.1-flash'), 'deepseek');
+assert.equal(sourceOfRoute('', 'OpenCode Go · 付费 · Qwen3.8-Max · 1M'), 'opencode-go',
+  'without a provider the OpenCode product name still classifies the model');
+assert.equal(sourceOfRoute('', 'deepseek-v4.1-flash'), null,
+  'a bare DeepSeek model name names no vendor: it is served by several accounts');
+
 // ── sourceOfSessions ────────────────────────────────────────────────────────
 assert.equal(QUOTA_DEFAULT_SOURCE, 'deepseek');
 const session = (id, time, provider, model) => ({
   ids: [id],
   projectionsBySession: { [id]: { values: { tcTimeline: { requests: [{ time, provider, model }] } } } },
 });
-assert.equal(sourceOfSessions(undefined), 'deepseek', 'no sessions means the default source');
-assert.equal(sourceOfSessions({ ids: [], projectionsBySession: {} }), 'deepseek');
-assert.equal(sourceOfSessions(session('a', 100, 'ai-router', 'OpenCode Go · 付费 · Qwen3.8-Max · 1M')), 'opencode-go',
-  'an OpenCode Go model selects the Go quota');
+assert.equal(sourceOfSessions(undefined), null,
+  'before the session list arrives nothing is guessed, so no wallet is painted');
+assert.equal(sourceOfSessions({ ids: [], projectionsBySession: {} }), null, 'an empty list names no vendor');
+assert.equal(sourceOfSessions(session('a', 100, 'opencode-go', 'deepseek-v4.1-flash')), 'opencode-go',
+  'the provider decides even when the model id looks like DeepSeek');
 assert.equal(sourceOfSessions(session('a', 100, 'deepseek', 'deepseek-v4.1-flash')), 'deepseek');
-assert.equal(sourceOfSessions(session('a', 100, 'ai-router', 'deepseek-v4.1-flash')), 'opencode-go',
-  'the OpenCode gateway provider belongs to the OpenCode quota even when the model id looks like DeepSeek');
+assert.equal(sourceOfSessions(session('a', 100, 'ai-router', 'deepseek-v4.1-flash')), 'none',
+  'a gateway route settles on no quota instead of borrowing the OpenCode windows');
 assert.equal(sourceOfSessions(session('a', 100, 'opencode', 'OpenCode Zen · 免费 · big-pickle · 200K')), 'opencode-go',
   'Zen shares the same account key, so it reads the Go windows');
 // The newest request across sessions wins.
@@ -229,11 +261,52 @@ const mixed = {
   ids: ['a', 'b'],
   projectionsBySession: {
     a: { values: { tcTimeline: { requests: [{ time: 100, provider: 'deepseek', model: 'deepseek-v4.1-flash' }] } } },
-    b: { values: { tcTimeline: { requests: [{ time: 100, provider: 'x', model: 'y' }, { time: 200, provider: 'ai-router', model: 'OpenCode Go · 付费 · Kimi-K3' }] } } },
+    b: { values: { tcTimeline: { requests: [{ time: 100, provider: 'x', model: 'y' }, { time: 200, provider: 'ai-router', model: 'deepseek-v4.1-flash' }] } } },
   },
 };
-assert.equal(sourceOfSessions(mixed), 'opencode-go', 'the newest request decides');
-assert.equal(sourceOfSessions({ ids: ['a'], projectionsBySession: { a: { values: {} } } }), 'deepseek', 'a session without a timeline is skipped');
+assert.equal(sourceOfSessions(mixed), 'none',
+  'the newest request decides, and a gateway route answers "no quota"');
+assert.equal(sourceOfSessions({ ids: ['a'], projectionsBySession: { a: { values: {} } } }), null,
+  'a session without a timeline names no vendor');
+
+// ── routeOfSession: a switch counts before it bills ─────────────────────────
+const projections = id => ({ [id]: { values: { tcTimeline: {
+  requests: [{ time: 100, provider: 'deepseek', model: 'deepseek-v4.1-flash' }],
+  current: { provider: 'opencode-go', model: 'deepseek-v4.1-flash', time: 300 },
+} } } });
+// Routes come out of the VM realm, so compare fields rather than prototypes.
+const routeOf = (routes, id) => {
+  const route = routeOfSession(routes, id);
+  return route === undefined ? undefined : { time: route.time, provider: route.provider, model: route.model };
+};
+assert.deepEqual(routeOf(projections('a'), 'a'),
+  { time: 300, provider: 'opencode-go', model: 'deepseek-v4.1-flash' },
+  'a model switch already recorded outranks the older billed request');
+assert.deepEqual(
+  routeOf({ a: { values: { tcTimeline: {
+    requests: [{ time: 500, provider: 'opencode-go', model: 'x' }],
+    current: { provider: 'deepseek', model: 'y', time: 100 },
+  } } } }, 'a'),
+  { time: 500, provider: 'opencode-go', model: 'x' },
+  'a newer billed request outranks an older switch');
+assert.equal(routeOf({ a: { values: {} } }, 'a'), undefined, 'no timeline means no route');
+assert.equal(
+  routeOf({ a: { values: { tcTimeline: { requests: [], current: { provider: 'p', model: '', time: 1 } } } } }, 'a'),
+  undefined,
+  'an empty current without requests names no route');
+assert.equal(
+  sourceOfSessions({ ids: ['a'], projectionsBySession: projections('a') }), 'opencode-go',
+  'the quota follows a switch that has not been billed yet');
+
+// ── source memory ───────────────────────────────────────────────────────────
+assert.equal(readStoredSource(), null, 'nothing is remembered before the first session');
+storeSource('opencode-go');
+assert.equal(readStoredSource(), 'opencode-go');
+assert.equal(sourceOfSessions({ ids: [], projectionsBySession: {} }), 'opencode-go',
+  'a blank workspace opens on the vendor the last session used, not on DeepSeek');
+assert.equal(storage.get(QUOTA_SOURCE_KEY), 'opencode-go');
+storeSource(null);
+assert.equal(readStoredSource(), 'opencode-go', 'an empty source is not remembered over a real one');
 
 // ── readQuotaRoute ──────────────────────────────────────────────────────────
 assert.equal(QUOTA_URL, '/dsh-turn-cost/quota');
@@ -252,7 +325,7 @@ await assert.rejects(() => readQuotaRoute('opencode-go', false, badFetch), /quot
 assert.equal(QUOTA_POLL_MS, 5 * 60 * 1000, 'the poll runs every five minutes');
 const store = createQuotaStore();
 assert.equal(store.getSnapshot().status, 'idle');
-assert.equal(store.getSnapshot().source, 'deepseek');
+assert.equal(store.getSnapshot().source, null, 'a fresh store names no vendor');
 assert.equal(await store.refresh(), false, 'without a reader there is nothing to refresh');
 
 let notifications = 0;
@@ -263,8 +336,12 @@ store.attach(async (source, force) => {
   if (source === 'opencode-go') return windowsBody;
   return { status: 'ready', source: 'deepseek', kind: 'balance', available: true, at: 1, wallets: [{ currency: 'CNY', total: '3.00' }] };
 });
+assert.equal(await store.refresh(), false, 'a store with no vendor reads nothing at all');
+assert.equal(reads.length, 0, 'guard: no vendor must not become a DeepSeek read');
+assert.equal(store.getSnapshot().status, 'idle', 'and it stays blank instead of reporting a failure');
+store.setSource('deepseek');
 await store.refresh();
-assert.deepEqual(reads[0], { source: 'deepseek', force: false }, 'attach reads the current source without forcing');
+assert.deepEqual(reads[0], { source: 'deepseek', force: false }, 'the first read follows the named source without forcing');
 assert.equal(store.getSnapshot().kind, 'balance');
 assert.equal(quotaFigure(store.getSnapshot(), t), '¥3.00');
 assert.ok(notifications >= 2, 'loading then ready both notify');
@@ -285,8 +362,36 @@ store.setSource('deepseek');
 await store.refresh();
 assert.equal(store.getSnapshot().kind, 'balance', 'switching back re-reads the wallet source');
 
+// Losing the vendor withdraws the figure and stops reading; it never falls back
+// to another plan's numbers.
+store.setSource(null);
+assert.equal(store.getSnapshot().source, null);
+assert.equal(store.getSnapshot().status, 'idle');
+assert.equal(store.getSnapshot().kind, null, 'the stale window figure is dropped with the source');
+assert.equal(quotaFigure(store.getSnapshot(), t), '', 'a store with no vendor renders nothing');
+const countAfterClear = reads.length;
+assert.equal(await store.refresh(), false, 'a cleared store does not poll a default vendor');
+assert.equal(reads.length, countAfterClear, 'guard: clearing the source must not trigger a DeepSeek read');
+store.setSource('deepseek');
+await store.refresh();
+
+// A provider with no quota settles once and is never polled again.
+store.setSource(NO_SOURCE);
+assert.equal(store.getSnapshot().status, 'nostore', 'a quota-less provider reports its own state');
+assert.equal(store.getSnapshot().source, NO_SOURCE);
+assert.equal(quotaFigure(store.getSnapshot(), t), '此供应商无额度可查',
+  'the foot says there is no quota instead of showing a number');
+assert.deepEqual(quotaDetail(store.getSnapshot(), t).split('\n').slice(0, 2),
+  ['订阅额度', '此供应商无额度可查'], 'the hover text explains why');
+const countBeforeNoSource = reads.length;
+assert.equal(await store.refresh(), false, 'a quota-less provider is never read');
+assert.equal(reads.length, countBeforeNoSource, 'guard: no read may be issued for it');
+store.setSource(NO_SOURCE);
+assert.equal(reads.length, countBeforeNoSource, 're-selecting the same quota-less source stays quiet');
+
 // A press forces the Host read; the poll reuses its cache.
 store.attach(async (source, force) => { reads.push({ source, force }); return { status: 'ready', source, kind: 'balance', at: 2, wallets: [] }; });
+store.setSource('deepseek');    // leave the quota-less state first: it issues no reads
 await store.refresh();          // let the attach read settle first
 await store.refresh(true);
 assert.equal(reads[reads.length - 1].force, true, 'a press forces the read');

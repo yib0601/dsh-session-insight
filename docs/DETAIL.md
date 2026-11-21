@@ -77,13 +77,19 @@
 
 侧栏脚「用量总览」是一条两行卡片，直接显示**当前正在用的那个订阅**还剩多少、还够用多少天；点按按钮同时强刷额度并打开总览：
 
-- **跟随供应商**：取所有已加载会话里**最新一次请求**的 provider / model 判断源——模型名或 provider 带 `OpenCode`（含 `ai-router` 网关，它前面就是 OpenCode 账号）→ OpenCode Go 源；否则 → DeepSeek 源。切模型即切额度，不会拿别的套餐数字充数；没有请求历史时回落到 DeepSeek 源。
+- **跟随供应商，只看 provider**：判定源用请求里记录的 **provider id**（`tcTimeline` 的 `current` / `requests[*]`），不看模型名——同一个 `deepseek-v4.1-flash` 既可能由 DeepSeek 官方平台服务，也可能由 OpenCode 服务，还可能由自建网关转发，只有 provider 能说明**是谁的订阅在扣**。映射只有两条：`opencode` / `opencode-go` / `opencode-go-v41` → OpenCode Go；`deepseek` / `deepseek-account` / `deepseek-official` → DeepSeek。provider 完全缺失时只认模型名里的 `OpenCode` 字样。
+- **自建网关没有额度，就不显示额度**：`ai-router` 这类自建网关是多后端的转发层（后端可能是 oc-go / oc-zen / openrouter / gemini…），它按**上游密钥**分别计费，网关自己的密钥 `quota_requests` / `quota_tokens` 通常为 null，`/health` 描述的也只是后端状态而不是调用方的余量——因此**没有任何诚实的数字可显示**。这类 provider 归入 `NO_SOURCE`：卡片不显示金额、不显示百分比、不算倒计时、**一次额度请求都不发**，只写一行「此供应商无额度可查」，悬浮补一句为什么。不借用 OpenCode 的窗口来顶替：网关可能把请求转给任意后端，而那些窗口属于另一把密钥。
+- **切模型立刻生效**：`tcTimeline` 的 `current` 由 `model/selection` 写入并带自身时间戳，所以**改完模型不必先发一条消息**额度就跟着换；比较时 `current` 与各会话 `requests` 末尾按时间排，谁新听谁的，旧切换不会压过别处更新的请求。
+- **无源时留白**：拿不到 provider 也没有上次记忆时，卡片**不显示任何数字**（状态 `idle`，`refresh` 直接返回，不读任何源）。这是刻意的——以前路由参数默认 `deepseek`，刷新页面会在会话自己的路由还没到达前先画一次 DeepSeek 钱包，OpenCode 订阅的账户就看到了「DeepSeek 官方额度」。
+- **两种「不显示」要分清**：`idle` = 还不知道（等会话路由），`nostore` = 已经知道，且该 provider 本来就没有额度。前者悬浮只有标题，后者给出原因；`NO_SOURCE` 也会被记忆，所以新开空会话仍然不会回落到别的套餐。
+- **记住上次的源**：认出的源写进 `localStorage` 的 `dsh-turn-cost:quota-source`，新开空会话或刷新时先按它显示，等会话自己的路由到达再覆盖。
 - **第一行**：`用量总览` + 右侧倒计时徽标（`剩 12 天`）。倒计时取**最长额度窗口的重置时刻**——OpenCode Go 的月窗口重置即订阅周期结束，官方 `usage` 接口除这三个窗口的重置时间外不给到期字段，所以周期长度由此推出；不满 1 天给小时、不满 1 小时给分钟，过点写「已到期」。≤7 天转黄、≤3 天转红。悬浮徽标给出确定的日期时刻（如「订阅周期 12-02 23:30 结束（剩 12 天）」）。
 - **第二行（OpenCode Go）**：5 小时 / 周 / 月三条**微型计量条**——标签 + 百分比 + 3px 轨道，填充按百分比给长度，≥70% 转黄、≥90% 转红，一眼看出哪档先见底。整卡悬浮给三档全称、百分比、**北京时间重置时间与各档自己的倒计时**（如「本周：已用 37%，11-23 08:00 重置（剩 2 天）」）。侧栏折叠成 36px 导轨时整卡收成一枚小方块：最紧那档的百分比 + 紧凑倒计时（`54%` / `12天`）。
 - **仪表盘磁贴**：标题写「OpenCode Go 额度」，主数字是最紧的那档（`月 54%`），副行给倒计时与读取时刻（`剩 12 天 · 23:21 更新`）；三档全量在悬浮明细里。
 - **DeepSeek**：官方 `GET https://api.deepseek.com/user/balance`，取每币种 `total_balance` 并保留 `topped_up_balance` / `granted_balance` 拆项。第二行是 `¥19.75`（无周期可算，只有钱包）；悬浮给充值 / 赠送拆项；磁贴同源。
 - **数据流**：Client 只请求同源路由 `GET /dsh-turn-cost/quota?source=<id>`（每 5 分钟一次，点按带 `force=1`）。Host 的 `host/quota.js` 才持有密钥（`credentials` 里的 `DEEPSEEK_API_KEY` / `OPENCODE_GO_API_KEY`，每次读取时解析，不缓存）、发官方请求（OpenCode 每次请求现造 `x-opencode-session` / `x-opencode-request`，12s 超时）、按源缓存 5 分钟。**密钥与官方原始 payload 都不进页面**。
 - **异常分支**：读失败（网络、超时、非 2xx）→「额度不可用」；Host 未配置该源密钥 →「未配置密钥」；余额/窗口为 0 →「零余额」。三者都不伪装成 0 消耗。失败不写缓存，下一次轮询／点按会重试；缓存里的上一次成功值继续服务非强制读。
+- **无源分支**：既没有会话路由也没有记忆 → 卡片只有标题与按钮，不显示金额、不显示百分比、不发请求。
 - **失败是安全的**：Host 没有 `webServer` 或 `credentials` 时不会注册路由，按钮退回普通样式（首读失败即静默），费用与上下文功能完全不受影响。未知 `source` 参数由 Host 直接 400，不会悄悄给成默认源。
 
 ## 偏好设置
