@@ -6,9 +6,11 @@
  *
  * HMR note: the Host watches this entry file only. After editing
  * `client.context.js`, touch this file too so the owner revision (and thus the
- * chunk URL) changes and the browser loads the fresh chunk. (rev 34 — the
- * sidebar-foot button now also renders the live subscription balance read
- * through DSH's `account/getBalance` Remote.)
+ * chunk URL) changes and the browser loads the fresh chunk. (rev 39 — the
+ * "context items" card was restructured into four visual levels: window
+ * summary band, tab bar with item counts, per-bucket scale strip, and labelled
+ * item rows with a one-line gist, a magnitude bar and a share column.)
+ * Touch this file after every `client.context.js` edit.
  *
  * Sections (a static dsh.client bundle must be one file):
  *   §1 pricing (pure) · §1.5 preferences · §2 presentation (React) · §3 composition (locale + slot)

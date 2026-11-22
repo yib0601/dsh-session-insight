@@ -33,14 +33,15 @@ modules:
     not_responsible_for: ["价格", "组件内部状态"]
   - name: context-host
     kind: internal
-    responsibility: "3 个 tc* session 投影（timeline / headers / activity）的纯 fold + 防御式激活；timeline 折叠工具计数 / 命令流水（程序·状态·耗时）/ 文件操作流水与逐文件行数增减 / 用户·助手·技能计数，并记录模型切换事件；activity 按请求时间折叠出 peakBuckets / offPeakBuckets（模型再分一层）"
-    owns: ["index.js", "host/schema.js", "host/fold.js", "host/projections.js"]
+    responsibility: "4 个 tc* session 投影（timeline / headers / activity / surface）的纯 fold + 防御式激活；timeline 折叠工具计数 / 命令流水（程序·状态·耗时）/ 文件操作流水与逐文件行数增减 / 用户·助手·技能计数，并记录模型切换事件；activity 按请求时间折叠出 peakBuckets / offPeakBuckets（模型再分一层）；surface 折叠上下文明细（系统提示词分区、每个工具定义各自的估价、消息按类别分桶、占用最大的条目），让「已用 174K」能落到具体条目"
+    owns: ["index.js", "host/schema.js", "host/fold.js", "host/surface.js", "host/estimate.js", "host/projections.js"]
     exposes:
-      - "projection keys tcTimeline / tcHeaders / tcActivity (framework wire)"
+      - "projection keys tcTimeline / tcHeaders / tcActivity / tcSurface (framework wire)"
+      - "tcSurface = { system: {chars, tokens, sections: [{label, chars, tokens, preview, body, truncated}], seq, time} | null, tools: {seq, time, total, rows: [{name, tokens, chars, description, body, truncated}]} | null, kinds: {[user|assistant|reasoning|call|result|developer|other]: {count, tokens}}, tokens, top: [{seq, time, turn, step, kind, label, tokens, preview}], approximate } (stateVersion 1)；与内置 contextBreakdown 同口径同公式，实测同一会话 systemTokens / toolsTokens / messageTokens 三项逐项相等；body 是给卡片展开读的条目正文，按总预算分配（单段 12K 字符、单条 schema 6K 字符、系统合计 64K、工具合计 80K，按体积从大到小先满足），预算外的条目 body 为空且 truncated=true"
       - "tcTimeline = { requests, events, files, fileOps, commands, toolCalls, counts, last, current } (stateVersion 7); `current` = 会话被设定到的路由 {provider, model, time}（model/selection 与 request/header 都会写，切模型先于计价生效）"
       - "tcActivity.days[*] = { tokens, requests, buckets, peakBuckets, offPeakBuckets, byModel: {model: {peak, offPeak}}, tools, programs, skills } (stateVersion 4)"
     depends_on: ["ctx.sessionProjections"]
-    not_responsible_for: ["价格", "UI", "网络请求", "写会话日志"]
+    not_responsible_for: ["价格", "UI", "网络请求", "写会话日志", "保留工具输出正文（surface 只留 140 字预览与估价）", "界面文案（label 只放工具名与 kind id）"]
   - name: quota-host
     kind: internal
     responsibility: "订阅额度两条官方源：DeepSeek 余额（balance_infos → {currency,total,toppedUp,granted}）与 OpenCode Go 用量窗口（usage.rolling/weekly/monthly → {key,percent,status,resetsAt}，clamp 0–100）；按源缓存 5 分钟（失败不缓存，成功值在失败后继续服务非强制读）、12s 超时，并在 Host web server 上注册 GET /dsh-turn-cost/quota?source=&force=1；供应商密钥按次解析，只留在 Host。窗口只透传 percent 与 resetsAt：官方应答没有到期/续费字段，订阅周期结束时刻由 Client 取最长窗口（月）的 resetsAt 推出"
@@ -53,9 +54,16 @@ modules:
       - "mountQuotaRoute(ctx, reader, readKey) -> route disposer"
     depends_on: ["ctx.webServer", "ctx.credentials (DEEPSEEK_API_KEY / OPENCODE_GO_API_KEY)"]
     not_responsible_for: ["计价", "UI 渲染", "充值/告警", "把密钥或原始 payload 交给页面", "落盘缓存", "判断当前会话在用哪个源（Client 依 provider id 决定，不看模型名；provider 已知但无额度则归 NO_SOURCE 并一次都不读，完全认不出则留白）", "把 resetsAt 换算成倒计时文案（Client 做，Host 只透传时刻）"]
+  - name: context-items
+    kind: internal
+    responsibility: "上下文明细的估价口径：DSH 固定密度启发式（4 字符 ≈ 1 token、每块 4 token framing、每条消息 4 token 角色开销）+ 三种明细切分（系统提示词按标题/规则线/【…】标签分区、工具定义逐条按 JSON 体积估价、压缩区间按 shadow price 回撤）"
+    owns: ["host/estimate.js", "host/surface.js"]
+    exposes: ["estimateMessage / estimateContent / estimateSystemMessage / estimateToolsTokens / systemSectionsOf / toolRowsOf / systemTextOf (pure)"]
+    depends_on: []
+    not_responsible_for: ["真实分词", "供应商上报用量", "UI 渲染", "无限量保留正文（按总预算分配，超出截断并标记）"]
   - name: context-client
     kind: internal
-    responsibility: "5 个界面入口 + 设计系统（宿主 --dsw-* token）+ 卡片与仪表盘；含上下文统计（计数 + 工具/程序分布）、命令执行流水、文件活动（类型筛选/路径搜索/行数增减/操作日志）、Token 环形图、事件类型筛选、按模型花费、逐请求筛选/排序/CSV/分页/请求内容展开（来自页面内存里的聊天快照，不落盘）、Agent 家族卡（父/己/子/孙，各自 tokens 与费用）、仪表盘时间范围与工具/程序/技能排行、7 日柱图数值标签、预算行；侧栏脚额度卡（标题 + 订阅倒计时徽标 + 三条窗口计量条，折叠成 36px 导轨时收成一枚百分比/倒计时方块，倒计时按最长窗口 resetsAt 取整、≤7 天黄 ≤3 天红）；跨会话聚合 useMemo 缓存，历史金额按投影里的 peak / offPeak 桶分档计价"
+    responsibility: "5 个界面入口 + 设计系统（宿主 --dsw-* token）+ 卡片与仪表盘；上下文明细的四层视觉层级（整窗摘要条 → 页签含条目计数 → 本页签量级行 → 带列头的条目行，量级条相对最大行、占比相对本页签总量，头名行加强、摘要列去装饰，容器查询降级：≤820px 去摘要列、≤460px 去量级条）；含上下文统计（计数 + 工具/程序分布）、命令执行流水、文件活动（类型筛选/路径搜索/行数增减/操作日志）、Token 环形图、事件类型筛选、按模型花费、逐请求筛选/排序/CSV/分页/请求内容展开（来自页面内存里的聊天快照，不落盘）、Agent 家族卡（父/己/子/孙，各自 tokens 与费用）、仪表盘时间范围与工具/程序/技能排行、7 日柱图数值标签、预算行；侧栏脚额度卡（标题 + 订阅倒计时徽标 + 三条窗口计量条，折叠成 36px 导轨时收成一枚百分比/倒计时方块，倒计时按最长窗口 resetsAt 取整、≤7 天黄 ≤3 天红）；跨会话聚合 useMemo 缓存，历史金额按投影里的 peak / offPeak 桶分档计价"
     owns: ["client.context.js"]
     exposes:
       - "conversation.view (list, id=tc-context, order=20)"

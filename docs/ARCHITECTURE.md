@@ -14,7 +14,7 @@
 | `preferences` (internal) | `client.js` §1.5 (`prefs`, `usePrefs`, `PREF_DEFAULTS`, `normalizeBudget`) | 本地偏好 store：逐轮徽章 / 底部累计显隐、金额币种（CNY 默认 / USD）、DeepSeek 计费时段、会话预算（0 = 关）；`localStorage` 持久化，`useSyncExternalStore` 兼容 | 无 |
 | `presentation` (internal) | `client.js` §2 (`TurnCostBadge`, `SessionCostPill`, `useMessageTurn`, `useTurnTailOf`) | 逐轮徽章（动作行内联 / 无动作行时独占一行，明细按 token 桶给金额）+ 底部状态栏会话累计药丸（有预算时显示 花费/预算 与进度条，超支转红） | React（宿主模块表）、`react-dom`、locale `t` |
 | `composition` | `client.js` §3 (`apply`) | 注册 `assistant-actions` / `turnTail` / `composer.dock` 槽位条目、locale，并异步加载 context chunk | `ctx.slots`, `ctx.locale`, `ctx.effect` |
-| `context-host` | `index.js`, `host/schema.js`, `host/fold.js`, `host/projections.js` | 3 个 `tc*` session 投影（timeline / headers / activity）；timeline 额外折叠工具调用计数、命令执行流水（程序名 / 状态 / 墙钟耗时）、文件操作流水与逐文件行数增减、用户 / 助手消息 / 技能加载计数，并记录模型切换事件；activity 按请求时间把 token 桶分进 `peakBuckets` / `offPeakBuckets` 并按模型再分一层；`ctx.inject(['sessionProjections'])` 延迟激活，纯 Node + 防御式 | `ctx.sessionProjections` |
+| `context-host` | `index.js`, `host/schema.js`, `host/fold.js`, `host/surface.js`, `host/estimate.js`, `host/projections.js` | 4 个 `tc*` session 投影（timeline / headers / activity / surface）；surface 折叠上下文明细——系统提示词按标题分区、每个工具定义各自的估价、消息按类别分桶、占用最大的条目（让「已用 174K」落到具体条目，与内置 `contextBreakdown` 同公式，实测三项逐项相等）；timeline 额外折叠工具调用计数、命令执行流水（程序名 / 状态 / 墙钟耗时）、文件操作流水与逐文件行数增减、用户 / 助手消息 / 技能加载计数，并记录模型切换事件；activity 按请求时间把 token 桶分进 `peakBuckets` / `offPeakBuckets` 并按模型再分一层；`ctx.inject(['sessionProjections'])` 延迟激活，纯 Node + 防御式 | `ctx.sessionProjections` |
 | `quota-host` (internal) | `host/quota.js` | 两条官方额度源：DeepSeek 余额（`balance_infos` → `{currency,total,toppedUp,granted}`）与 OpenCode Go 用量窗口（`usage.rolling/weekly/monthly` → `{key,percent,status,resetsAt}`，clamp 0–100）。按源分别缓存 5 分钟（失败不缓存，成功值在失败后继续服务非强制读）、12s 超时，并在 `webServer` 上注册 `GET /dsh-turn-cost/quota?source=<deepseek|opencode-go>&force=1`（未知 source → 400）。密钥只在 Host 侧按次解析，页面拿不到 | `ctx.webServer`, `ctx.credentials` |
 | `context-client` (lazy chunk) | `client.context.js` | 5 个界面入口 + 设计系统（宿主 `--dsw-*` token）+ 卡片与仪表盘：KPI 磁贴、上下文统计（轮次 / 步骤 / 用户输入 / 助手消息 / 技能加载 / 工具调用 + 工具与程序分布）、构成 / Token（环形图）/ 费用构成 / 趋势（可切指标）/ 按模型花费 / 时序 / 文件活动（类型筛选·路径搜索·行数增减·操作日志）/ 命令执行（程序筛选·状态筛选·搜索）/ 事件（类型筛选）/ Agent / 逐请求浏览器（筛选·排序·CSV·分页·请求内容展开）+ Agent 家族（父 / 己 / 子 / 孙，各自 tokens 与官方价费用，一张卡），仪表盘含 7 日双指标图（带数值标签）、周对齐热力图、模型花费榜与可搜索分页会话卡片；跨会话聚合 `useMemo` 缓存，历史金额按 Host 折叠的 `peak` / `offPeak` 桶分档计价 | `react`, `react-dom`, `pricing` face |
 
@@ -63,6 +63,29 @@ tcTimeline -> {
 
 `commands[].program` 由 Host 从命令行首 token 提取（跳过 `sudo` / `env` / `FOO=1` / `cd <dir> &&` 这类包装与路径前缀）；`call` 只保留首行且截断到 96 字符。`commands` / `fileOps` 分别封顶 400 条、`toolCalls` 封顶 24 个工具名，超出丢最旧。
 
+`tcSurface` 的读模型（`stateVersion` 1，明细 + 估价 + 可读正文）：
+
+```
+tcSurface -> {
+  system: { chars, tokens, sections: [{ label, chars, tokens, preview, body, truncated }], seq, time } | null,
+  tools:  { seq, time, total, rows: [{ name, tokens, chars, description, body, truncated }] } | null,
+  kinds:  { [user|assistant|reasoning|call|result|developer|other]: { count, tokens } },
+  tokens,                       // 消息类合计 = kinds 各项之和
+  top:    [{ seq, time, turn, step, kind, label, tokens, preview }],   // 最重的 24 条
+  approximate,                  // 有节点已出保留窗口时的标志
+}
+```
+
+`system.tokens` / `tools.total` / `tokens` 三项与 DSH 内置 `contextBreakdown` 的 `systemTokens` / `toolsTokens` / `messageTokens` **同公式、逐项相等**（`host/estimate.js` 与宿主的 `dsh-token-meter/estimate` 是同一套固定密度规则：4 字符 ≈ 1 token、每块 4 token、每条消息 4 token 角色开销）；同一份会话日志重放实测三项完全一致。明细只是把这三个数**拆开**，不另起一套口径。
+
+明细的分类边界：系统提示词自成一段（分区规则见下）；工具定义按**最新一封** `request/header` 逐条计价（下一封请求付的就是它）；消息按节点类别分桶，助手消息再按块拆成回答/思考/工具参数，其中角色开销记到该消息最大的那个桶，保证分桶之和等于整条消息的估价。
+
+系统提示词分区规则（`host/estimate.js#systemSectionsOf`）：一行同时满足「不超 120 字 / 不是正文」且形态是 markdown 标题、`<…>` 标签行、`【…】` 标签或独立加粗行时，它开启一个新分区并以自己命名；`装饰线 / 标签 / 装饰线` 这种三段式 banner 按 banner 处理、以中间那行命名（长 prompt 里的顶层章节都是这个形状，不这么读会碎成一堆 `(段落)`）；单独的装饰线与闭合标签只结束当前分区、不给下一个分区命名；没有任何可识别结构的 prompt 保持一整段，不按行切碎。
+
+正文口径（`body`）：卡片要回答「系统提示词具体写了什么」，所以分区与工具条目都带自己的正文，但这是每帧都要读的投影，因此按**总预算**分配而不是逐条封顶——单段 12K 字符、单条工具 schema 6K 字符，系统分区合计 64K、工具合计 80K，按体积从大到小先满足。这样读者拿到的是贵条目的完整正文，而不是 86 份碎片；预算之外的条目 `body` 为空且 `truncated: true`，卡片据此写「正文已截断 / 没有留下正文」，不留「看起来有、点开是空」的坑。实测当前这条 2000+ 事件会话：16 个分区 + 86 条工具全部带正文，整份投影 146KB。
+
+回撤口径：`surface` 为每个 append 节点留一行 `{seq, parts, tokens}` 的账（上限 1200 条）。压缩/剪枝事件的 `shadowedRange` + `shadowedTokenCount` 就是紧随其后的替换事件的影子价——与宿主自己的计量协议一致；替换时按 seq 精确回撤对应行。若该区间的行已被账本裁掉（会话从中途 checkpoint 恢复），就按影子价从最大桶里扣并按 `shadowedSeqs` 数量扣节点数，同时置 `approximate`——宁可在卡上写「近似」也不假装精确。
+
 `tcActivity` 的落盘形状（投影内部数据，`stateVersion` 3）：
 
 ```
@@ -104,15 +127,17 @@ tcActivity.days['YYYY-MM-DD'] -> {
 
 **已交付**
 
-- Host：三个 `tc*` 投影（真实 fold + 单测），`ctx.inject(['sessionProjections'])` 延迟激活 —— 直接 `ctx.get` 会在插件先于 projection 服务加载时拿到 `undefined`，导致所有上下文卡片永久为空。activity 投影把每笔请求按时间分进 `peak` / `offPeak` 桶（含模型维度），仪表盘的历史金额因此不随「现在几点」漂移。
+- Host：四个 `tc*` 投影（真实 fold + 单测），`ctx.inject(['sessionProjections'])` 延迟激活 —— 直接 `ctx.get` 会在插件先于 projection 服务加载时拿到 `undefined`，导致所有上下文卡片永久为空。activity 投影把每笔请求按时间分进 `peak` / `offPeak` 桶（含模型维度），仪表盘的历史金额因此不随「现在几点」漂移。
 - 五个界面入口：侧栏脚「用量总览」按钮 + portal 总览、会话「上下文」页签、`/context` 命令弹窗、右侧栏 Context 页签、设置 → 费用（插件自有设置页）。。右上主视图的「上下文」页签与右侧栏 Context 页签是同一份视图的两个挂载点，消息动作行不再重复提供跳转按钮。
-- 九张卡片 + 仪表盘：KPI、当前上下文构成、Token 统计、时序统计、费用（官方价）、上下文趋势、文件活动（含 `apply_patch` 补丁内路径）、Agent 网络、上下文事件、上下文浏览器（逐请求可展开 token 桶 / 缓存命中 / 计费时段）、近 7 日用量与费用、活跃热力图、会话卡片。
+- 十三张卡片 + 仪表盘：KPI 磁贴带、上下文统计、当前上下文构成、上下文明细（四层：整窗摘要条 → 页签 → 本页签量级 → 带列头的条目行）、Token 统计、费用（官方价）、上下文趋势、按模型花费、时序统计、文件活动（含 `apply_patch` 补丁内路径）、命令执行、上下文事件、Agent 网络、上下文浏览器（逐请求可展开 token 桶 / 缓存命中 / 计费时段）；仪表盘另有近 7 日用量与费用、活跃热力图、会话卡片。
 - 费用：会话累计改为读 Host 请求日志逐请求精确计价（模型 + 高峰/空闲档），只有日志被截断时才按比例补齐并标 `≈`。
 - 偏好：逐轮徽章显隐、底部会话累计显隐、金额币种（人民币 / 美元）、DeepSeek 计费时段（自动 / 高峰 / 空闲）、会话预算，存 `localStorage`。
 - v1.3 视觉与功能：宿主 token 设计系统（KPI 磁贴、卡片头、堆叠条、面积 sparkline、chip、开关与分段控件）；费用按桶与按模型拆分；趋势可切 Tokens / 费用 / 缓存命中；逐请求浏览器支持筛选、排序与 CSV 导出；仪表盘热力图按周对齐、会话可搜索排序、新增跨会话模型花费榜；设置页分组并新增预算行；修掉深色主题下分段控件白底白字（`--dsw-alias-brand-primary` 在深色里是近白色）。
 - v1.4 准确性与可用性：仪表盘按「每笔请求当时的计费时段」计价（Host 折叠出 `peak` / `offPeak` 桶，历史金额不再受打开面板的时刻影响）；仪表盘聚合走 `useMemo`，搜索框打字不再重算全历史；上下文浏览器与会话卡改为每页 60 条 +「显示更多」，长会话（1200 条请求）不再被截断；近 7 日柱图带数值标签；「会话」磁贴改报已折叠出用量的会话数并附总数；模型切换真正记入上下文事件（此前 `request/context` / `model/selection` 被提前 return，`switch` 分支永远不会命中）。
 - v1.5 卡片补齐（对齐 dsh-context 的能力面）：新增「上下文统计」卡（轮次 / 步骤 / 用户输入 / 助手消息 / 技能加载 / 工具调用 + 工具调用分布 + 命令程序分布）、「命令执行」卡（程序 chip 筛选 + 状态筛选 + 搜索 + 墙钟耗时与状态）；文件活动升级为类型筛选 / 路径搜索 / 逐文件 `+added / −removed` / 可展开操作日志；Token 统计加环形图；上下文事件加类型筛选 chip。全部数据来自 Host 折叠的计数与元数据（不含工具输出正文），`tcTimeline` 升至 `stateVersion 7`。
 - v1.6 对齐面收官：① 上下文浏览器展开「请求内容」（用户消息 / 思考 / 回答 / 工具调用参数 / 工具结果，默认 300 字预览）；② 上下文页内新增**Agent 家族**卡（父 / 己 / 子 / 孙，各自费用，不再单开页签）；③ 仪表盘加时间范围（今天 / 7 / 30 天）与工具 / 程序 / 技能三张跨会话排行；④ Host 的 `tcActivity` 增每日名称计数（`stateVersion 4`），旧世代 Host 下三张排行卡显示「需重启」提示而不是空数据。
+- v1.11 上下文明细（回答「174K 里到底是什么」）：新增 `tcSurface` 投影与「上下文明细」卡——系统提示词按标题 / `【…】` / 三段式 banner 分区并逐区估价、每个工具定义各自的估价与模型实际收到的 schema（86 个工具不再是一个匿名 17K）、消息按用户/回答/思考/工具参数/工具结果分桶、占用最大的 24 条（带工具名、轮次与预览）。卡内三个页签（系统 / 工具 / 顶部条目，**系统为默认**）+ 搜索（名称、描述与正文一起搜）+ 按大小/名称排序。**每一行都能点开读正文**：`▸ / ▾` 展开后给出 tokens · 字符数 · 轮次/步 与等宽可滚动的正文框，同页签只开一条。三项合计与内置 `contextBreakdown` 逐项相等（同一会话日志实测 `8104 / 17129 / 356622` 完全一致），因此卡片不是另一套口径，只是把同一笔账拆开。
+- v1.12 上下文明细的视觉层级：卡片改成四层结构——**整个窗口**（一条带底的摘要横条 = 三段堆叠条 + 带数值与占比的图例）、**页签**（下划线页签，选中 = 主色下划线 + 加粗；与浅色分段的排序控件形状区分；条目计数徽标）、**本页签量级**（总量 / 占上下文 / 条目数，右侧是弱化搜索与排序；筛选后变「显示 x / y」）、**行**（`▸ 名称 │ 一行摘要 │ 量级条 │ tokens │ 占比`，带列头）。行内两个数字各有分母：量级条相对本页签最大行，占比相对本页签总量；头名行保持满强度、其余条降到 42% 透明度，列表有「头」。摘要列去掉 banner 装饰线（`═══` / `##` / `**…**`）与重复的标题，只留「里面是什么」。展开态整行抬成带色底的容器 + 左侧 2px 强调轨，正文上方是标签行。「消息构成」从卡片级降到消息页签（它是那一桶自己的拆分）。断点改用容器查询：≤820px 去摘要列，≤460px 去量级条、摘要横条上下堆叠、页签平分整行——同一张卡在整宽页签与 ~380px 右栏都成立。
 
 **实现注意（部署形态）**：Client chunk 按 rev 重新加载，Host 的 JS 是每个进程一份模块世代；就地改 `host/*.js` 或 `index.js` 后，正在运行的 Host 仍执行旧代码，直到 DSH 重启（或该 bundle 重新加载一次）。新增的 `GET /dsh-turn-cost/quota` 因此也要重启后才注册：重启前按钮显示「额度不可用」，重启后自动换成真实余额，无需再改客户端。同一原因的另一个表现：`commands[].program` 在 Client 侧做了兜底重算：Host 存的值若是包装根（`cd` / `sudo` / `env` …）就用 `call` 文本重新提取，避免就地升级后程序分布一直显示 `cd`。
 

@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-turn-cost",
-  "version": "1.10.0",
+  "version": "1.12.0",
   "private": true,
   "type": "module",
-  "description": "Per-turn and session cost in CNY/USD at official list prices, plus context-insight dashboard, Context tab, /context-style command and the live subscription quota at the sidebar foot (DeepSeek balance or OpenCode Go rolling/weekly/monthly usage).",
+  "description": "Per-turn and session cost in CNY/USD at official list prices, plus context-insight dashboard, Context tab with a four-level item breakdown (window summary, tab with counts, per-bucket scale, labelled rows with per tool schema, per system-prompt section, per message kind), /context-style command and the live subscription quota at the sidebar foot (DeepSeek balance or OpenCode Go rolling/weekly/monthly usage).",
   "keywords": [
     "dsh",
     "dsh-plugin",

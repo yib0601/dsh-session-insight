@@ -72,6 +72,21 @@ window.__ModuleLoader__.load({
         contentCall: '调用', contentResult: '结果', contentMore: '展开', contentLess: '收起',
         tallyTools: '工具调用排行', tallyPrograms: '命令程序排行', tallySkills: '技能加载',
         tallyEmpty: '所选时间范围内没有记录', tallyPending: '统计字段要等 DSH 重启后由 Host 折叠出来',
+        surfaceTitle: '上下文明细', surfacePending: '明细字段要等 DSH 重启后由 Host 折叠出来',
+        surfaceSystem: '系统提示词', surfaceSystemEmpty: '本会话没有系统提示词',
+        surfaceTools: '工具定义', surfaceToolsEmpty: '最新请求没有工具定义',
+        surfaceKinds: '消息构成', surfaceTop: '占用最大', surfaceTopEmpty: '暂无消息',
+        surfaceKindUser: '用户输入', surfaceKindAssistant: '助手回答', surfaceKindReasoning: '助手思考',
+        surfaceKindCall: '工具参数', surfaceKindResult: '工具结果', surfaceKindDeveloper: '开发者消息',
+        surfaceKindOther: '其他', surfaceSim: '按分区估算（约 4 字符 ≈ 1 token），分区合计不含角色开销',
+        surfaceApprox: '压缩后部分条目已出保留窗口，构成拆分近似', surfaceSearch: '搜索名称或内容（含正文）',
+        surfaceTapHint: '点一行展开正文', surfaceBodyEmpty: '这一条没有留下正文（已出保留窗口）',
+        surfaceBodyTruncated: '正文已截断',
+        surfaceSortTokens: '按大小', surfaceSortName: '按名称',
+        surfaceCompose: '整个窗口', surfaceOfContext: '占上下文', surfaceOfBucket: '占本页签',
+        surfaceUnitChars: '字符', surfaceUnitSections: '个分区', surfaceUnitTools: '条工具',
+        surfaceUnitItems: '条消息', surfaceColName: '条目', surfaceColTokens: 'tokens',
+        surfaceColShare: '占比',
         fleetCost: '家族费用', fleetSelf: '当前', fleetParent: '父级', fleetChild: '子级',
         fleetTaskNote: '家族成员来自会话树（父 / 子 / 孙），费用按各自会话日志的官方价目表估算；任务板数据不在本插件的读模型内。',
         agentsTitle: 'Agent 网络', agentsEmpty: '本会话暂无子智能体',
@@ -160,6 +175,21 @@ window.__ModuleLoader__.load({
         contentCall: 'Call', contentResult: 'Result', contentMore: 'More', contentLess: 'Less',
         tallyTools: 'Tool calls', tallyPrograms: 'Commands by program', tallySkills: 'Skill loads',
         tallyEmpty: 'Nothing in this range', tallyPending: 'Tallies need a DSH restart to be folded by the Host',
+        surfaceTitle: 'Context items', surfacePending: 'Item rows need a DSH restart to be folded by the Host',
+        surfaceSystem: 'System prompt', surfaceSystemEmpty: 'This session has no system prompt',
+        surfaceTools: 'Tool definitions', surfaceToolsEmpty: 'The latest request declared no tools',
+        surfaceKinds: 'Message composition', surfaceTop: 'Largest', surfaceTopEmpty: 'No messages yet',
+        surfaceKindUser: 'User input', surfaceKindAssistant: 'Assistant text', surfaceKindReasoning: 'Reasoning',
+        surfaceKindCall: 'Tool arguments', surfaceKindResult: 'Tool results', surfaceKindDeveloper: 'Developer message',
+        surfaceKindOther: 'Other', surfaceSim: 'Section prices use the heuristic (~4 chars ≈ 1 token) without role framing',
+        surfaceApprox: 'Compaction shadowed items beyond the retained window; the split is approximate',
+        surfaceSearch: 'Filter by name, description or body',
+        surfaceTapHint: 'Tap a row to read its text', surfaceBodyEmpty: 'No body retained for this item',
+        surfaceBodyTruncated: 'body truncated', surfaceSortTokens: 'By size', surfaceSortName: 'By name',
+        surfaceCompose: 'Whole window', surfaceOfContext: 'of context', surfaceOfBucket: 'of this tab',
+        surfaceUnitChars: 'chars', surfaceUnitSections: 'sections', surfaceUnitTools: 'tools',
+        surfaceUnitItems: 'items', surfaceColName: 'Item', surfaceColTokens: 'tokens',
+        surfaceColShare: 'share',
         fleetCost: 'Family cost', fleetSelf: 'This agent', fleetParent: 'Parent', fleetChild: 'Child',
         fleetTaskNote: 'Members come from the session tree (parent / self / children / grandchildren) and each cost is estimated from that session\'s own log at official list prices; task-board data is outside this plugin\'s read model.',
         agentsTitle: 'Agent network', agentsEmpty: 'No sub-agent sessions',
@@ -249,11 +279,21 @@ window.__ModuleLoader__.load({
 .tc-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 12px}
 .tc-head h2{margin:0;font-size:15px;font-weight:600;line-height:22px;color:var(--dsw-alias-label-primary)}
 .tc-head-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
-.tc-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px}
-.tc-col-3{grid-column:span 3}.tc-col-4{grid-column:span 4}.tc-col-6{grid-column:span 6}
-.tc-col-8{grid-column:span 8}.tc-col-9{grid-column:span 9}.tc-col-12{grid-column:span 12}
-@media (max-width:1180px){.tc-col-3,.tc-col-4{grid-column:span 6}.tc-col-8,.tc-col-9{grid-column:span 12}}
-@media (max-width:820px){.tc-grid>*{grid-column:span 12 !important}}
+/* Rows must never end in a hole. A 12-column grid leaves one whenever a row's
+   spans do not add up to 12 (a lone col-4 after a null card, or col-4 + col-4
+   followed by nothing), so the row is laid out as flex instead: the basis
+   encodes the span, the grow factor hands the leftover width of a short row
+   back to the cards in it, and a row that is alone takes the full width. */
+.tc-grid{display:flex;flex-wrap:wrap;align-items:stretch;gap:12px}
+.tc-grid>*{min-width:0}
+.tc-col-3{flex:3 1 calc(25% - 9.5px)}
+.tc-col-4{flex:4 1 calc(33.3333% - 8.5px)}
+.tc-col-6{flex:6 1 calc(50% - 6.5px)}
+.tc-col-8{flex:8 1 calc(66.6667% - 4.5px)}
+.tc-col-9{flex:9 1 calc(75% - 3.5px)}
+.tc-col-12{flex:12 1 100%}
+@media (max-width:1180px){.tc-col-3,.tc-col-4{flex-basis:calc(50% - 6.5px)}.tc-col-8,.tc-col-9{flex-basis:100%}}
+@media (max-width:820px){.tc-grid>*{flex-basis:100% !important}}
 /* ── cards ───────────────────────────────────────────────────────────────── */
 .tc-card{box-sizing:border-box;min-width:0;display:flex;flex-direction:column;gap:10px;padding:14px 16px 16px;
   border:1px solid var(--dsw-alias-border-l1);border-radius:var(--tc-radius);background:var(--dsw-alias-card-fill);
@@ -261,7 +301,7 @@ window.__ModuleLoader__.load({
 .tc-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:20px}
 .tc-card-head h3{margin:0;font-size:13px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary)}
 .tc-card-meta{font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap}
-.tc-card-body{display:flex;flex-direction:column;gap:10px;min-width:0}
+.tc-card-body{display:flex;flex-direction:column;gap:10px;min-width:0;container-type:inline-size}
 .tc-empty{display:flex;align-items:center;gap:8px;margin:0;padding:14px 0;font-size:12px;color:var(--dsw-alias-label-tertiary)}
 .tc-note{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary)}
 /* ── KPI tiles ───────────────────────────────────────────────────────────── */
@@ -298,6 +338,8 @@ window.__ModuleLoader__.load({
 .tc-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
 .tc-bar i{display:block;height:100%;min-width:0}
 .tc-bar-lg{height:14px;border-radius:7px}
+.tc-bar-sm{height:6px;border-radius:3px}
+.tc-bar-sm i{border-radius:3px}
 .tc-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
 .tc-legend span{display:inline-flex;align-items:center;gap:5px}
 .tc-legend b{font-weight:500;color:var(--dsw-alias-label-secondary)}
@@ -427,6 +469,140 @@ window.__ModuleLoader__.load({
 .tc-delta b{font-weight:600}
 .tc-delta .add{color:var(--dsw-alias-state-success-primary)}
 .tc-delta .del{color:var(--dsw-alias-state-error-primary)}
+/* ── context items ───────────────────────────────────────────────────────── */
+/* Reading order per row: caret → name → magnitude bar → tokens → share. The bar
+   is relative to the largest row (a shape cue), the share is relative to the
+   tab's own total (an absolute one) — so "which one is biggest" and "how much
+   of this bucket is it" are both answered without hovering. */
+.tc-item{--tc-item-accent:var(--dsw-alias-state-business-primary);
+  display:flex;flex-direction:column;min-width:0;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.tc-item:last-child{border-bottom:none}
+.tc-item-head,.tc-item-cols{display:grid;
+  grid-template-columns:12px 7px minmax(0,1fr) minmax(0,1.3fr) minmax(36px,.4fr) minmax(52px,auto) 44px;
+  align-items:center;gap:8px;min-width:0}
+.tc-item-head{width:100%;padding:6px 4px 6px 0;border:none;background:transparent;
+  font:inherit;font-size:12px;text-align:left;color:var(--dsw-alias-label-secondary);
+  font-variant-numeric:tabular-nums;cursor:pointer;border-radius:var(--dsw-radius-xs)}
+.tc-item-head:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.tc-item-head:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-2px}
+.tc-item-cols{padding:0 4px 4px 0;font-size:11px;letter-spacing:.02em;
+  color:var(--dsw-alias-label-tertiary);border-bottom:1px solid var(--dsw-alias-border-l1)}
+.tc-item-cols span:nth-child(6),.tc-item-cols span:nth-child(7){text-align:right}
+.tc-item-caret{font-size:9px;color:var(--dsw-alias-label-tertiary);line-height:1}
+.tc-item-dot{width:7px;height:7px;border-radius:2px;flex:none}
+.tc-item-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--dsw-alias-label-primary)}
+/* The hint is the answer to "what is inside this one" without opening it; it is
+   the quiet third level of type, and the first column to go when space runs out. */
+.tc-item-hint{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--dsw-alias-label-tertiary);font-size:11px}
+.tc-item-bar{position:relative;height:4px;border-radius:2px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
+.tc-item-bar i{display:block;height:100%;border-radius:2px;background:var(--tc-item-accent);opacity:.42}
+.tc-item-value{text-align:right;color:var(--dsw-alias-label-primary);white-space:nowrap;font-size:12px}
+.tc-item-share{text-align:right;color:var(--dsw-alias-label-tertiary);white-space:nowrap;font-size:11px}
+/* The lead row is the one that answers "what is it": it keeps the full-strength
+   bar while every other row fades back, so the list has a head, not a plateau. */
+.tc-item[data-lead='true'] .tc-item-bar i{opacity:.85}
+.tc-item[data-lead='true'] .tc-item-value{font-weight:600}
+/* The open row is the one being read: lift it off the list, not just recolor it. */
+/* Tinted band + rail, with no horizontal padding change: a shifted header would
+   knock the open row's columns out of line with every other row. */
+.tc-item[data-open='true']{border-radius:var(--tc-radius-sm);border-bottom-color:transparent;
+  background:color-mix(in srgb,var(--tc-item-accent) 7%,transparent)}
+.tc-item[data-open='true'] .tc-item-name{white-space:normal;font-weight:600;color:var(--dsw-alias-label-primary)}
+.tc-item[data-open='true'] .tc-item-value{font-weight:600;color:var(--dsw-alias-label-primary)}
+.tc-item[data-open='true'] .tc-item-bar i{opacity:1}
+.tc-item[data-open='true'] .tc-item-caret{color:var(--tc-item-accent)}
+.tc-item-body{display:flex;flex-direction:column;gap:6px;min-width:0;
+  margin:0 6px 8px 13px;padding:4px 0 4px 9px;border-left:2px solid var(--tc-item-accent)}
+.tc-item-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0;min-width:0;
+  font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.tc-item-tag{display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:17px;
+  border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-layer-2);
+  color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap}
+.tc-item-tag b{font-weight:600;color:var(--dsw-alias-label-secondary)}
+.tc-item-tag[data-tone='accent']{color:var(--tc-item-accent);
+  background:color-mix(in srgb,var(--tc-item-accent) 13%,transparent)}
+.tc-item-tag[data-tone='accent'] b{color:inherit}
+.tc-item-tag[data-tone='warn']{color:var(--dsw-alias-state-warn-primary);
+  background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 14%,transparent)}
+.tc-item-text{margin:0;padding:8px 10px;max-height:320px;overflow:auto;border-radius:var(--tc-radius-sm);
+  border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-markdown-code-block);
+  font-family:var(--dsw-font-family-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:11px;line-height:16px;
+  color:var(--dsw-alias-label-secondary);white-space:pre-wrap;word-break:break-word}
+.tc-item-text[data-empty='true']{font-family:inherit;font-size:12px;font-style:italic;line-height:18px;
+  color:var(--dsw-alias-label-tertiary);background:transparent;border-style:dashed}
+/* ── item list chrome: tab bar, per-tab strip, composition block ─────────── */
+/* Navigation is an underline tab, a preference is a soft segmented control: two
+   different jobs, two different shapes. Fill-based tabs fail here anyway: every
+   bg-layer-* token resolves to white in the light theme and to a near-identical
+   grey in the dark one, so a filled selected tab has no contrast in either. */
+.tc-tabbar{display:flex;align-items:stretch;gap:4px;align-self:stretch;min-width:0;
+  border-bottom:1px solid var(--dsw-alias-border-l1)}
+.tc-tab{display:inline-flex;align-items:center;gap:6px;padding:5px 8px 6px;border:none;border-bottom:2px solid transparent;
+  margin-bottom:-1px;background:transparent;font:inherit;font-size:12px;color:var(--dsw-alias-label-tertiary);
+  cursor:pointer;white-space:nowrap}
+.tc-tab:hover{color:var(--dsw-alias-label-secondary)}
+.tc-tab:focus-visible{outline:2px solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:-2px}
+.tc-tab[aria-pressed='true']{color:var(--dsw-alias-label-primary);font-weight:600;
+  border-bottom-color:var(--dsw-alias-state-business-primary)}
+.tc-tab-n{padding:0 5px;height:15px;display:inline-flex;align-items:center;border-radius:8px;
+  font-size:10px;font-weight:600;font-variant-numeric:tabular-nums;
+  background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-tertiary)}
+.tc-tab[aria-pressed='true'] .tc-tab-n{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 15%,transparent);
+  color:var(--dsw-alias-state-business-primary)}
+.tc-subbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;min-width:0}
+.tc-subbar-text{display:flex;align-items:center;gap:4px 8px;flex-wrap:wrap;min-width:0;
+  font-size:11px;color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums}
+.tc-subbar-text b{font-size:13px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-primary)}
+.tc-subbar-text em{font-style:normal;color:var(--dsw-alias-label-secondary);max-width:26ch;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-subbar-sep{color:var(--dsw-alias-border-l2)}
+.tc-subbar-tools{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto}
+.tc-subbar .tc-input{flex:0 1 190px}
+.tc-block{display:flex;flex-direction:column;gap:8px;min-width:0;container-type:inline-size}
+.tc-compose{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;min-width:0;
+  padding:8px 10px;border-radius:var(--tc-radius-sm);border:1px solid var(--dsw-alias-border-l1);
+  background:var(--dsw-alias-bg-layer-1)}
+.tc-compose-label{display:inline-flex;align-items:baseline;gap:6px;flex:none;
+  font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.tc-compose-label b{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary);
+  font-variant-numeric:tabular-nums}
+.tc-compose-bar{flex:1 1 180px;min-width:120px;display:block}
+.tc-compose .tc-legend{flex:0 1 auto}
+.tc-legend b{padding-right:2px}
+.tc-legend em{font-style:normal;opacity:.75;font-variant-numeric:tabular-nums}
+.tc-kinds{display:flex;flex-direction:column;gap:5px;min-width:0}
+.tc-kinds-label{display:inline-flex;align-items:baseline;gap:6px;
+  font-size:11px;color:var(--dsw-alias-label-tertiary)}
+.tc-kinds-label b{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary);
+  font-variant-numeric:tabular-nums}
+.tc-kinds .tc-legend{padding-top:1px}
+/* Narrow is a container fact, not a viewport one: the same card lives in a
+   full-width tab and in the ~380px right sidebar, so the breakpoints must follow
+   the list's own width (the .tc-block wrapper is the size container). Order:
+   the gist column goes first, then the magnitude bar — the two numbers stay. */
+@container (max-width:820px){
+  .tc-item-head,.tc-item-cols{grid-template-columns:12px 7px minmax(0,1fr) minmax(36px,.4fr) minmax(52px,auto) 44px}
+  .tc-item-cols span:nth-child(4),.tc-item-cols span:nth-child(5),.tc-item-hint{display:none}
+}
+@container (max-width:460px){
+  /* Stack the summary: at this width an inline bar between label and legend
+     shrinks to a stub that no longer shows a proportion. */
+  .tc-compose{align-items:stretch;gap:6px}
+  .tc-compose-bar{flex:1 1 100%;order:2}
+  .tc-compose .tc-legend{order:3}
+  .tc-compose-label{order:1}
+  .tc-item-head,.tc-item-cols{grid-template-columns:12px 7px minmax(0,1fr) minmax(44px,auto) 40px}
+  .tc-item-cols span:nth-child(4),.tc-item-cols span:nth-child(5),
+  .tc-item-hint,.tc-item-bar{display:none}
+  .tc-subbar .tc-input{flex:1 1 110px}
+  .tc-tabbar{width:100%}
+  .tc-tab{flex:1 1 auto;justify-content:center;padding-left:4px;padding-right:4px}
+}
+@media (max-width:640px){
+  .tc-subbar .tc-input{flex:1 1 120px}
+}
 /* ── context browser content ─────────────────────────────────────────────── */
 .tc-pre{margin:3px 0 0;padding:6px 8px;border-radius:var(--dsw-radius-xs);background:var(--dsw-alias-bg-layer-1);
   color:var(--dsw-alias-label-secondary);font-family:var(--dsw-font-mono,ui-monospace,monospace);font-size:11px;
@@ -447,8 +623,8 @@ window.__ModuleLoader__.load({
   border-radius:0 var(--dsw-radius-xs) var(--dsw-radius-xs) 0;background:var(--dsw-alias-bg-layer-1)}
 /* ── modal / overlay ─────────────────────────────────────────────────────── */
 .tc-mask{position:fixed;inset:0;z-index:9998;background:var(--dsw-alias-bg-mask-1);display:flex;align-items:center;justify-content:center;padding:24px}
-.tc-modal .tc-col-4{grid-column:span 6}
-@media (max-width:720px){.tc-modal .tc-col-4{grid-column:span 12}}
+.tc-modal .tc-col-4{flex-basis:calc(50% - 6.5px)}
+@media (max-width:720px){.tc-modal .tc-col-4{flex-basis:100%}}
 .tc-modal{box-sizing:border-box;width:min(820px,100%);max-height:min(82vh,760px);overflow:auto;
   border:1px solid var(--dsw-alias-border-l2);border-radius:var(--tc-radius);background:var(--dsw-alias-bg-layer-1);
   padding:18px 20px 20px;box-shadow:var(--dsw-elevation-prominent)}
@@ -488,12 +664,43 @@ window.__ModuleLoader__.load({
 .tc-seg .tc-btn{border:none;background:transparent;border-radius:calc(var(--tc-radius-sm) - 2px);padding:3px 10px;color:var(--dsw-alias-label-tertiary)}
 .tc-seg .tc-btn:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}
 .tc-seg .tc-btn[aria-pressed='true']{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font-weight:500}
+/* A soft segmented control: pressed = tinted, so a low-stakes toggle cannot
+   out-shout the tab that says which bucket is on screen. */
+.tc-seg-soft .tc-btn[aria-pressed='true']{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 14%,transparent);
+  color:var(--dsw-alias-state-business-primary);font-weight:600}
 .tc-budget{display:inline-flex;align-items:center;gap:6px;padding:0 8px;height:26px;border:1px solid var(--dsw-alias-border-l1);
   border-radius:var(--tc-radius-sm);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary);font-size:12px}
 .tc-budget input{width:80px;padding:0;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:right;outline:none}
 `;
 
     function fmtInt(n) { return Number(n || 0).toLocaleString('en-US'); }
+
+    /**
+     * A one-line gist for the row list.
+     *
+     * Host previews are raw prompt text, so a section's preview opens with the
+     * banner it came from (`═══ Name ═══`) and often with its markdown heading
+     * (`## Name`) — both restate the label the first column already shows, then
+     * drag a run of rule characters across the row. Strip the decoration, drop
+     * the repeated label, and flatten whitespace: the hint has to say what is
+     * *inside* the item, not where it starts.
+     */
+    const HINT_RULES = /[\u2550\u2500\u2501=\*_~#]{3,}/gu;
+    const HINT_LEAD = /^[\s\u00b7:.,\u2014\u2013\u2022|>-]+/u;
+    /** Normalize a preview, then remove a leading repeat of `label`. */
+    function hintOf(text, label) {
+      let raw = String(text ?? '');
+      if (raw === '') return '';
+      raw = raw.replace(HINT_RULES, ' \u00b7 ').replace(/\s+/g, ' ').trim();
+      // A heading marker or bold wrapper in front of the label is decoration.
+      raw = raw.replace(/^#{1,6}\s*/u, '').replace(/^\*\*(.*?)\*\*/u, '$1').replace(HINT_LEAD, '');
+      const head = String(label ?? '').replace(HINT_RULES, ' ').replace(/\s+/g, ' ')
+        .replace(/^#{1,6}\s*/u, '').trim();
+      if (head !== '' && raw.toLowerCase().startsWith(head.toLowerCase())) {
+        raw = raw.slice(head.length).replace(HINT_LEAD, '');
+      }
+      return raw.trim();
+    }
 
     /** Compact count for chart labels: 12.3M / 840K, so a 2px bar still says a number. */
     function fmtShort(n) {
@@ -1433,9 +1640,10 @@ window.__ModuleLoader__.load({
 
     /** Stacked proportion bar from `[{value,color,label}]`. */
     function StackBar({ items, height }) {
+      const variant = height === 'lg' ? ' tc-bar-lg' : height === 'sm' ? ' tc-bar-sm' : '';
       const total = items.reduce((sum, item) => sum + safeCount(item.value), 0);
-      if (total <= 0) return h('div', { className: 'tc-bar' + (height === 'lg' ? ' tc-bar-lg' : '') });
-      return h('div', { className: 'tc-bar' + (height === 'lg' ? ' tc-bar-lg' : '') },
+      if (total <= 0) return h('div', { className: 'tc-bar' + variant });
+      return h('div', { className: 'tc-bar' + variant },
         ...items.filter(item => safeCount(item.value) > 0).map((item, index) => h('i', {
           key: index, title: item.label + ' · ' + (item.hint ?? ''),
           style: { width: (safeCount(item.value) / total * 100).toFixed(2) + '%', background: item.color },
@@ -2107,6 +2315,276 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The item-level answer to "what is actually in the context": the system
+     * prompt's sections, every tool definition's own price, the message areas
+     * per kind, and the heaviest surviving items — all from the Host's
+     * `tcSurface` projection, with its own local search and sorting.
+     *
+     * `contextBreakdown` says total 175K split 8K / 17K / 166K; this card says
+     * which tool schema takes 2.3K, which prompt section takes 9K, and which
+     * tool result takes 40K.
+     */
+    function SurfaceCard({ t, surface }) {
+      const [tab, setTab] = React.useState('system');
+      const [query, setQuery] = React.useState('');
+      const [sort, setSort] = React.useState('tokens');
+      // Which row is open, per tab: `{ [tab]: key }`. One open at a time keeps
+      // a 40-section prompt readable instead of 40 expanded blocks.
+      const [open, setOpen] = React.useState({});
+      const kinds = surface?.kinds ?? {};
+      const system = surface?.system ?? null;
+      const tools = surface?.tools ?? null;
+      const top = Array.isArray(surface?.top) ? surface.top : [];
+      const sections = Array.isArray(system?.sections) ? system.sections : [];
+      const toolRows = Array.isArray(tools?.rows) ? tools.rows : [];
+      const kindKeys = ['user', 'assistant', 'reasoning', 'call', 'result', 'developer', 'other'];
+      const kindLabels = {
+        user: 'surfaceKindUser', assistant: 'surfaceKindAssistant', reasoning: 'surfaceKindReasoning',
+        call: 'surfaceKindCall', result: 'surfaceKindResult', developer: 'surfaceKindDeveloper',
+        other: 'surfaceKindOther',
+      };
+      const kindColors = {
+        user: COLORS.input, assistant: COLORS.output, reasoning: COLORS.cacheRead, call: COLORS.tools,
+        result: COLORS.messages, developer: COLORS.system, other: COLORS.cacheWrite,
+      };
+      const messageTotal = kindKeys.reduce((sum, key) => sum + safeCount(kinds[key]?.tokens), 0);
+      const needle = query.trim().toLowerCase();
+      const order = (a, b) => (sort === 'name'
+        ? String(a.text).localeCompare(String(b.text))
+        : safeCount(b.value) - safeCount(a.value));
+      const hit = (row, ...fields) => needle === ''
+        || fields.some(field => String(field ?? '').toLowerCase().includes(needle));
+
+      // Every tab yields the same row shape: a key, a label, the item's own
+      // short preview, its price, and — crucially — the full body the reader
+      // can expand. Search covers the body too, so "where does it say X" works.
+      const sectionRows = sections
+        .map((section, index) => ({
+          key: 'sec' + index, text: section.label, hint: section.preview,
+          value: safeCount(section.tokens), body: section.body ?? '',
+          truncated: section.truncated === true, chars: safeCount(section.chars),
+        }))
+        .filter(row => hit(row, row.text, row.hint, row.body))
+        .sort(order);
+      const toolList = toolRows
+        .map((row, index) => ({
+          key: 'tool' + index, text: row.name, hint: row.description,
+          value: safeCount(row.tokens), body: row.body ?? '',
+          truncated: row.truncated === true, chars: safeCount(row.chars),
+        }))
+        .filter(row => hit(row, row.text, row.hint, row.body))
+        .sort(order);
+      // A message row needs an identity, not a category: six "reasoning" rows in
+      // a row are indistinguishable without the turn/step they came from.
+      const topRows = top
+        .map((row, index) => {
+          const kind = t(kindLabels[row.kind] ?? 'surfaceKindOther');
+          const where = row.turn ? 'T' + row.turn + '/' + String(row.step ?? '') : '';
+          return {
+            key: 'top' + index,
+            text: (where ? where + ' · ' : '') + (row.label ? row.label + ' · ' : '') + kind,
+            hint: row.preview, value: safeCount(row.tokens), kind: row.kind,
+            turn: row.turn, step: row.step, body: row.preview ?? '', chars: 0,
+          };
+        })
+        .filter(row => hit(row, row.text, row.hint))
+        .sort(order);
+
+      const openKey = open[tab] ?? null;
+      const toggle = key => setOpen({ ...open, [tab]: open[tab] === key ? null : key });
+
+      // Magnitude is shown twice on purpose: the bar is relative to the biggest
+      // row (a shape cue for the tab), the share is relative to the bucket the
+      // tab represents (an absolute one). A 9K section is a tall bar AND "51% of
+      // the system prompt" — the second is the number that answers the question.
+      const buckets = [
+        { id: 'system', label: 'system', color: COLORS.system, value: safeCount(system?.tokens) },
+        { id: 'tools', label: 'tools', color: COLORS.tools, value: safeCount(tools?.total) },
+        { id: 'messages', label: 'messages', color: COLORS.messages, value: messageTotal },
+      ];
+      const contextTotal = buckets.reduce((sum, bucket) => sum + bucket.value, 0);
+      const bucketOf = { system: safeCount(system?.tokens), tools: safeCount(tools?.total), top: messageTotal };
+      const tabTotal = bucketOf[tab] ?? 0;
+
+      const renderRows = (rows, extra) => h('div', { className: 'tc-rows' }, ...rows.map((row, index) => {
+        const expanded = openKey === row.key;
+        const share = tabTotal > 0 ? pct(row.value, tabTotal) : 0;
+        const accent = extra === undefined ? undefined : kindColors[row.kind];
+        return h('div', {
+          key: row.key, className: 'tc-item', 'data-open': expanded ? 'true' : 'false',
+          'data-lead': index === 0 ? 'true' : 'false',
+          style: accent === undefined ? undefined : { '--tc-item-accent': accent },
+        },
+          h('button', {
+            type: 'button', className: 'tc-item-head', 'aria-expanded': expanded ? 'true' : 'false',
+            onClick: () => toggle(row.key),
+            title: (row.hint ? row.hint + '\n' : '') + fmtInt(row.value) + ' tok · '
+              + share.toFixed(1) + '%' + (row.turn ? ' · T' + row.turn + '/' + String(row.step ?? '') : ''),
+          },
+            h('span', { className: 'tc-item-caret', 'aria-hidden': 'true' }, expanded ? '▾' : '▸'),
+            // Always rendered, even without a kind: an omitted cell would shift
+            // every following column of that one row out of alignment.
+            h('i', {
+              className: 'tc-item-dot', 'aria-hidden': 'true',
+              style: { background: accent ?? 'transparent' },
+            }),
+            h('span', { className: 'tc-item-name' }, row.text),
+            h('span', { className: 'tc-item-hint', title: hintOf(row.hint, row.text) || undefined }, hintOf(row.hint, row.text)),
+            h('span', { className: 'tc-item-bar', 'aria-hidden': 'true' },
+              h('i', { style: { width: pct(row.value, rows[0]?.value || 1).toFixed(1) + '%' } })),
+            h('span', { className: 'tc-item-value' }, fmtInt(row.value)),
+            h('span', { className: 'tc-item-share' }, share.toFixed(share >= 9.95 ? 0 : 1) + '%')),
+          expanded
+            ? h('div', { className: 'tc-item-body' },
+              h('p', { className: 'tc-item-meta' },
+                h('span', { className: 'tc-item-tag', 'data-tone': 'accent' },
+                  h('b', null, fmtInt(row.value)), ' tok'),
+                h('span', { className: 'tc-item-tag' }, fmtInt(share.toFixed(1)) + '% ' + t('surfaceOfBucket')),
+                row.chars ? h('span', { className: 'tc-item-tag' },
+                  h('b', null, fmtInt(row.chars)), ' ' + t('surfaceUnitChars')) : null,
+                row.turn
+                  ? h('span', { className: 'tc-item-tag' }, 'T' + row.turn + '/' + String(row.step ?? ''))
+                  : null,
+                row.truncated
+                  ? h('span', { className: 'tc-item-tag', 'data-tone': 'warn' }, t('surfaceBodyTruncated'))
+                  : null),
+              h('pre', {
+                className: 'tc-item-text', 'data-empty': row.body === '' ? 'true' : 'false',
+              }, row.body === '' ? t('surfaceBodyEmpty') : row.body))
+            : null);
+      }));
+
+      const emptyOf = text => Empty({ text, k: 'surface-empty' });
+      let body;
+      let tabCount = 0;
+      let tabUnit = 'surfaceUnitSections';
+      if (tab === 'tools') {
+        tabCount = toolRows.length;
+        tabUnit = 'surfaceUnitTools';
+        body = toolList.length === 0 ? emptyOf(t('surfaceToolsEmpty')) : renderRows(toolList);
+      } else if (tab === 'system') {
+        tabCount = sections.length;
+        body = sectionRows.length === 0 ? emptyOf(t('surfaceSystemEmpty')) : renderRows(sectionRows);
+      } else {
+        tabCount = top.length;
+        tabUnit = 'surfaceUnitItems';
+        body = topRows.length === 0 ? emptyOf(t('surfaceTopEmpty')) : renderRows(topRows, true);
+      }
+      const shownRows = tab === 'tools' ? toolList.length : tab === 'system' ? sectionRows.length : topRows.length;
+
+      // Level 1 — one bar for the whole window. The system prompt is 5% of it,
+      // which is the single most useful thing this card can say up front.
+      const legend = items => h('div', { className: 'tc-legend' }, ...items.map((item, index) =>
+        h('span', { key: index, title: item.label + ' · ' + fmtInt(item.value) + ' tok' },
+          h('i', { className: 'tc-dot', style: { background: item.color } }),
+          item.label,
+          h('b', null, fmtInt(item.value)),
+          h('em', { style: { fontStyle: 'normal', opacity: .75 } },
+            (item.total > 0 ? pct(item.value, item.total).toFixed(1) : '0.0') + '%'))));
+      // One horizontal band, not a stack of three rows: the summary has to be
+      // readable in a glance and must not push the list further down the card.
+      const composeBlock = h('div', { className: 'tc-compose' },
+        h('span', { className: 'tc-compose-label' }, t('surfaceCompose')),
+        h('span', { className: 'tc-compose-bar' },
+          StackBar({ items: buckets.map(bucket => ({
+            value: bucket.value, color: bucket.color, label: t(bucket.label),
+            hint: fmtInt(bucket.value) + ' tok',
+          })) })),
+        legend(buckets.map(bucket => ({
+          value: bucket.value, color: bucket.color, label: t(bucket.label), total: contextTotal,
+        }))));
+
+      const kindRows = kindKeys.filter(key => safeCount(kinds[key]?.tokens) > 0);
+      // The kind split is a breakdown of the message bucket, so it belongs to the
+      // tab that lists messages — not above every tab as a second full-width bar.
+      const messageBlock = messageTotal === 0 || tab !== 'top'
+        ? null
+        : h('div', { className: 'tc-kinds' },
+          h('span', { className: 'tc-kinds-label' }, t('surfaceKinds')),
+          StackBar({ items: kindRows.map(key => ({
+            value: safeCount(kinds[key].tokens), color: kindColors[key],
+            label: t(kindLabels[key]), hint: fmtInt(kinds[key].tokens) + ' tok',
+          })) }),
+          legend(kindRows.map(key => ({
+            value: safeCount(kinds[key].tokens), color: kindColors[key],
+            label: t(kindLabels[key]), total: messageTotal,
+          }))));
+
+      // Level 2 — which bucket is on screen; the badge is the item count, so the
+      // tab bar itself says "16 sections / 86 tools / 24 items" before opening.
+      const tabButton = (id, label, count) => h('button', {
+        key: id, type: 'button', className: 'tc-tab',
+        'aria-pressed': tab === id ? 'true' : 'false',
+        onClick: () => setTab(id),
+      }, label, count === null ? null : h('span', { className: 'tc-tab-n' }, fmtInt(count)));
+      const tabBar = h('div', { className: 'tc-tabbar', role: 'group', 'aria-label': t('surfaceTitle') },
+        tabButton('system', t('surfaceSystem'), sections.length),
+        tabButton('tools', t('surfaceTools'), toolRows.length),
+        tabButton('top', t('surfaceTop'), top.length));
+
+      const seg = (id, label, current, onPick) => h('button', {
+        key: id, type: 'button', className: 'tc-btn',
+        'aria-pressed': current === id ? 'true' : 'false',
+        onClick: () => onPick(id),
+      }, label);
+
+      // Level 3 — the current bucket's own scale, so a row's share has a
+      // denominator in view instead of only in a tooltip.
+      const strip = h('div', { className: 'tc-subbar' },
+        h('div', { className: 'tc-subbar-text' },
+          h('b', null, fmtInt(tabTotal)),
+          h('span', null, 'tok'),
+          h('span', { className: 'tc-subbar-sep' }, '·'),
+          h('span', null, (contextTotal > 0 ? pct(tabTotal, contextTotal).toFixed(1) : '0.0') + '% '
+            + t('surfaceOfContext')),
+          h('span', { className: 'tc-subbar-sep' }, '·'),
+          h('em', null, fmtInt(tabCount) + ' ' + t(tabUnit)),
+          needle === '' ? null : [
+            h('span', { key: 'sep', className: 'tc-subbar-sep' }, '·'),
+            h('span', { key: 'hit' }, t('browserShown', { shown: shownRows, total: tabCount })),
+          ]),
+        h('div', { className: 'tc-subbar-tools' },
+          h('input', {
+            className: 'tc-input', type: 'search', value: query,
+            placeholder: t('surfaceSearch'), 'aria-label': t('surfaceSearch'),
+            onChange: event => setQuery(event.target.value),
+          }),
+          h('div', { className: 'tc-seg tc-seg-soft', role: 'group', 'aria-label': t('surfaceSortTokens') },
+            ...[['tokens', t('surfaceSortTokens')], ['name', t('surfaceSortName')]]
+              .map(([id, label]) => seg(id, label, sort, setSort)))));
+
+      // Level 4 — labelled columns. Without these the two numbers on the right
+      // are anonymous, which is exactly why the row was hard to read.
+      const columns = h('div', { className: 'tc-item-cols', 'aria-hidden': 'true' },
+        h('span', null, ''), h('span', null, ''),
+        h('span', null, t('surfaceColName')),
+        h('span', null, ''),
+        h('span', null, ''),
+        h('span', null, t('surfaceColTokens')),
+        h('span', null, t('surfaceColShare')));
+
+      return Card({
+        title: t('surfaceTitle'),
+        meta: surface === undefined || surface === null ? null : fmtInt(contextTotal),
+        className: 'tc-col-12',
+        children: surface === undefined || surface === null
+          ? [Empty({ text: t('surfacePending') })]
+          : [
+            composeBlock,
+            h('div', { className: 'tc-block' },
+              tabBar,
+              strip,
+              messageBlock,
+              columns,
+              body),
+            h('p', { className: 'tc-note' },
+              t('surfaceTapHint') + ' · ' + t('surfaceSim')
+              + (surface.approximate === true ? ' · ' + t('surfaceApprox') : '')),
+          ],
+      });
+    }
+
+    /**
      * Context events with type filters. Each chip carries the session-wide count
      * for that kind, so the log itself can be narrowed without losing the totals.
      */
@@ -2444,6 +2922,7 @@ window.__ModuleLoader__.load({
       const timeline = useOptional(useProjection, 'tcTimeline');
       const usage = useOptional(useProjection, 'tokenUsage');
       const breakdown = useOptional(useProjection, 'contextBreakdown');
+      const surface = useOptional(useProjection, 'tcSurface');
       const pressure = useOptional(useProjection, 'contextPressure');
       const stats = useOptional(useProjection, 'sessionStats');
       const nodes = useOptional(useChat, s => s.legacy.nodes) ?? [];
@@ -2492,6 +2971,7 @@ window.__ModuleLoader__.load({
             steps: steps || safeCount(stats?.steps),
           }),
           h(CompositionCard, { t, breakdown, pressure }),
+          h(SurfaceCard, { t, surface }),
           h(TokenCard, { t, pricing, usage, summary, currency }),
           h(CostCard, { t, pricing, summary, currency }),
           h(TrendCard, { t, pricing, timeline, tier, currency }),
@@ -2517,6 +2997,7 @@ window.__ModuleLoader__.load({
       // Hooks must run unconditionally, even while the dialog is closed.
       const open = readOpen(value => value) === true;
       const breakdown = useOptional(props.useProjection, 'contextBreakdown');
+      const surface = useOptional(props.useProjection, 'tcSurface');
       const pressure = useOptional(props.useProjection, 'contextPressure');
       const timeline = useOptional(props.useProjection, 'tcTimeline');
       const stats = useOptional(props.useProjection, 'sessionStats');
@@ -2552,6 +3033,7 @@ window.__ModuleLoader__.load({
                 requests: summary.known + summary.unknown,
               }),
               h(CompositionCard, { t, breakdown, pressure }),
+              h(SurfaceCard, { t, surface }),
               h(CostCard, { t, pricing, summary, currency }),
               h(ModelCostCard, { t, pricing, summary, currency, className: 'tc-col-4' })),
             h('p', { className: 'tc-note', style: { marginTop: 12 } }, t('modalHint')))),

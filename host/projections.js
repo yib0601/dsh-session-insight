@@ -1,10 +1,11 @@
-/** The three `tc*` session projection definitions powering the context views. */
+/** The session projections powering the context views. */
 import { identitySchema } from './schema.js';
 import {
   initTimeline, applyTimeline, viewTimeline,
   initHeaders, applyHeaders, viewHeaders,
   initActivity, applyActivity, viewActivity,
 } from './fold.js';
+import { initSurface, applySurface, viewSurface } from './surface.js';
 
 export const tcTimelineProjection = {
   // 7: tool-call counters, the command ledger, the file-op ledger, per-file line
@@ -31,6 +32,19 @@ export const tcActivityProjection = {
   wire: { viewSchema: identitySchema, view: viewActivity },
 };
 
+/**
+ * Item-level context composition: the system prompt's sections, every tool
+ * definition's own price, the message areas per kind, and the heaviest
+ * surviving items. `contextBreakdown` gives the three bucket totals; this
+ * answers what is inside them.
+ */
+export const tcSurfaceProjection = {
+  key: 'tcSurface', stateVersion: 1, stateSchema: identitySchema,
+  init: () => initSurface(),
+  apply: (state, event) => applySurface(state, event),
+  wire: { viewSchema: identitySchema, view: viewSurface, summary: false },
+};
+
 export const contextProjections = [
-  tcTimelineProjection, tcHeadersProjection, tcActivityProjection,
+  tcTimelineProjection, tcHeadersProjection, tcActivityProjection, tcSurfaceProjection,
 ];
