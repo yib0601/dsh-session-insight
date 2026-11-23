@@ -20,6 +20,7 @@ import {
 import { createModelSync } from '../host/model-sync/sync.js';
 import {
   DEFAULT_BOOT_MS, DEFAULT_INTERVAL_MS, DEFAULT_ROUTES, DEFAULT_SETTINGS_NS, MODELS_PATH, mountModelSync, resolveSyncOptions,
+  createModelsSurface,
 } from '../host/model-sync/mount.js';
 
 // ── constants ───────────────────────────────────────────────────────────────
@@ -458,5 +459,49 @@ assert.equal(resolveSyncOptions({ DSH_TURN_COST_SETTINGS_NS: 'llm-pi-ai-2' }).se
   assert.equal((await mounted.sync.run()).reason, 'no-route');
   mounted.stop();
 }
+
+test('the models route is claimed before settings exists', async () => {
+  // Regression: the route used to be registered only from inside
+  // `inject(['settings'])`. When that pass never runs the path 404s forever while
+  // every other route of the same plugin works, and the client can only report an
+  // error. It is now claimed as soon as `webServer` exists, answers
+  // `syncUnavailable` with a reason until the loop attaches, and serves the live
+  // catalog afterwards.
+  let registered = null;
+  const web = {
+    get: (name) => ({ webServer: { register: (definition) => { registered = definition; return () => { registered = null; }; } } })[name],
+    logger: { info: () => {}, warn: () => {} },
+  };
+  const options = { enabled: true, settingsNs: 'llm-pi-ai', routes: ['ai-router'], intervalMs: 0, bootMs: 0, staleMs: 300_000 };
+  const surface = createModelsSurface(web, options);
+  assert.equal(registered?.path, MODELS_PATH, 'the path is claimed immediately');
+  assert.equal(surface.mounted, false);
+
+  const read = async (method = 'GET') => {
+    const response = await registered.resource(new Request('http://127.0.0.1:3080' + MODELS_PATH, { method }));
+    const text = await response.text();
+    // A 405 answers plain text (`method not allowed`); only the JSON bodies parse.
+    return { status: response.status, body: text.startsWith('{') ? JSON.parse(text) : text };
+  };
+  const empty = await read();
+  assert.equal(empty.status, 200, 'no 404: the route exists before the loop does');
+  assert.equal(empty.body.syncUnavailable, true);
+  assert.equal(empty.body.reason, 'settings-unavailable', 'the reason is actionable, not a silent gap');
+  assert.deepEqual(empty.body.models, []);
+  assert.equal((await read('POST')).status, 405, 'still read-only');
+
+  surface.attach({
+    catalog: async () => ({ ...empty.body, syncUnavailable: undefined, route: 'ai-router', models: [{ id: 'kimi-k3' }], count: 1, quotaSources: { 'kimi-k3': 'workbuddy' } }),
+    sync: { last: { reason: 'written' } },
+    status: () => ({}),
+  });
+  assert.equal(surface.mounted, true);
+  const live = await read();
+  assert.equal(live.body.route, 'ai-router');
+  assert.deepEqual(live.body.quotaSources, { 'kimi-k3': 'workbuddy' });
+  assert.equal(live.body.last.reason, 'written');
+  surface.dispose();
+  assert.equal(registered, null, 'disposal releases the path');
+});
 
 test('model sync test suite completed', () => {});

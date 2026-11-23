@@ -100,13 +100,70 @@ function storedModels(descriptor, route) {
 }
 
 /**
- * Mount the sync loop and its status route.
+ * Claim `/dsh-turn-cost/models` as early as a `webServer` exists.
+ *
+ * The route must not depend on the settings service being ready: DSH composes
+ * entries in several passes, and a plugin whose route only registers from inside
+ * `inject(['settings'])` silently has no route at all when that pass never runs —
+ * the path 404s forever while every other route of the same plugin works. So the
+ * route is registered by whoever has `webServer`, answers「未挂载」with a reason
+ * until the loop attaches, and serves the live catalog afterwards.
+ *
+ * @param scoped - Host context that can reach `webServer`.
+ * @param options - {@link resolveSyncOptions} result.
+ * @returns `{attach, mounted, path}`; `attach` takes {@link mountModelSync}'s handle.
+ */
+export function createModelsSurface(scoped, options) {
+  const get = (name) => (typeof scoped.get === 'function' ? scoped.get(name) : scoped[name]);
+  const webServer = get('webServer');
+  let handle = null;
+  let dispose = () => {};
+  const surface = {
+    path: MODELS_PATH,
+    attach(next) { handle = next; },
+    get mounted() { return handle !== null; },
+  };
+  if (webServer === undefined || webServer === null || typeof webServer.register !== 'function') return surface;
+  dispose = webServer.register({
+    kind: 'exact',
+    path: MODELS_PATH,
+    resource: async (request) => {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return new Response('method not allowed', { status: 405, headers: { allow: 'GET, HEAD' } });
+      }
+      const body = handle === null
+        ? {
+          enabled: options.enabled, route: null, routes: [...options.routes], settingsNs: options.settingsNs,
+          baseURL: null, models: [], count: 0, syncedAt: null, quotaSources: null, quotaSourcesAt: null,
+          stale: false, refreshing: false, last: null,
+          // Actionable on purpose: this is what a 200-with-no-data looks like when
+          // the settings pass never arrived, and it is what the catalog page shows.
+          syncUnavailable: true, reason: 'settings-unavailable',
+        }
+        : { ...await handle.catalog(), last: handle.sync.last, intervalMs: options.intervalMs, staleMs: options.staleMs };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+      });
+    },
+  });
+  surface.dispose = () => dispose();
+  return surface;
+}
+
+/**
+ * Mount the sync loop, and its status route when no {@link createModelsSurface}
+ * already claimed it.
+ *
  * @param scoped - Host context that can reach `settings` (and optionally
  *   `credentials` / `webServer`).
  * @param options - {@link resolveSyncOptions} result.
- * @returns `{sync, run, stop}`; `stop` is idempotent.
+ * @param surface - a route registered earlier by {@link createModelsSurface};
+ *   when given, this call only attaches the loop to it (the surface owns the
+ *   path, so registering twice would throw).
+ * @returns `{sync, status, stop, catalog}`; `stop` is idempotent.
  */
-export function mountModelSync(scoped, options) {
+export function mountModelSync(scoped, options, surface) {
   const get = (name) => (typeof scoped.get === 'function' ? scoped.get(name) : scoped[name]);
   const settings = get('settings');
   const credentials = get('credentials');
@@ -268,6 +325,13 @@ export function mountModelSync(scoped, options) {
   start();
   scoped.effect(() => stop, 'dsh-turn-cost: model sync loop');
 
+  const handle = { catalog, sync, status };
+  if (surface !== undefined && surface !== null) {
+    // The route is already serving (`/dsh-turn-cost/models`); hand it the loop so
+    // reads see the live catalog instead of the「未挂载」answer.
+    surface.attach(handle);
+    return { ...handle, stop };
+  }
   const webServer = get('webServer');
   if (webServer !== undefined && webServer !== null && typeof webServer.register === 'function') {
     scoped.effect(() => webServer.register({
@@ -297,5 +361,5 @@ export function mountModelSync(scoped, options) {
     }), 'dsh-turn-cost: model sync route');
   }
 
-  return { sync, status, stop };
+  return { ...handle, stop };
 }
