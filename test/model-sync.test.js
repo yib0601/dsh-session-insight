@@ -17,10 +17,10 @@ import {
 import {
   ANTHROPIC_VERSION, MAX_RESPONSE_BYTES, fetchModels, fillMissingPlatforms, listingUrl, parseListing,
 } from '../host/model-sync/listing.js';
-import { createModelSync } from '../host/model-sync/sync.js';
+import { createModelSync, CYCLE_TIMEOUT_MS } from '../host/model-sync/sync.js';
 import {
   DEFAULT_BOOT_MS, DEFAULT_INTERVAL_MS, DEFAULT_ROUTES, DEFAULT_SETTINGS_NS, MODELS_PATH, mountModelSync, resolveSyncOptions,
-  createModelsSurface,
+  createModelsSurface, DEFAULT_RETRY_MS, DEFAULT_RETRY_MAX_MS,
 } from '../host/model-sync/mount.js';
 
 // ── constants ───────────────────────────────────────────────────────────────
@@ -502,6 +502,86 @@ test('the models route is claimed before settings exists', async () => {
   assert.equal(live.body.last.reason, 'written');
   surface.dispose();
   assert.equal(registered, null, 'disposal releases the path');
+});
+
+test('a wedged cycle is abandoned, so the loop cannot freeze', async () => {
+  // Regression: `run` is single-flight. One promise that never settles (a
+  // credential or settings resolve that hangs) used to become the answer for
+  // every later read — the catalog and the billing-source map stayed frozen at
+  // the boot failure until the process restarted.
+  assert.equal(CYCLE_TIMEOUT_MS, 90_000);
+  let calls = 0;
+  const sync = createModelSync({
+    readTarget: async () => ({ route: 'ai-router', settingsNs: 'llm-pi-ai', baseURL: 'https://gw.example', api: 'openai-completions' }),
+    readStored: async () => [],
+    writeModels: async () => {},
+    // First cycle hangs forever, after that the gateway answers normally.
+    fetchImpl: () => {
+      calls += 1;
+      // Hangs past the cycle deadline, then settles on its own so the listing's own
+      // abort timer is released and the test process can exit.
+      if (calls === 1) return new Promise((_, reject) => { setTimeout(() => { reject(new Error('too slow')); }, 300); });
+      return Promise.resolve(new Response(JSON.stringify({ data: [{ id: 'kimi-k3', name: 'Kimi-K3' }] }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      }));
+    },
+    now: () => 1,
+    cycleTimeoutMs: 20,
+    logger: { warn: () => {}, info: () => {} },
+  });
+  const first = await sync.run();
+  assert.equal(first.reason, 'timeout', 'the hung cycle is reported, not waited on');
+  assert.equal(first.ok, false);
+  const second = await sync.run();
+  assert.equal(second.reason, 'written', 'the next cycle runs instead of joining the dead one');
+  assert.equal(sync.last.reason, 'written');
+  assert.equal(calls, 2);
+});
+
+test('an unhealthy cycle arms one short retry', async () => {
+  assert.equal(DEFAULT_RETRY_MS, 60_000);
+  assert.equal(DEFAULT_RETRY_MAX_MS, 5 * 60_000);
+  let listings = 0;
+  let registered = null;
+  const descriptor = { ns: 'llm-pi-ai', value: { providers: { 'ai-router': { baseURL: 'https://gw.example', models: [] } } }, user: {} };
+  const scoped = {
+    get: (name) => ({
+      settings: { describe: () => [descriptor], update: async () => {} },
+      credentials: { resolve: async () => ({ value: 'k' }) },
+      webServer: { register: (definition) => { registered = definition; return () => {}; } },
+    })[name],
+    effect: (cb) => { cb(); return () => {}; },
+    logger: { info: () => {}, warn: () => {} },
+  };
+  const originalFetch = globalThis.fetch;
+  // The first listing is an anonymous 401 (a boot race: the credential store has
+  // not hydrated yet); every later one answers normally.
+  globalThis.fetch = async (url) => {
+    if (!String(url).includes('/models')) return new Response('', { status: 404 });
+    listings += 1;
+    if (listings === 1) return new Response('unauthorized', { status: 401 });
+    return new Response(JSON.stringify({ data: [{ id: 'kimi-k3', name: 'Kimi-K3', quota: { source: 'workbuddy', basis: 'single' } }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const mounted = mountModelSync(scoped, {
+      enabled: true, settingsNs: 'llm-pi-ai', routes: ['ai-router'], intervalMs: 0, bootMs: 0, staleMs: 300_000, retryMs: 30,
+    });
+    // A read is what a surface does: with nothing synced yet it starts a cycle in
+    // the background — the exact path that used to leave a boot failure in place
+    // for a whole interval.
+    await (await registered.resource(new Request('http://x/dsh-turn-cost/models'))).json();
+    await new Promise((resolve) => { setTimeout(resolve, 200); });
+    assert.ok(listings >= 2, 'the retry looked again well before the ten-minute interval');
+    const body = await (await registered.resource(new Request('http://x/dsh-turn-cost/models'))).json();
+    assert.equal(body.last.ok, true, 'a later cycle is healthy');
+    assert.ok(['written', 'unchanged'].includes(body.last.reason), `healthy reason, got ${body.last.reason}`);
+    assert.deepEqual(body.quotaSources, { 'kimi-k3': 'workbuddy' }, 'the retry heals the map');
+    mounted.stop();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('model sync test suite completed', () => {});

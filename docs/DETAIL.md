@@ -94,6 +94,7 @@
 - **WorkBuddy 是「有额度」的网关，不是 `NO_SOURCE`**：它确实是网关（本机 shim → `copilot.tencent.com`），但那条链只服务**一个账号**，额度是账号级的真事实（积分分包 + 订阅周期）。差别在于令牌只在 shim 手里，所以 Host 读的是 shim 的 `/quota`（`WorkBuddy 额度` 页面承认的正是它），不是腾讯的计费接口。工作端点取 `DSH_TURN_COST_WORKBUDDY_QUOTA_URL`，缺省 `http://127.0.0.1:8898/quota`；生产 shim 只在 Vultr 的回环上，本机用一条常驻 SSH 转发（`workbuddy-shim-tunnel.service`）把它搬到 `127.0.0.1:8898`。凭据 ref `WORKBUDDY_SHIM_TOKEN`（即 shim 的 `WORKBUDDY_SHIM_TOKEN`，不是供应商密钥）。
 - **WorkBuddy 的窗口与别人不同**：它没有 rolling/weekly/monthly 三档，而是按**积分包分组**（`套餐积分` / `赠送积分` / `加量包` / `奖励积分`），每档给 `percent`、余量与**重置时刻**。所以窗口标签优先用上游 `label`（供应商自己命名的桶），没有 `label` 才回落到内置词表；`plan`（套餐名 + 到期时刻）是唯一诚实倒计时来源，有它就**不再**「取最长窗口的重置」推周期，也不打印那句推断说明；`totals` 给一个跨桶总量（`积分剩 9226 / 12700`）。空分组（没买过加量包：容量 0、包数 0）不画成 0%，直接不列。
 - **计费源优先读网关的结构化字段，显示名只是兜底**：`ai-shim` 的 `/v1/models` 每行带 `quota: {source, basis, backends}`（它按该行的 `backends` 判定「哪份订阅在扣」，见 `router/quota_source.py`）。Host 在同一次清单同步里把它收起来（模型条目本身装不下：`llm-pi-ai` 的 schema 不是我们的），随 `GET /dsh-turn-cost/models` 的 `quotaSources` 发给页面，页面按 **provider 路由**隔离缓存（同名 `deepseek-v4.1-flash` 在 OpenCode 与网关上是两份不同的订阅，串了就是错账）。判定顺序因此变成：网关的 `quota.source` → provider id 映射表 → 显示名首段。`quota.source` 为 `null` 是「已判定读不到」（`mixed` 多订阅行 / 后端没有额度接口），直接 `NO_SOURCE`，不再去名字里找证据——目录没加载、模型 id 刚出现时名字本来是空的，那时按名字判定就会误报「无额度可查」。
+- **一次失败的循环会在 60 秒后自己再看一眼，且永远不会把循环卡死**：`sync.run` 是单飞的——一个永远不 settle 的承诺（凭据服务还没水化时 `credentials.resolve` 就可能这样）会变成之后**每一次**读的答案，清单与 `quotaSources` 一起冻在启动时那次失败上，直到进程重启。所以每轮都有 `CYCLE_TIMEOUT_MS`（90s）截止，超时按 `timeout` 记进 `last` 并清掉在飞的承诺；不健康的轮次再按 60s→120s→240s 封顶 5 分钟退避重试，成功即重置阶梯。启动竞态（凭据未就绪 → 匿名 401）因此一分钟内自愈，而不是等下一个十分钟周期。
 - **`/dsh-turn-cost/models` 在 `webServer` 一到就登记，不等 `settings`**：这条路由只从 `inject(['settings'])` 里注册时，那一趟没跑就等于路径不存在——GET 走 SPA fallback 回 404，而同一插件的其它路由照常工作，页面只能把它报成错误（DSH 的 web 层对非 GET/HEAD 在匹配前统一回 405，所以「POST 有反应」不代表路由登记成功）。现在由 `createModelsSurface` 先占住路径，未挂载时回 200 + `syncUnavailable: true / reason: 'settings-unavailable'`（可诊断的空白，而不是 404），`settings` 到达后 `mountModelSync` 把同步循环接上去，`quotaSources` 从此有来源。
 - **额度也可以由网关代读**：配了 `DSH_TURN_COST_GATEWAY_URL` 时 Host 先读 `GET /v1/quota?backend=<id>`（Bearer 用 `AI_ROUTER_API_KEY`，与 `ai-router` provider 同一把钥匙），把网关的每后端快照归一成同一 envelope（`via: 'gateway'`）；读不到（网关没这个后端、`supported:false`、HTTP 失败、无密钥）就**逐源回落**到原来的直连端点（`DEEPSEEK_API_KEY` / `OPENCODE_GO_API_KEY` / WorkBuddy shim 的 `/quota`）。这么做的理由是网关本来就持有 WorkBuddy 账号令牌、也本来就是这台机器唯一在说话的对端：本机不必再维护那条 shim 隧道，也不必为每种订阅各配一把供应商密钥；而回落保证网关抖动时卡片不会变白（只会退回旧行为）。
 - **网关路由看模型显示名里的平台段**：`ai-router` 这类自建网关是多后端转发层，但它的每一行模型都**锁定单一后端**，而 `host/model-sync/naming.js` 正是把后端写进显示名首段——`<平台> · <计费> · <名字>[ · <窗口>]`。所以 `WorkBuddy · 付费 · DeepSeek-V4.1-Flash · 1M` 这一行确实由 WorkBuddy 账号付费，读 shim 的 `/quota` 是诚实的。判定顺序：provider id 命中映射表 → 显示名首段命中 `workbuddy` / `OpenCode Go` / `OpenCode Zen` → 有 provider 但都不命中则 `NO_SOURCE`。显示名从**输入框模型目录**（`modelDirectories` 服务的 `directoryFor(sessionId).store`，`models[].name`）取，对任意路由都查得到，不限于当前选中项。`platformOfLabel` 只把**首段**当平台：模型名里出现 "WorkBuddy" 字样的第三方模型不会被误判。
@@ -149,14 +150,14 @@ curl -s 'http://127.0.0.1:3080/dsh-turn-cost/models?force=1' | jq .last
 这一半来自原 `dsh-project-memory`，现在不是独立插件行，而是由 `index.js` 挂载的库 + 第三个懒加载 chunk + 随包 skill。它与会话成本**没有调用关系**：两半各自 try/catch 挂载，记忆引擎崩了照常算钱，额度路由挂了照常用记忆。
 
 - **存三样东西**（项目根的 `.dsh-project-memory/`，`memoryDir` 可改）：
-  - **索引语料**：Markdown / PDF / 文本 + 代码符号（JS/TS、Python、Go、Rust、C 族、Shell 六类，按声明行提取），每条带 `path:line` 引用。索引期**零 LLM 调用**，分块默认 3000 字符、单文件上限 40 块、单文件内存闸门 10 MB（峰值 RSS 约为磁盘的 10–22 倍，闸门挡的是整文件物化的那一下）。
+  - **索引语料**：项目自己的 Markdown / PDF / 文本（`indexDocs: true` 时；`AGENTS.md`、`docs/` 里的规范与风格文档按 3000 字切块，标题命中 必须/禁止/规则/约定/清单 等规范词在 doc 层 ×1.5 提权）+ 代码符号（JS/TS、Python、Go、Rust、C 族、Shell 六类，按声明行提取），每条带 `path:line` 引用。doc 层不参与每步静默注入，只服务 `query_memory`。索引期**零 LLM 调用**，分块默认 3000 字符、单文件上限 40 块、单文件内存闸门 10 MB（峰值 RSS 约为磁盘的 10–22 倍，闸门挡的是整文件物化的那一下）。
   - **经验条目**：`lesson`（问题 → 修法）、`decision`（选了什么 + 为什么）、`procedure`（步骤）、`experience`（记录）。写入侧按重叠度去重、按置信度强化/提升（项目级超 `maxProject` 才归档），全局文件单独一份。
   - **任务**：跨会话工作记录（步骤 + 热文件），会话可绑定到一条；绑定后按 `tasklist.syncHostOnAdopt` 把它推成宿主 todo 快照。
 - **12 个工具**：`list_tasks` / `select_task` / `archive_task` / `show_task_panel` / `index_doc` / `index_repo` / `query_memory` / `remember` / `forget` / `save_lesson` / `watch_repo` / `pm_stats`。逐个注册：某个名字被别的插件占了只丢那一个，并在 `ctx.logger` 里点名（这条日志是"插件装了但工具全没了"的唯一线索）。
 - **唯一命令 `/tasks`**：裸 `/tasks` 给任务清单快照；`/tasks switch|archive|unbind|rename|todos …` 与 `/tasks insight list|confirm|promote|…` 是子动词，主要由面板按钮经 `remote.commands.execute` 驱动。它**不声明 `input`**，所以手敲 `/tasks` 回车立刻执行（代价是带参数的行不再被认成命令，那些入口本来就在按钮上）。
 - **每步静默注入**：`agent/pre-step` 时在请求前追加一条记忆消息——「entry 常驻块」（最近任务与高置信经验，默认最多 6 条 / 400 token）+ 按当前提示相关性门控的条目。同一条正文没变就不重发；单会话保险丝 60 条 / 24000 字符；`auditLog` / `shadowLog` 只写盘不进 prompt（影子日志每步一行，含全部候选判据，为的是能离线重放"换个阈值会怎样"）。无项目 root 可解析时零副作用。
 - **召回**：三层（doc / symbol / experience-insight）BM25 起手；装了 `leanvec` 且 `vectorDir` 指到模型目录时，经验与洞察层的**排序**再用向量融合（`vectorAlpha` 默认 0.5，纯向量实测更差）；闸门与返回条数不因装没装改变。
-- **界面**（懒加载 chunk `client.memory.js`，源码 `client-memory-src/`）：任务面板（`shell.overlay` 浮层：任务页 / 记忆页 / 新建表单 / 分页 / 拖拽）、`/tasks` 的命令节点（接管内置的大段文本卡片，避免 JSON 载荷刷屏）、`show_task_panel` 的工具视图（结果一渲染就开面板——面板状态只在浏览器侧，宿主碰不到）、`/` 菜单的「工作流」组（纯客户端开面板页，不发宿主命令）、插件详情页设置卡（启动全量索引 / 刷新间隔 / 检索时扩展查询）。
+- **界面**（懒加载 chunk `client.memory.js`，源码 `client-memory-src/`）：任务面板（`shell.overlay` 浮层：任务页 / 记忆页 / 新建表单 / 分页 / 拖拽）、`/tasks` 的命令节点（接管内置的大段文本卡片，避免 JSON 载荷刷屏）、`show_task_panel` 的工具视图（结果一渲染就开面板——面板状态只在浏览器侧，宿主碰不到）、`/` 菜单的「工作流」组（纯客户端开面板页，不发宿主命令）、「设置 → 记忆与笔记」页（启动全量索引 / 刷新间隔 / 检索时扩展查询 **+ 笔记检索三项**，见下节）。
 - **软依赖一律降级、不静默**：缺 `slots` / `configForms` / `locale` / `inputTriggers` 任一项，界面那部分跳过并在 3 秒宽限期后打一条**点名**告警（"装配异步、apply 时还没 provide" 是正常现象，所以不立刻报）。Host 侧同理：`tools` / `commands` / `skills` 缺失只少对应注册。
 - **危险根护栏**：家目录、文件系统根、系统目录、包管理器前缀默认**拒绝**当根（整树扫描会吃满内存）。`roots.allow` 放行、`roots.deny` / `roots.exclude` 仍优先；`maxScanFiles` / `maxScanDepth` 超限即截断并跳过"删除本轮未见到条目"的清理。
 - **给别的插件用的 seam**：`installProjectMemoryService` 经 `ctx.provide('projectMemory')` 暴露召回与写入；老宿主没有 `ctx.provide` 时安全跳过。
@@ -165,7 +166,27 @@ curl -s 'http://127.0.0.1:3080/dsh-turn-cost/models?force=1' | jq .last
 
 ```bash
 node skills/project-memory/scripts/pm-digest.mjs <项目根>
+node skills/project-memory/scripts/pm-insights-sweep.mjs <项目根> --dry-run   # 列反思草稿
+node skills/project-memory/scripts/pm-insights-sweep.mjs <项目根>             # 确认 + 提升到 project
 ```
+
+`reflection`（默认关）产出一律 `draft: true` 且只落 task 层，两条自动提升路径都显式跳过草稿——所以
+草稿要经面板「确认 + 提升」或上面这条 sweep 才进 project 级常驻注入；sweep 走的就是面板同一份
+`actInsight()`（保留使用痕迹、近重复合并、`maxProject` 淘汰）。
+
+## 笔记检索（`search_notes`）
+
+同一个包里的第三条能力：`search_notes` 工具。内核仍是笔记仓库里的 `search_core.py`（section 级 BM25F + 语义 RRF 融合 + 中文别名 + 相关性策略），这里只做桥——一条 JSON 进、一条 JSON 出，检索语义永远和 CLI 同一份实现；`host/notes/bridge.py` 是常驻子进程，行分隔 JSON 协议。
+
+- **在哪配**：`设置 → 记忆与笔记 → 笔记检索`
+  - **笔记目录**：含 `.notes/` 的仓库根（如 `~/note`）。**留空 = 不启用**：宿主不拉进程，工具如实报「未配置」并指名这一处。
+    字段本身是**选择器**，不是输入框：点「选择目录」→ 先探测宿主装配了哪种目录选择能力（`uiWorkspace` / `remote.directoryPicker` 的 `list` 动词能不能用），`native` 装配弹操作系统自己的文件夹对话框，`browse` 装配弹站内目录树（面包屑下钻、只列目录、确认写回绝对路径）；探测结论按会话缓存，一次失败 RPC 之后不再重复。两种能力都没有（老宿主）才退回手写输入框，「手动输入」链接给 `~/note` 这类写法留一条路。
+  - **启用笔记检索**：关掉后模型侧不再有可用入口，路径保留，改回来即恢复。
+  - **单次检索超时**：默认 30000 ms。首查要加载语义模型（实测 1–6 秒），之后 200–400 ms。
+  - 三个字段都是 **volatile**：保存即生效，目录一变就 dispose 旧进程、按需拉起新进程，不用重启会话。解释器（`notes.python`，空 = 优先仓库自带 venv）与预热（`notes.warmup`）只留在 profile，界面不暴露。
+- **工具恒在**：`search_notes` 不再「配置了才注册」。没配置时它也出现在工具表里，调用会失败并给出可执行的一句话（去哪个设置页填哪个格子）——能力不该靠"界面上没有痕迹"来隐身。
+- **失败不装成空结果**：空结果与"没装好"在模型眼里长得一样，一旦混同，模型会把换词搜索变成空转。所以报错如实抛出，并回传 `mode=hybrid|degraded`、`semantic`、`relevance`；降级时明说「仅词面检索」及原因。
+- **与项目记忆的分工**：笔记仓（`~/note`）的 Markdown 只由这条通道提供；项目自己的 `AGENTS.md` / `docs/`（架构、设计、风格）归记忆库的 doc 层（`indexDocs: true` 时按 3000 字切块入库，标题命中规范词 ×1.5 提权），两条通道的路径不重叠。记忆根恰好是笔记仓自身时打开 doc 层会出现重复命中——那里的检索应走 `search_notes`。
 
 ## 偏好设置
 

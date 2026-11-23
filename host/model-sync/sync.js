@@ -20,9 +20,24 @@
 import { buildCatalog } from './catalog.js';
 import { fetchModels } from './listing.js';
 
+/** A cycle that has not finished by now is abandoned, so the loop cannot wedge. */
+export const CYCLE_TIMEOUT_MS = 90_000;
+
+/** Reject after `ms`, leaving the abandoned promise to settle on its own. */
+function withDeadline(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { reject(new Error(label)); }, ms);
+    if (typeof timer.unref === 'function') timer.unref();
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 /** Reasons one cycle can end with; `written` and `unchanged` are the healthy ones. */
 export const SYNC_REASONS = Object.freeze([
-  'written', 'unchanged', 'no-route', 'fetch-failed', 'empty-listing', 'name-contract', 'write-failed',
+  'written', 'unchanged', 'no-route', 'fetch-failed', 'empty-listing', 'name-contract', 'write-failed', 'timeout',
 ]);
 
 /** Stable JSON for comparison: one key order, no whitespace. */
@@ -116,13 +131,22 @@ export function createModelSync(options) {
       if (inFlight !== null) return inFlight;
       inFlight = (async () => {
         try {
-          const outcome = await cycle();
+          // A cycle that never settles (a credential or settings promise that does
+          // not resolve, a socket that never fails) must not become the answer for
+          // every later request: `run` is single-flight, so one wedged promise
+          // would freeze the catalog — and the `quotaSources` map with it — until
+          // the process restarts.
+          const outcome = await withDeadline(cycle(), options.cycleTimeoutMs ?? CYCLE_TIMEOUT_MS, 'cycle-timeout');
           last = outcome;
           return outcome;
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
-          logger?.warn?.(`[dsh-turn-cost] model sync failed: ${detail}`);
-          last = { at: now(), ok: false, reason: 'fetch-failed', detail, count: 0, added: 0, removed: 0 };
+          const timedOut = detail === 'cycle-timeout';
+          logger?.warn?.(`[dsh-turn-cost] model sync ${timedOut ? 'timed out' : 'failed'}: ${detail}`);
+          last = {
+            at: now(), ok: false, reason: timedOut ? 'timeout' : 'fetch-failed', detail,
+            count: 0, added: 0, removed: 0,
+          };
           return last;
         } finally {
           inFlight = null;

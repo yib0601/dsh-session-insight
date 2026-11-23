@@ -29,6 +29,11 @@ import { createModelSync } from './sync.js';
 export const MODELS_PATH = '/dsh-turn-cost/models';
 /** Settings entry that owns pi-ai provider profiles. */
 export const DEFAULT_SETTINGS_NS = 'llm-pi-ai';
+/** Delay before one retry after an unhealthy cycle (boot races heal in seconds). */
+export const DEFAULT_RETRY_MS = 60_000;
+/** Ceiling for the retry backoff, so a down gateway is not hammered. */
+export const DEFAULT_RETRY_MAX_MS = 5 * 60_000;
+
 /** Provider route synced when nothing else is configured. */
 export const DEFAULT_ROUTES = Object.freeze(['ai-router']);
 /** Default interval between cycles. */
@@ -239,6 +244,17 @@ export function mountModelSync(scoped, options, surface) {
   let quotaSources = null;
   let quotaSourcesAt = null;
 
+  let stopped = false;
+
+  /** One-shot retry armed by an unhealthy cycle (see {@link cycle}). */
+  let retryTimer = null;
+  /** Consecutive failures, so the retry backs off instead of hammering. */
+  let retryCount = 0;
+  const clearRetry = () => {
+    if (retryTimer !== null) { clearTimeout(retryTimer); retryTimer = null; }
+    retryCount = 0;
+  };
+
   const cycle = async () => {
     const outcome = await sync.run();
     if (outcome.ok && (outcome.reason === 'written' || outcome.reason === 'unchanged')) {
@@ -246,6 +262,24 @@ export function mountModelSync(scoped, options, surface) {
       if (outcome.quotaSources !== null && typeof outcome.quotaSources === 'object') {
         quotaSources = { ...outcome.quotaSources };
         quotaSourcesAt = outcome.at;
+      }
+      clearRetry();
+    } else if (!outcome.ok) {
+      // A failure at boot is usually a service that was not ready yet (a
+      // credential still hydrating gives an anonymous 401). Waiting a whole
+      // interval for that would leave the catalog — and the billing-source map
+      // the sidebar foot reads — stale for ten minutes, so look again shortly.
+      if (retryTimer === null) {
+        // Backoff: 60s, 120s, 240s … capped. A gateway that is down should not be
+        // asked every minute forever, and a success resets the ladder.
+        const base = options.retryMs ?? DEFAULT_RETRY_MS;
+        const delay = Math.min(base * (2 ** retryCount), options.retryMaxMs ?? DEFAULT_RETRY_MAX_MS);
+        retryCount += 1;
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          if (!stopped) void cycle();
+        }, delay);
+        if (typeof retryTimer.unref === 'function') retryTimer.unref();
       }
     }
     return outcome;
@@ -307,7 +341,6 @@ export function mountModelSync(scoped, options, surface) {
     last: sync.last,
   });
 
-  let stopped = false;
   let bootTimer;
   let intervalTimer;
   const start = () => {
@@ -321,6 +354,7 @@ export function mountModelSync(scoped, options, surface) {
     stopped = true;
     clearTimeout(bootTimer);
     clearInterval(intervalTimer);
+    clearRetry();
   };
   start();
   scoped.effect(() => stop, 'dsh-turn-cost: model sync loop');
