@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-turn-cost",
-  "version": "1.12.0",
+  "version": "1.16.0",
   "private": true,
   "type": "module",
-  "description": "Per-turn and session cost in CNY/USD at official list prices, plus context-insight dashboard, Context tab with a four-level item breakdown (window summary, tab with counts, per-bucket scale, labelled rows with per tool schema, per system-prompt section, per message kind), /context-style command and the live subscription quota at the sidebar foot (DeepSeek balance or OpenCode Go rolling/weekly/monthly usage).",
+  "description": "Per-turn and session cost in CNY/USD at official list prices, plus context-insight dashboard, Context tab with a four-level item breakdown (window summary, tab with counts, per-bucket scale, labelled rows with per tool schema, per system-prompt section, per message kind), model-catalog auto-sync for gateway routes (cache-first: a 模型目录 settings page and a header chip paint the stored list, then revalidate the provider's /v1/models behind the panel and write drift through the settings service), /context-style command and the live subscription quota at the sidebar foot (DeepSeek balance, OpenCode Go rolling/weekly/monthly usage, or WorkBuddy credit packages read through the user's gateway shim).",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -20,7 +20,8 @@
     "./client": "./client.js",
     "./client.context.js": "./client.context.js",
     "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg"
+    "./icon": "./icon.svg",
+    "./client.memory.js": "./client.memory.js"
   },
   "files": [
     "index.js",
@@ -32,7 +33,11 @@
     "docs",
     "contracts",
     "test",
-    "icon.svg"
+    "icon.svg",
+    "client-memory-src",
+    "src/memory",
+    "skills",
+    "client.memory.js"
   ],
   "dsh": {
     "bundle": {
@@ -51,7 +56,8 @@
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-client-connection",
         "@deepseek-ai/dsh-client-locale"
-      ]
+      ],
+      "external": []
     },
     "compatibility": {
       "dshReleases": {
@@ -60,6 +66,14 @@
         "0.2.2-rc.4": "compatible",
         "0.2.2-rc.5": "compatible"
       }
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.3"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/schemastery": {
+      "optional": true
     }
   }
 }

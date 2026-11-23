@@ -1,0 +1,103 @@
+// /tasks 用户命令：不经模型，直接展示本项目任务总览（非归档 + 归档计数 + 当前会话绑定）。
+// 同时嵌入结构化 JSON 供 Client 端 Task Panel 解析渲染交互式面板。
+// renderTaskSnapshot / buildTaskPayload 导出供 task-actions.js 复用（面板动作后返回同一快照）。
+import { memoryRootFor } from '../util/fs.js'
+import { ProjectMemoryStore } from '../store.js'
+import { NO_PROJECT_ROOT_NOTE, projectRootFor } from '../setup/taskbridge.js'
+import { fencedJson, invocationContext } from './invocation.js'
+import { stepContent, stepProgress, stepStatus, timeAgo } from '../util/task-view.js'
+
+// 快照会原样写进会话历史（command/done），没有上限时一个异常任务就能把单条消息撑到几十 MB。
+// 截断只发生在**展示载荷**里，不碰 store；超出部分由 totals 告知调用方。
+const SNAPSHOT_LIMITS = { steps: 50, files: 50, insights: 20 }
+
+function cappable(list, max) {
+  const arr = Array.isArray(list) ? list : []
+  return { slice: arr.slice(0, max), total: arr.length }
+}
+
+export function buildTaskPayload(tasks, boundId, archived, root = null) {
+  return JSON.stringify({
+    tasks: tasks.map((t) => {
+      const steps = cappable(t.steps, SNAPSHOT_LIMITS.steps)
+      const files = cappable(t.files, SNAPSHOT_LIMITS.files)
+      const insights = cappable((t.insights || []).filter((i) => !i.archived), SNAPSHOT_LIMITS.insights)
+      const truncated = steps.total > steps.slice.length || files.total > files.slice.length || insights.total > insights.slice.length
+      return {
+        id: t.id,
+        title: t.title,
+        steps: steps.slice.map((s) => ({ content: stepContent(s), status: stepStatus(s) })),
+        files: files.slice.map((f) => ({ path: f, line: undefined })),
+        lastActiveAt: t.lastActiveAt,
+        updatedAt: t.updatedAt,
+        archived: t.archived || false,
+        insights: insights.slice.map((i) => ({ id: i.id, kind: i.kind || 'lesson', title: i.title || '', draft: i.draft === true })),
+        ...(truncated ? {
+          totals: {
+            steps: steps.total,
+            files: files.total,
+            insights: insights.total,
+            // 截断后 UI 不能再用前 50 步判断“全部完成”。
+            completedSteps: (Array.isArray(t.steps) ? t.steps : []).filter((x) => stepStatus(x) === 'completed').length,
+          },
+        } : {}),
+      }
+    }),
+    boundId: boundId || null,
+    archived,
+    // 项目根：客户端用它把跨标签页广播限定在同一个项目里（不同项目共用一个浏览器时，
+    // 没有这个键就会把 A 项目的任务贴到 B 项目的面板上）。
+    root: root || null,
+  })
+}
+
+/**
+ * 生成 /tasks 类快照的完整输出文本（人类可读总览 + JSON 载荷）。
+ * 任务动作命令复用同一函数，面板只需解析尾部 JSON 即可刷新。
+ */
+export function renderTaskSnapshot(config, cwd, sid) {
+  const root = projectRootFor(cwd, config)
+  if (!root) return { kind: 'error', text: NO_PROJECT_ROOT_NOTE }
+  const store = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+  const tasks = store.getTasks()
+  const active = tasks.filter((t) => !t.archived)
+  const archived = tasks.length - active.length
+  const boundId = sid ? store.getBoundTaskId(sid) : null
+  const bound = boundId ? tasks.find((t) => t.id === boundId) : null
+
+  if (!active.length) {
+    const payload = buildTaskPayload([], boundId, archived, root)
+    const note = `项目 ${root}\n任务记录: 0 套${archived ? `（归档 ${archived}）` : ''}。让模型开始干活并维护 todo 清单后会自动建档。`
+    return { kind: 'success', text: fencedJson(note, payload) }
+  }
+  const lines = [`项目 ${root}`, `任务: ${active.length} 套${archived ? `（归档 ${archived}）` : ''}`, '']
+  for (const t of active) {
+    const { done, total } = stepProgress(t)
+    const progress = total ? `${done}/${total}` : '无步骤'
+    const inProgress = (t.steps || []).find((s) => stepStatus(s) === 'in_progress')
+    const step = inProgress ? ` · 当前: ${stepContent(inProgress)}` : ''
+    const marker = bound && bound.id === t.id ? '（本会话绑定）' : ''
+    const files = (t.files || []).slice(0, 8)
+    const fileLine = files.length ? `\n  文件: ${files.join(', ')}${t.files.length > 8 ? ' …' : ''}` : ''
+    lines.push(`● ${t.title}${marker}  步骤 ${progress}${step} · ${timeAgo(t.lastActiveAt || t.updatedAt)}${fileLine}`)
+  }
+  lines.push('', '续接/改名/归档：直接告诉模型（list_tasks / select_task / archive_task）。')
+  const humanText = lines.join('\n')
+  const payload = buildTaskPayload(active, boundId, archived, root)
+  return { kind: 'success', text: fencedJson(humanText, payload) }
+}
+
+export function tasksCommandDefinition(config, ctx) {
+  return {
+    name: 'tasks',
+    description: '查看本项目的任务清单（几套任务、进度、涉及文件、当前绑定）',
+    handler: (invocation) => {
+      try {
+        const { cwd, sid } = invocationContext(invocation)
+        return renderTaskSnapshot(config, cwd, sid)
+      } catch (err) {
+        return { kind: 'error', text: `[tasks] ${err?.message || err}` }
+      }
+    },
+  }
+}

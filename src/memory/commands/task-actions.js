@@ -1,0 +1,251 @@
+// /task <verb> <taskId> 用户命令：Task Panel 卡片动作（不经模型）。
+//   switch  <taskId>  — 绑定当前会话到该任务（自动解归档），等价 select_task(taskId)
+//   archive <taskId>  — 归档该任务
+// 返回值与 /tasks 同一快照文本（含 JSON 载荷），面板解析后即时刷新，无需再跑一次 /tasks。
+import { taskStoreFor, projectRootFor, NO_PROJECT_ROOT_NOTE, adoptStepsToSession, shouldAdoptToHost } from '../setup/taskbridge.js'
+import { renderTaskSnapshot, buildTaskPayload } from './tasks.js'
+import { fireReflect } from '../reflection-pipeline.js'
+import { resolveRoute } from '../llm-route.js'
+import { fencedJson, invocationContext } from './invocation.js'
+import { STEP_STATUSES, stepContent, stepProgress, stepStatus } from '../util/task-view.js'
+
+function describeTask(t) {
+  const { done, total } = stepProgress(t)
+  return `「${t.title}」（步骤 ${done}/${total}）`
+}
+
+/**
+ * raw 去掉前 n 个空白分隔 token 后的**原始剩余文本**（保留内部空白与引号）。
+ * 旧写法 `raw.split(/\s+/).slice(n).join(' ')` 会把标题/JSON 里的连续空格压成一个，
+ * `/tasks rename <id> "a  b"` 于是改名成 "a b"。
+ */
+function restAfter(raw, n) {
+  let i = 0
+  let seen = 0
+  while (i < raw.length && seen < n) {
+    while (i < raw.length && /\s/.test(raw[i])) i++
+    if (i >= raw.length) break
+    while (i < raw.length && !/\s/.test(raw[i])) i++
+    seen++
+  }
+  return raw.slice(i).replace(/^\s+/, '')
+}
+
+function withTaskSnapshot(config, cwd, sid, store, note) {
+  const tasks = store.getTasks()
+  const active = tasks.filter((t) => !t.archived)
+  const archived = tasks.length - active.length
+  const boundId = sid ? store.getBoundTaskId(sid) : null
+  const root = projectRootFor(cwd, config)
+  const human = `项目 ${root}\n${note}\n任务: ${active.length} 套${archived ? `（归档 ${archived}）` : ''}`
+    + (store.lastSaveOk === false ? '\n⚠ tasks.json 未落盘（权限/磁盘/锁）；内存已变更，退出前会重试。' : '')
+  const payload = buildTaskPayload(active, boundId, archived, root)
+  return { kind: 'success', text: fencedJson(human, payload) }
+}
+
+/**
+ * 任务动作处理器。
+ *
+ * ⚠️ 这里返回的定义**不再作为宿主命令注册**：合并后唯一的用户命令是 `/tasks`
+ * （见 workflow.js），本处理器是它的子动词分支（`/tasks switch|archive|unbind|rename|todos …`），
+ * 由卡片按钮经 remote.commands.execute 驱动。`name` / `description` / `input` 因此只剩说明意义，
+ * 真正被使用的是 `handler`——它读 `invocation.rawInput` 自行分词，合并前后一字未变。
+ * @param {object} config - 插件配置
+ * @param {object} ctx - 宿主上下文
+ * @returns {{name: string, description: string, input: object, handler: Function}}
+ */
+export function taskCommandDefinition(config, ctx) {
+  return {
+    name: 'task',
+    description: '任务面板动作：/tasks switch <任务id> 切换绑定，/tasks archive <任务id> 归档，/tasks unbind 取消当前任务绑定',
+    input: { hint: 'switch|archive <任务id> | unbind' },
+    handler: (invocation) => {
+      try {
+        const { session, sid, cwd } = invocationContext(invocation)
+        const raw = (invocation?.rawInput || '').trim()
+        const [verb, taskId, ...rest] = raw.split(/\s+/)
+
+        // 无参数：等同 /tasks（不报错、不强制输入任务 id）——
+        // switch/archive/unbind 由卡片按钮自动调用，用户无需手敲。
+        if (!verb) {
+          const snap = renderTaskSnapshot(config, cwd, sid)
+          if (snap.kind === 'success') {
+            snap.text = `[任务] 用法: /task switch|archive <任务id> | unbind（卡片按钮会自动调用；不带参数等同 /tasks）\n\n${snap.text}`
+          }
+          return snap
+        }
+        if (!['unbind', 'todos', 'rename', 'step', 'step-move', 'step-text'].includes(verb) && (!taskId || rest.length)) {
+          return { kind: 'error', text: '[task] 用法: /task switch|archive <任务id> | unbind' }
+        }
+        const { root, store } = taskStoreFor(cwd, config)
+        if (!store) return { kind: 'error', text: NO_PROJECT_ROOT_NOTE }
+
+        if (verb === 'unbind') {
+          if (sid) store.removeBinding(sid)
+          store.save()
+          // 推空 todo/write 清掉输入框上方的宿主任务清单（TaskBridge 空写=清空，不再自动建档）
+          if (session && typeof session.append === 'function') {
+            session.append('todo/write', { todos: [] })
+          }
+          const note = '已取消当前任务绑定并清空会话任务清单（需要时可让模型重新规划）'
+          return withTaskSnapshot(config, cwd, sid, store, note)
+        }
+
+        // 单步原子写：客户端不再回写整份 steps，避免两个并发动作互相覆盖。
+        if (verb === 'step' || verb === 'step-move' || verb === 'step-text') {
+          if (!taskId) return { kind: 'error', text: `[task] ${verb} 需要任务 id` }
+          const task = store.getTask(taskId)
+          if (!task) return { kind: 'error', text: `[task] 找不到任务: ${taskId}` }
+          if (!Array.isArray(task.steps)) task.steps = []
+          if (verb === 'step') {
+            const index = Number(rest[0])
+            const status = rest[1]
+            if (!Number.isInteger(index) || !STEP_STATUSES.has(status) || !task.steps[index]) {
+              return { kind: 'error', text: '[task] step 需要 <index> <pending|in_progress|completed>' }
+            }
+            const prev = task.steps[index]
+            task.steps[index] = {
+              ...(prev && typeof prev === 'object' ? prev : { content: stepContent(prev) }),
+              status,
+            }
+          } else if (verb === 'step-move') {
+            const from = Number(rest[0])
+            const to = Number(rest[1])
+            if (!Number.isInteger(from) || !Number.isInteger(to)
+              || from < 0 || from >= task.steps.length || to < 0 || to > task.steps.length) {
+              return { kind: 'error', text: '[task] step-move 需要合法的 from/to（0 ≤ to ≤ 步骤数）' }
+            }
+            const [moved] = task.steps.splice(from, 1)
+            const target = to > from ? to - 1 : to
+            task.steps.splice(Math.max(0, Math.min(target, task.steps.length)), 0, moved)
+          } else {
+            const index = Number(rest[0])
+            const payload = restAfter(raw, 3).trim()
+            let content = payload
+            try {
+              const parsed = JSON.parse(payload)
+              if (typeof parsed === 'string') content = parsed
+            } catch { /* 非 JSON 时按原样取 payload */ }
+            if (!Number.isInteger(index) || !task.steps[index] || !content.trim()) {
+              return { kind: 'error', text: '[task] step-text 需要 <index> <json文本>' }
+            }
+            const prev = task.steps[index]
+            task.steps[index] = {
+              ...(prev && typeof prev === 'object' ? prev : { content: stepContent(prev) }),
+              content: content.trim(),
+            }
+          }
+          const now = new Date().toISOString()
+          task.updatedAt = now
+          task.lastActiveAt = now
+          store.markTasksDirty()
+          store.save()
+          if (shouldAdoptToHost(config)) adoptStepsToSession(session, task)
+          return withTaskSnapshot(config, cwd, sid, store, `已更新「${task.title}」步骤`)
+        }
+
+        // /task rename <任务id> <json标题> —— 双击任务标题改名
+        if (verb === 'rename') {
+          if (!taskId) return { kind: 'error', text: '[task] rename 需要任务 id（由卡片双击调用）' }
+          const payload = restAfter(raw, 2).trim()
+          let title = payload
+          try {
+            const parsed = JSON.parse(payload)
+            if (typeof parsed === 'string') title = parsed
+          } catch { /* 非 JSON 时按原样取 payload */ }
+          title = title.trim()
+          if (!title) return { kind: 'error', text: '[task] 标题不能为空' }
+          const task = store.getTask(taskId)
+          if (!task) return { kind: 'error', text: `[task] 找不到任务: ${taskId}` }
+          const oldTitle = task.title
+          task.title = title
+          task.updatedAt = new Date().toISOString()
+          task.lastActiveAt = task.updatedAt
+          // 直接改 task 内容 → 必须标脏：save() 没脏标记会早退（改动静默丢失），驻留账也停在旧水位。
+          store.markTasksDirty()
+          store.save()
+          const note = `已改名「${oldTitle}」→「${title}」`
+          return withTaskSnapshot(config, cwd, sid, store, note)
+        }
+
+        // /task todos <json> —— 卡片双击编辑步骤后，把整份新清单写回绑定任务并推宿主
+        // （与模型 todo_write 同一套数据，只是发起方是用户面板）
+        if (verb === 'todos') {
+          const rawJson = restAfter(raw, 1).trim()
+          let todos
+          try {
+            todos = JSON.parse(rawJson)
+          } catch {
+            return { kind: 'error', text: '[task] todos 需要 JSON 数组参数（由面板自动生成）' }
+          }
+          if (!Array.isArray(todos)) {
+            return { kind: 'error', text: '[task] todos 需要 JSON 数组参数（由面板自动生成）' }
+          }
+          const norm = todos
+            .map((s) => ({ content: String(stepContent(s)).trim(), status: stepStatus(s) }))
+            .filter((s) => s.content.length > 0)
+          const boundId = sid ? store.getBoundTaskId(sid) : null
+          if (!boundId) {
+            return { kind: 'error', text: '[task] 未绑定任务，无法编辑步骤；先在卡片上“切换到此任务”' }
+          }
+          const task = store.getTask(boundId)
+          if (!task) return { kind: 'error', text: '[task] 绑定任务不存在' }
+          task.steps = norm
+          task.updatedAt = new Date().toISOString()
+          task.lastActiveAt = task.updatedAt
+          store.markTasksDirty()
+          store.save()
+          if (shouldAdoptToHost(config)) {
+            adoptStepsToSession(session, task, { force: true })
+          }
+          const note = `已更新「${task.title}」步骤（${norm.length} 条）`
+          return withTaskSnapshot(config, cwd, sid, store, note)
+        }
+
+        if (verb === 'switch') {
+          const task = store.getTask(taskId)
+          if (!task) return { kind: 'error', text: `[task] 找不到任务: ${taskId}（/tasks 查看）` }
+          const prevBound = sid ? store.getBoundTaskId(sid) : null
+          if (task.archived) task.archived = false
+          if (sid) {
+            store.setBinding(sid, task.id)
+          }
+          task.updatedAt = new Date().toISOString()
+          task.lastActiveAt = task.updatedAt
+          store.markTasksDirty() // switch 会解归档：这条也要落进 tasks.json（不只是 binding）
+          store.save()
+          // 反思钩子：切走旧任务异步收割（默认关）
+          if (prevBound && prevBound !== task.id) {
+            fireReflect(config, { llm: ctx?.llm }, root, prevBound, 'switch-away', resolveRoute(session ? { agent: { session } } : undefined, config))
+          }
+          // 反向接管：切换成功后把任务步骤推成宿主 todo/write（dsh 清单跟随）；空步骤也要推空。
+          if (shouldAdoptToHost(config)) {
+            adoptStepsToSession(session, task, { force: true })
+          }
+          const note = `已切换绑定: ${describeTask(task)}${sid ? '' : '（拿不到会话 id，未持久绑定）'}`
+          return withTaskSnapshot(config, cwd, sid, store, note)
+        }
+
+        if (verb === 'archive') {
+          const task = store.getTask(taskId)
+          if (!task) return { kind: 'error', text: `[task] 找不到任务: ${taskId}（/tasks 查看）` }
+          if (task.archived) return { kind: 'error', text: `[task] 已归档: ${task.title}` }
+          task.archived = true
+          task.updatedAt = new Date().toISOString()
+          // 归档 = 停止续做：绑定一并清掉，否则 binding.json 会永久指向这条已归档任务。
+          store.removeBindingsForTask(task.id)
+          store.markTasksDirty()
+          store.save()
+          // 反思钩子：归档即收割（默认关）
+          fireReflect(config, { llm: ctx?.llm }, root, taskId, 'archive', resolveRoute(session ? { agent: { session } } : undefined, config))
+          const note = `已归档: ${describeTask(task)}（select_task 可恢复）`
+          return withTaskSnapshot(config, cwd, sid, store, note)
+        }
+
+        return { kind: 'error', text: `[task] 未知动作: ${verb}（switch|archive）` }
+      } catch (err) {
+        return { kind: 'error', text: `[task] ${err?.message || err}` }
+      }
+    },
+  }
+}

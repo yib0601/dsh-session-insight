@@ -2,8 +2,10 @@
 
 ## Boundary (three sentences)
 
-- **负责什么**: 用官方单价把 DSH 已算好的 token 用量换算成钱（逐轮徽章 + 底部会话累计），并提供 `dsh-context` 的那套界面（跨会话「用量总览」、会话「上下文」页签、`/context` 命令弹窗、右侧栏 Context 页签、费用偏好设置行），外加侧栏脚「订阅额度」——按**请求记录的 provider id**（不看模型名：同一个模型可由多个账号服务）选定额度源，把对应官方额度（DeepSeek 余额 / OpenCode Go 的 5 小时·周·月用量）与**订阅周期倒计时**（最长窗口重置时刻）显示在「用量总览」卡片上；自建网关（如 `ai-router`）按上游密钥计费、网关自身不设配额，归为「无额度源」——不显示数字也不发请求，只说明原因；没有证据时同样留白而不猜源；已完全替代该插件。
-- **不负责什么**: 不改写会话日志、不 append 任何 Session 事件、不改动其他插件的 UI、不使用任何第三方价格（models.dev、pi-ai catalog 等）；不统计联网搜索/OCR 等按次计费项；不拉取 models.dev 或 npm 注册表；不读取原始会话日志文件；不持久化聊天正文（上下文浏览器的「请求内容」只渲染页面已在内存里的聊天快照，关页即消失）；不做充值、不做额度告警、不缓存额度到磁盘、不让供应商密钥进入页面、不代替供应商统计用量（只读官方口径）。
+- **负责什么**: 用官方单价把 DSH 已算好的 token 用量换算成钱（逐轮徽章 + 底部会话累计），并提供 `dsh-context` 的那套界面（跨会话「用量总览」、会话「上下文」页签、`/context` 命令弹窗、右侧栏 Context 页签、费用偏好设置行），外加侧栏脚「订阅额度」——**只按主视图那一个会话**选定额度源，且按**请求记录的 provider id**（不看模型名：同一个模型可由多个账号服务）：会话在跑（含停下来等你回答）用**正在跑的模型**（`modelSelection.lastUsed`），跑完/空会话才用**输入框选的模型**（`modelSelection.next`），源变化经 1.2s 防抖才提交（中途 hydration 的候选永远不上屏）；把对应官方额度（DeepSeek 余额 / OpenCode Go 的 5 小时·周·月用量 / WorkBuddy 积分包）与**订阅周期倒计时**（最长窗口重置时刻）显示在「用量总览」卡片上；自建网关（如 `ai-router`）按上游密钥计费、网关自身不设配额，归为「无额度源」——不显示数字也不发请求，只说明原因；没有证据时同样留白而不猜源；已完全替代该插件。
+- **不负责什么**: 不改写 DSH 安装树（不打补丁）；不改写会话日志、不 append 任何 Session 事件、不改动其他插件的 UI、不使用任何第三方价格（models.dev、pi-ai catalog 等）；不统计联网搜索/OCR 等按次计费项；不拉取 models.dev 或 npm 注册表；不读取原始会话日志文件；不持久化聊天正文（上下文浏览器的「请求内容」只渲染页面已在内存里的聊天快照，关页即消失）；不做充值、不做额度告警、不缓存额度到磁盘、不让供应商密钥进入页面、不代替供应商统计用量（只读官方口径）。
+- **顺带负责什么**: 自建网关路由的**模型清单自动同步**（`ai-router` 这类目录外 provider 在 DSH 里没有运行时模型目录，`models` 即选择器；本插件让它跟随网关 `/v1/models`，经 `settings` 服务写回），并把它做成**查看即读、读即核对**的缓存优先链路——「模型目录」页与设置面板头部的模型 chip 先画已存清单，再在后台静默核对。
+- **还带着什么**: 原独立插件的**项目记忆引擎**（`src/memory/` + `client.memory.js` + `skills/project-memory/`）已并入本包，挂载点是同一个 `index.js`：文档/代码符号索引、经验条目（lesson / decision / procedure / experience）、跨会话任务、每步静默注入、12 个工具与 `/tasks`。它与会话成本两条半边**装配期互不引用**，各自 try/catch 挂载，一边坏掉不影响另一边。
 - **对外只暴露什么**: `conversation.chat.assistant-actions`（`turn-cost`）、`conversation.chat.turnTail`（`dsh-turn-cost`）、`conversation.composer.dock`（`session-cost`）、`conversation.view`（`tc-context`）、`conversation.input.overlay`（`tc-context-modal`）、`sidebar.footer.action` / `sidebar.right.pane.tab`（`tc-overview` / `tc-context`）、`settings.section` + `settings.section.icon`（`turn-cost`，插件自有设置页）、`inputTriggers` 命令源 `context`（`/context`），以及两个 locale 命名空间 `turnCost` / `tcContext`。三个 `tc*` session 投影为内部数据源。
 
 ## Modules
@@ -15,12 +17,15 @@
 | `presentation` (internal) | `client.js` §2 (`TurnCostBadge`, `SessionCostPill`, `useMessageTurn`, `useTurnTailOf`) | 逐轮徽章（动作行内联 / 无动作行时独占一行，明细按 token 桶给金额）+ 底部状态栏会话累计药丸（有预算时显示 花费/预算 与进度条，超支转红） | React（宿主模块表）、`react-dom`、locale `t` |
 | `composition` | `client.js` §3 (`apply`) | 注册 `assistant-actions` / `turnTail` / `composer.dock` 槽位条目、locale，并异步加载 context chunk | `ctx.slots`, `ctx.locale`, `ctx.effect` |
 | `context-host` | `index.js`, `host/schema.js`, `host/fold.js`, `host/surface.js`, `host/estimate.js`, `host/projections.js` | 4 个 `tc*` session 投影（timeline / headers / activity / surface）；surface 折叠上下文明细——系统提示词按标题分区、每个工具定义各自的估价、消息按类别分桶、占用最大的条目（让「已用 174K」落到具体条目，与内置 `contextBreakdown` 同公式，实测三项逐项相等）；timeline 额外折叠工具调用计数、命令执行流水（程序名 / 状态 / 墙钟耗时）、文件操作流水与逐文件行数增减、用户 / 助手消息 / 技能加载计数，并记录模型切换事件；activity 按请求时间把 token 桶分进 `peakBuckets` / `offPeakBuckets` 并按模型再分一层；`ctx.inject(['sessionProjections'])` 延迟激活，纯 Node + 防御式 | `ctx.sessionProjections` |
-| `quota-host` (internal) | `host/quota.js` | 两条官方额度源：DeepSeek 余额（`balance_infos` → `{currency,total,toppedUp,granted}`）与 OpenCode Go 用量窗口（`usage.rolling/weekly/monthly` → `{key,percent,status,resetsAt}`，clamp 0–100）。按源分别缓存 5 分钟（失败不缓存，成功值在失败后继续服务非强制读）、12s 超时，并在 `webServer` 上注册 `GET /dsh-turn-cost/quota?source=<deepseek|opencode-go>&force=1`（未知 source → 400）。密钥只在 Host 侧按次解析，页面拿不到 | `ctx.webServer`, `ctx.credentials` |
-| `context-client` (lazy chunk) | `client.context.js` | 5 个界面入口 + 设计系统（宿主 `--dsw-*` token）+ 卡片与仪表盘：KPI 磁贴、上下文统计（轮次 / 步骤 / 用户输入 / 助手消息 / 技能加载 / 工具调用 + 工具与程序分布）、构成 / Token（环形图）/ 费用构成 / 趋势（可切指标）/ 按模型花费 / 时序 / 文件活动（类型筛选·路径搜索·行数增减·操作日志）/ 命令执行（程序筛选·状态筛选·搜索）/ 事件（类型筛选）/ Agent / 逐请求浏览器（筛选·排序·CSV·分页·请求内容展开）+ Agent 家族（父 / 己 / 子 / 孙，各自 tokens 与官方价费用，一张卡），仪表盘含 7 日双指标图（带数值标签）、周对齐热力图、模型花费榜与可搜索分页会话卡片；跨会话聚合 `useMemo` 缓存，历史金额按 Host 折叠的 `peak` / `offPeak` 桶分档计价 | `react`, `react-dom`, `pricing` face |
+| `quota-host` (internal) | `host/quota.js` | 三条额度源：DeepSeek 余额（`balance_infos` → `{currency,total,toppedUp,granted}`）、OpenCode Go 用量窗口（`usage.rolling/weekly/monthly` → `{key,percent,status,resetsAt}`）与 WorkBuddy 积分包（读 shim 的 `/quota` → `{windows:[{key,label,percent,total,remain,resetsAt}],plan,totals}`，窗口标签由上游命名，`plan.expiresAt` 取代「最长窗口推算」作为订阅周期）。percent 一律 clamp 0–100。按源分别缓存 5 分钟（失败不缓存，成功值在失败后继续服务非强制读）、12s 超时，并在 `webServer` 上注册 `GET /dsh-turn-cost/quota?source=<deepseek|opencode-go|workbuddy>&force=1`（未知 source → 400）。WorkBuddy 的端点由 `DSH_TURN_COST_WORKBUDDY_QUOTA_URL` 配置（缺省 `http://127.0.0.1:8898/quota`）。密钥只在 Host 侧按次解析，页面拿不到 | `ctx.webServer`, `ctx.credentials` |
+| `model-sync-host` (internal) | `index.js`, `host/model-sync/{naming,catalog,listing,sync,mount}.js` | 「目录外 provider 路由」（自建网关，如 `ai-router`：pi-ai 内置目录里没有它，运行时就没有模型目录，profile 里声明的 `models` **就是**模型选择器）的清单自动跟随网关：每轮拉 `GET /v1/models` → 逐行生成条目（显示名三段式 `<平台> · <计费> · <名字> · <窗口>` 或两段式 `<名字> · <计费>自动降级`、`input` 模态、`contextWindow`/`maxTokens`、`reasoningEfforts` 与两个 `compat` 开关；本模块不拥有的字段原样保留）→ 与已存清单逐条比较 → **只在不一致时**经 `settings.update` 整体写回（DSH 校验条目、落盘 profile、重建 provider 一个事务）。启动延迟 20s + 每 10 分钟一轮；拉取失败 / 空清单 / 显示名越界三种情况一个字都不写；`GET /dsh-turn-cost/models[?force=1]` 回状态与最近结果。**不打任何 DSH 补丁、不改 node_modules、不直接写 profile 文件** | `ctx.settings`, `ctx.credentials`（路由的 `apiKeyEnv`）, `ctx.webServer`（可选） |
+| `context-client` (lazy chunk) | `client.context.js` | 6 个界面入口（`settings.section` 两个：费用 / 模型目录；另有一个设置面板头部 chip）+ 侧栏脚额度卡（`sourceOfSessions` / `createSourceSettler`，读主视图会话的运行态与 `modelSelection`） + 设计系统（宿主 `--dsw-*` token）+ 卡片与仪表盘：KPI 磁贴、上下文统计（轮次 / 步骤 / 用户输入 / 助手消息 / 技能加载 / 工具调用 + 工具与程序分布）、构成 / Token（环形图）/ 费用构成 / 趋势（可切指标）/ 按模型花费 / 时序 / 文件活动（类型筛选·路径搜索·行数增减·操作日志）/ 命令执行（程序筛选·状态筛选·搜索）/ 事件（类型筛选）/ Agent / 逐请求浏览器（筛选·排序·CSV·分页·请求内容展开）+ Agent 家族（父 / 己 / 子 / 孙，各自 tokens 与官方价费用，一张卡），仪表盘含 7 日双指标图（带数值标签）、周对齐热力图、模型花费榜与可搜索分页会话卡片；跨会话聚合 `useMemo` 缓存，历史金额按 Host 折叠的 `peak` / `offPeak` 桶分档计价 | `react`, `react-dom`, `pricing` face |
 
-依赖方向：`composition → presentation → pricing`、`presentation → preferences`（单向，无反向/循环）；`context-client → pricing`（经显式传入的只读 face），`context-client → 内置/自建投影`（只读），`context-client → quota-host`（只走 HTTP 路由，不 import Host 代码），`quota-host` 不依赖任何 Client 代码。所有 Client 代码分布在 `client.js` 与其懒加载 sibling chunk `client.context.js`（Host 的 `require.async` 协议）；`client.js` 约 1200 行、`client.context.js` 约 2800 行，Host 侧按文件分模块。
+| `memory-host` (internal) | `index.js`, `src/memory/`, `skills/project-memory/` | 项目记忆引擎（原独立插件并入）：索引语料（文档 + 代码符号，`path:line` 引用；索引期零 LLM）、经验条目（lesson / decision / procedure / experience，分层去重-强化-提升-容量-归档）、跨会话任务（task + 宿主 todo 同步）、每步静默注入（entry 常驻块 + 相关性门控 + 单会话预算，同一条不重发）、12 个工具与唯一命令 `/tasks`、宿主 skill `project-memory`、原生服务 `projectMemory`（`ctx.provide` 的召回/写入 seam）。所有可选服务缺失都降级并**点名**打日志；数据落 `<root>/.dsh-project-memory/`，家目录/系统目录默认拒绝当根 | `ctx.tools`, `ctx.commands`(可选), `ctx.skills`(可选), `ctx.llm`(可选), `ctx.session` |
+| `memory-client` (lazy chunk) | `client.memory.js`（装配自 `client-memory-src/` 23 个模块） | 任务面板（`shell.overlay` 浮层：任务页 / 记忆页 / 新建表单 / 分页 / 拖拽）、`/tasks` 的 `conversation.chat.commandview` 节点（接管内置大段文本卡片，避免 JSON 载荷刷屏）、`show_task_panel` 的 `tool.call.toolview`（结果一渲染就开面板，面板状态只在浏览器侧）、`/` 菜单「工作流」斜杠源（纯客户端开面板页）、插件详情页设置卡（三个 volatile 字段经 `configForms` 校验后原地生效）。全部软依赖：缺 slots / configForms / locale / inputTriggers 任一项只降级成一条点名告警，绝不静默消失 | `react`, `ctx.slots`, `ctx.configForms`, `ctx.locale`, `ctx.inject(inputTriggers, sessions)` |
+依赖方向：`composition → presentation → pricing`、`presentation → preferences`（单向，无反向/循环）；`context-client → pricing`（经显式传入的只读 face），`context-client → 内置/自建投影`（只读），`context-client → quota-host`（只走 HTTP 路由，不 import Host 代码），`quota-host` 不依赖任何 Client 代码；`model-sync-host` 只经 `naming → catalog → listing` 这条纯链，`index.js` 只做注入与挂载。记忆半边与成本半边在装配期**互不引用**（同一个 `index.js` 里各自 try/catch 挂载）：`memory-client → memory-host` 只经工具与 `remote.commands`，`memory-host` 只依赖 `src/memory/util → 存储目录`，单向、无回边。所有 Client 代码分布在 `client.js` 与其两个懒加载 sibling chunk `client.context.js` / `client.memory.js`（Host 的 `require.async` 协议）；`client.js` 约 1200 行、`client.context.js` 约 4700 行、`client.memory.js` 约 3700 行（后者由 `client-memory-src/` 模块装配，源码一改就要重新装配并 touch 入口），Host 侧按文件分模块。
 
-**项目级边界例外（单文件 400 行红线）**：`dsh.client` 静态包由 Host 以 `client.js` 入口产物服务，跨文件同步 `require` 不可靠（chunk 只能异步 `require.async`），因此入口内 `pricing` / `presentation` / `composition` 必须共用一个文件。该文件按 § 分区划分职责，`pricing` 段零 DSH 依赖并被 `test/pricing.test.js` 独立抽取测试；四个职责段无共享可变状态、无反向依赖。此例外只放宽「单文件行数」，不放宽低耦合/高内聚/单向依赖等其余红线。Host 侧与 lazy chunk 已按职责拆成独立文件。
+**项目级边界例外（单文件 400 行红线）**：`dsh.client` 静态包由 Host 以 `client.js` 入口产物服务，跨文件同步 `require` 不可靠（chunk 只能异步 `require.async`），因此入口内 `pricing` / `presentation` / `composition` 必须共用一个文件；懒加载 sibling chunk `client.context.js` 同理（一个 chunk = 一个被异步 require 的文件），模型目录的 store 与两个组件因此也在其中，但 store 与组件通过 chunk 的 `models` 导出被 `test/model-catalog-client.test.js` 直接执行（桩 React + 假 fetch），不靠肉眼保证。该文件按 § 分区划分职责，`pricing` 段零 DSH 依赖并被 `test/pricing.test.js` 独立抽取测试；四个职责段无共享可变状态、无反向依赖。此例外只放宽「单文件行数」，不放宽低耦合/高内聚/单向依赖等其余红线。Host 侧与 lazy chunk 已按职责拆成独立文件。
 
 ## Data contract (inbound, read-only)
 
@@ -138,6 +143,41 @@ tcActivity.days['YYYY-MM-DD'] -> {
 - v1.6 对齐面收官：① 上下文浏览器展开「请求内容」（用户消息 / 思考 / 回答 / 工具调用参数 / 工具结果，默认 300 字预览）；② 上下文页内新增**Agent 家族**卡（父 / 己 / 子 / 孙，各自费用，不再单开页签）；③ 仪表盘加时间范围（今天 / 7 / 30 天）与工具 / 程序 / 技能三张跨会话排行；④ Host 的 `tcActivity` 增每日名称计数（`stateVersion 4`），旧世代 Host 下三张排行卡显示「需重启」提示而不是空数据。
 - v1.11 上下文明细（回答「174K 里到底是什么」）：新增 `tcSurface` 投影与「上下文明细」卡——系统提示词按标题 / `【…】` / 三段式 banner 分区并逐区估价、每个工具定义各自的估价与模型实际收到的 schema（86 个工具不再是一个匿名 17K）、消息按用户/回答/思考/工具参数/工具结果分桶、占用最大的 24 条（带工具名、轮次与预览）。卡内三个页签（系统 / 工具 / 顶部条目，**系统为默认**）+ 搜索（名称、描述与正文一起搜）+ 按大小/名称排序。**每一行都能点开读正文**：`▸ / ▾` 展开后给出 tokens · 字符数 · 轮次/步 与等宽可滚动的正文框，同页签只开一条。三项合计与内置 `contextBreakdown` 逐项相等（同一会话日志实测 `8104 / 17129 / 356622` 完全一致），因此卡片不是另一套口径，只是把同一笔账拆开。
 - v1.12 上下文明细的视觉层级：卡片改成四层结构——**整个窗口**（一条带底的摘要横条 = 三段堆叠条 + 带数值与占比的图例）、**页签**（下划线页签，选中 = 主色下划线 + 加粗；与浅色分段的排序控件形状区分；条目计数徽标）、**本页签量级**（总量 / 占上下文 / 条目数，右侧是弱化搜索与排序；筛选后变「显示 x / y」）、**行**（`▸ 名称 │ 一行摘要 │ 量级条 │ tokens │ 占比`，带列头）。行内两个数字各有分母：量级条相对本页签最大行，占比相对本页签总量；头名行保持满强度、其余条降到 42% 透明度，列表有「头」。摘要列去掉 banner 装饰线（`═══` / `##` / `**…**`）与重复的标题，只留「里面是什么」。展开态整行抬成带色底的容器 + 左侧 2px 强调轨，正文上方是标签行。「消息构成」从卡片级降到消息页签（它是那一桶自己的拆分）。断点改用容器查询：≤820px 去摘要列，≤460px 去量级条、摘要横条上下堆叠、页签平分整行——同一张卡在整宽页签与 ~380px 右栏都成立。
+- v1.13–v1.15 额度源与选源：新增 **WorkBuddy 积分包** 第三源（读网关 shim 的 `/quota`，窗口标签由上游命名、`plan.expiresAt` 直接当订阅到期，不再用「最长窗口 resetsAt」推断）；侧栏脚额度卡改为**只认主视图那一个会话**，运行中（含等你回答）用 `modelSelection.lastUsed`、空闲才用 `next`，源变化经 1.2s 防抖提交，`NO_SOURCE` 不再写进「记住的源」。
+- v1.16 三件事合流：① 合并**项目记忆引擎**（原 `dsh-project-memory` 变成 `index.js` 挂载的库 + 第三块懒加载 chunk + 随包 skill；12 工具、`/tasks`、每步注入、`projectMemory` 原生 seam，与成本半边装配期互不引用、各自 try/catch）；② **模型清单自动同步**（`model-sync-host` + 「模型目录」页与设置面板 chip，缓存优先/查看即核对，只经 `settings` 服务写回）；③ 额度卡换成「按会话运行态选源 + 防抖」。
+
+**模型清单自动同步（`model-sync-host`）**：DSH 对 pi-ai 内置目录之外的 provider 路由没有运行时模型目录 —— `models` 是唯一事实，设置页「获取可用模型」只把候选递进表单、仍需手点保存，而且它只带 `id / name / 上下文 / 输出上限`，模态与思考档位会丢。所以这条路必须由**配置写入**完成，而 DSH 自己的 `settings` 服务是唯一会同时校验条目、落盘 profile 并重建 provider 的写手；本插件只负责按时把「网关现在服务什么」算出来交给它：
+
+```
+GET {路由 baseURL}/v1/models         （anthropic-messages → {root}/v1/models?limit=1000，x-api-key + anthropic-version；
+                                        openai-* → {base}/models，Bearer；gemini → {base}/models，x-goog-api-key）
+  ↓ 每行 → 条目（name 由 backends/billing/context_window 生成；input 由行上 input 生成；
+     contextWindow/maxTokens 由行上数值生成；reasoningEfforts+compat 由行上 reasoning.levels 生成）
+  ↓ 与 profile 已存清单逐条比较（忽略键序）
+  ↓ 有差异才写：settings.update('llm-pi-ai', { providers: { 'ai-router': { models } } })
+```
+
+路由是**缓存优先**的（stale-while-revalidate）：普通 `GET` 立即用 profile 里已存的清单应答，`stale` 时顺手起一次后台核对（不 await 网关）；`?force=1` 才同步等一轮，因为那是按钮按下的「现在就查」。回复体：
+
+```
+{ enabled, route, routes[], settingsNs, baseURL,
+  models: [{id,name,input?,contextWindow?,maxTokens?,reasoningEfforts?,compat?}],
+  count, syncedAt,        // 上次「written」或「unchanged」的时刻；重启后从 null 开始
+  stale, refreshing,      // 这次读是否需要/已经在后台核对
+  last: {at, ok, reason, detail?, count, added, removed} | null,
+  intervalMs, staleMs }
+```
+
+三条拒绝线：清单拉不到（超时 / 非 2xx / 不是 JSON / 超大）、清单为空、生成的显示名越界（含 router 历史标记 `· Trae` / `· 付费源待命`）—— 任一命中都保持旧清单不动，只在日志里留一行和状态里的 `reason`。行上没有声明的能力（`input`、`reasoning.levels`）不补不猜：**声明错方向的代价不对称**——把文本模型标成收图会在消息落盘后被上游拒，而少标只会让附件提前被拦下。手改过的 `reasoningEfforts`（出现非 canonical 键或 wire 值与档位不等）整块保留，同步只刷新它自己生成的字段。
+
+零配置：默认同步 `ai-router`、间隔 10 分钟、启动 20s 后首轮。环境变量可改（`DSH_TURN_COST_MODEL_SYNC=0` 关掉、`..._ROUTES`、`..._SYNC_MS`、`..._BOOT_MS`、`DSH_TURN_COST_SETTINGS_NS`）。客户端侧（`context-client`）只有一条链路：`createModelsStore()` 先画 localStorage 里的上次快照 → 读上面的路由（Host 用已存清单应答）→ 若回复说 `refreshing`，按 1.5s 的节奏最多跟 8 次，把后台核对的结果静默换上新清单，并把这一轮新出现的模型打上「新增」。**设置面板打开时挂载的头部 chip 就是惰性触发器**（`settings.action` id `tc-models-chip`），所以打开设置（包括直接去 DSH 原生的模型页）都会触发一次核对，而没有任何轮询。
+
+```bash
+curl -s http://127.0.0.1:3080/dsh-turn-cost/models | jq '{route, count, syncedAt, stale, refreshing}'
+curl -s 'http://127.0.0.1:3080/dsh-turn-cost/models?force=1' | jq .last
+```
+
+模型目录的两个界面入口都在 `context-client` 里，共用 `createModelsStore()`：设置面板头部的 chip（`settings.action`，面板一打开就挂载 —— 这就是**懒加载的触发点**）与「模型目录」页（`settings.section` id `tc-models`）。两者都是「先画快照、再静默换新」：快照来源是 localStorage 的上次快照（浏览器侧）与 Host 用已存清单的回答（服务端），刷新结果以 `refreshing` 为信号，按 1.5s 最多跟 8 次；失败的读保留已画出的清单，只把状态写成「更新失败：原因」。测试见 `test/model-catalog-client.test.js`（桩 React + 假 fetch，直接执行 store 与两个组件）。
 
 **实现注意（部署形态）**：Client chunk 按 rev 重新加载，Host 的 JS 是每个进程一份模块世代；就地改 `host/*.js` 或 `index.js` 后，正在运行的 Host 仍执行旧代码，直到 DSH 重启（或该 bundle 重新加载一次）。新增的 `GET /dsh-turn-cost/quota` 因此也要重启后才注册：重启前按钮显示「额度不可用」，重启后自动换成真实余额，无需再改客户端。同一原因的另一个表现：`commands[].program` 在 Client 侧做了兜底重算：Host 存的值若是包装根（`cd` / `sudo` / `env` …）就用 `call` 文本重新提取，避免就地升级后程序分布一直显示 `cd`。
 

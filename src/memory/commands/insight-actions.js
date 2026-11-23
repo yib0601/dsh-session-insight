@@ -1,0 +1,524 @@
+// PR 3 服务器侧：/insight 命令（记忆视图：task 草稿 / project / global）
+// 动作：list / confirm / promote / demote / archive / restore / delete
+// 纯函数 actInsight / listInsights 操作传入的 store/gs 内存对象，持久化由调用方
+// （命令 handler：store.commit + gs.commit）统一负责，便于单测。
+import path from 'node:path'
+import { ProjectMemoryStore } from '../store.js'
+import { memoryRootFor, normalizeCitationFiles } from '../util/fs.js'
+import { cfgInsight, GlobalStore, normalizeInsight, defaultGlobalFile, saveInsight, recordDeleted, carryUsageFields, mergeOrPushInto, demoteToProject, demoteToTask, pruneItems, refreshDerivedTrigger, putInsightField, INSIGHT_KINDS } from '../insight-store.js'
+import { NO_PROJECT_ROOT_NOTE, projectRootFor } from '../setup/taskbridge.js'
+import { fencedJson, invocationContext } from './invocation.js'
+import { isoMs } from '../util/value.js'
+import { pruneKindFields } from '../util/insight-fields.js'
+import { forgetVectorRows } from '../vector-index.js'
+
+/** 容量旋钮的防御性取值：cfg 可能只带显式测试字段。 */
+function capOf(value, fallback) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+/**
+ * 面板/命令删除后的向量缓存清理：与 `forget` 工具同一承诺（真删），但这里不加载模型。
+ * 失败只影响缓存残留，不能挡住删除本身。
+ */
+function forgetVectorsForDeleted({ store, gs, home, ids }) {
+  try {
+    // 所有 home 的向量行都在 project store 目录（query_memory/auto-inject 都传 memoryDir）。
+    const dir = store && typeof store.dir === 'string' ? store.dir : null
+    if (dir && ids.length) forgetVectorRows({ dir, ids })
+  } catch {
+    /* 缓存删除失败不影响删除承诺 */
+  }
+}
+
+/**
+ * 记忆列表单页上限。面板每页只请求 30 条（客户端 PAGE_SIZE），远小于它——
+ * 封顶只用于挡住畸形/滥用调用，避免单个响应被抓成超大载荷。
+ */
+export const INSIGHT_PAGE_MAX = 200
+
+function insSummary(ins, extra = {}) {
+  const s = ins || {}
+  return {
+    id: s.id,
+    kind: s.kind || 'lesson',
+    scope: s.scope || 'project',
+    title: s.title || '',
+    // 摘要按 kind 暴露“非标题正文”，编辑表单据此精确预填（不再用单一 body 猜）
+    fix: s.fix && s.fix !== s.title ? s.fix : undefined,
+    solution: s.solution && s.solution !== s.title ? s.solution : undefined,
+    reason: s.reason && s.reason !== s.title ? s.reason : undefined,
+    pattern: s.pattern && s.pattern !== s.title ? s.pattern : undefined,
+    problem: s.problem && s.problem !== s.title ? s.problem : undefined,
+    choice: s.choice && s.choice !== s.title ? s.choice : undefined,
+    body: (() => {
+      if (s.kind === 'procedure' && Array.isArray(s.steps) && s.steps.length) {
+        return `步骤 ${s.steps.length} 条：${String(s.steps[0]).slice(0, 80)}`
+      }
+      const byKind = s.kind === 'lesson' ? s.fix : s.kind === 'decision' ? s.reason : s.kind === 'experience' ? s.solution : s.body
+      const cands = [byKind, s.fix, s.solution, s.reason, s.body, s.choice, s.pattern, s.problem]
+      for (const v of cands) if (v && v !== s.title) return v
+      return ''
+    })(),
+    draft: s.draft === true,
+    archived: s.archived === true,
+    confidence: typeof s.confidence === 'number' ? s.confidence : null,
+    hitCount: s.hitCount || 0,
+    members: (s.sourceTaskIds || []).length,
+    files: (s.files || []).length,
+    symbols: (s.symbols || []).length,
+    trigger: s.trigger ? { keywords: s.trigger.keywords || [], scope: s.trigger.scope || [] } : null,
+    steps: Array.isArray(s.steps) ? s.steps.slice(0, 50) : null,
+    // 面板编辑要知道原数组是否被截断：只回传看到的 50 条会删掉后面的步骤。
+    stepsTotal: Array.isArray(s.steps) ? s.steps.length : 0,
+    updatedAt: s.updatedAt || '',
+    ...extra,
+  }
+}
+
+function findTaskInsight(store, id) {
+  for (const t of store.getTasks() || []) {
+    const hit = (t.insights || []).find((i) => i.id === id)
+    if (hit) return { task: t, insight: hit }
+  }
+  return null
+}
+
+/**
+ * 记忆列表的**全序**比较器：新 → 旧。
+ *
+ * 分页要求这个比较器给出**确定性全序**，否则相邻两页会重叠或漏条目：
+ *  1. `updatedAt` 降序（编辑会把条目顶到最前，符合"刚学到的先看到"）；
+ *  2. `createdAt` 降序（同一批写入的条目按创建时间分先后）；
+ *  3. `id` 升序兜底 —— 前两级都相同的条目（同毫秒写入）也必须有个稳定次序。
+ * @param {{raw: object}} a - 左侧条目。
+ * @param {{raw: object}} b - 右侧条目。
+ * @returns {number} 排序结果。
+ */
+function compareInsightRecency(a, b) {
+  const ua = isoMs(a.raw?.updatedAt) || isoMs(a.raw?.createdAt)
+  const ub = isoMs(b.raw?.updatedAt) || isoMs(b.raw?.createdAt)
+  if (ua !== ub) return ub - ua
+  const ca = isoMs(a.raw?.createdAt)
+  const cb = isoMs(b.raw?.createdAt)
+  if (ca !== cb) return cb - ca
+  return String(a.raw?.id ?? '').localeCompare(String(b.raw?.id ?? ''))
+}
+
+/**
+ * 列出某 scope 的记忆（task 聚合所有任务草稿；project/global 各自池）。
+ *
+ * 顺序为**新 → 旧**（见 {@link compareInsightRecency}）。分页参数可选：
+ * 不给 `limit` 时返回全部（保持既有调用方与测试的行为），给了就只返回
+ * `[offset, offset+limit)` 这一段，并回报 `total` 与 `nextOffset`。
+ * 载荷是纯函数产物，持久化由命令 handler 负责。
+ * @param {object} store - 项目 store。
+ * @param {object|null} gs - global store。
+ * @param {'task'|'project'|'global'} [scope] - 作用域，默认 project。
+ * @param {{offset?: number, limit?: number|null}} [opts] - 分页窗口；`limit` 为 null/undefined 表示不分页。
+ * @returns {{scope: string, count: number, total: number, offset: number, items: object[], nextOffset: number|null}} 载荷。
+ */
+export function listInsights(store, gs, scope, opts = {}) {
+  const s = scope || 'project'
+  // 先收集「原始条目 + 附加字段」，**排序在摘要之前**：摘要会丢掉 createdAt，
+  // 而这个字段是稳定全序的第二级键。
+  const collected = []
+  if (s === 'task') {
+    for (const t of store.getTasks() || []) {
+      for (const i of t.insights || []) collected.push({ raw: i, extra: { taskId: t.id, taskTitle: t.title } })
+    }
+  } else if (s === 'global') {
+    for (const i of (gs ? gs.items() : [])) collected.push({ raw: i, extra: {} })
+  } else {
+    for (const i of store.insightItems()) collected.push({ raw: i, extra: {} })
+  }
+  collected.sort(compareInsightRecency)
+
+  const total = collected.length
+  const limit = typeof opts.limit === 'number' && opts.limit > 0 ? opts.limit : null
+  const offset = Number.isFinite(opts.offset) && opts.offset > 0 ? Math.floor(opts.offset) : 0
+  const window = limit === null ? collected.slice(offset) : collected.slice(offset, offset + limit)
+  const nextOffset = offset + window.length < total ? offset + window.length : null
+  return { scope: s, count: total, total, offset, items: window.map((r) => insSummary(r.raw, r.extra)), nextOffset }
+}
+
+/**
+ * 记忆动作（内存变更）。返回 { ok, text }；失败不动任何数据。
+ * action: confirm(draft→正式) | promote(向上移一级) | demote(向下移一级) |
+ *         archive | restore | delete；scope: task|project|global（列表里条目的当前 scope）。
+ * demote 到 task 需要 taskId；promote/global 之上无层级时返回错误。
+ */
+export function actInsight({ store, gs, action, scope, id, taskId, cfg }) {
+  const act = action || ''
+  const s = scope || 'project'
+  if (!id) return { ok: false, text: '需要 id' }
+  const invalid = () => ({ ok: false, text: `insight ${id} 不在 ${s} 层（可能已移动/删除）` })
+
+  if (s === 'task') {
+    const found = findTaskInsight(store, id)
+    if (!found) return invalid()
+    const { task, insight } = found
+    if (act === 'confirm') {
+      insight.draft = false
+      insight.updatedAt = new Date().toISOString()
+      store.markTasksDirty()
+      return { ok: true, text: `已审核：${insight.title}` }
+    }
+    if (act === 'delete') {
+      // 面板删除与 forget 同一套留痕：真删，但最近 5 条可在同目录 deleted.json 里找回来。
+      recordDeleted({ store, globalStore: gs }, [{ ...insight, home: 'task', taskId: task.id }])
+      task.insights = (task.insights || []).filter((i) => i.id !== id)
+      store.markTasksDirty()
+      forgetVectorsForDeleted({ store, gs, home: 'task', ids: [id] })
+      return { ok: true, text: `已删除任务级条目 ${id}` }
+    }
+    if (act === 'archive' || act === 'restore') {
+      insight.archived = act === 'archive'
+      insight.updatedAt = new Date().toISOString()
+      store.markTasksDirty()
+      return { ok: true, text: `已${act === 'archive' ? '归档' : '恢复'}` }
+    }
+    if (act === 'promote') {
+      // task → project（手动提升，无视自动阈值）。必须和自动提升一样保留使用痕迹：
+      // normalizeInsight 只复制白名单字段，triggerDerived/prev/lastHitAt 要显式带回。
+      const now = new Date().toISOString()
+      const items = store.insightItems()
+      const copy = carryUsageFields(
+        normalizeInsight(insight, { scope: 'project', source: insight.source, nowIso: now }),
+        insight,
+      )
+      copy.id = id
+      copy.draft = false
+      copy.confidence = Math.max(insight.confidence || 0, (cfg && cfg.promoteConfidence) || 0.7)
+      copy.movedFrom = { scope: 'task', id, at: now }
+      copy.createdAt = insight.createdAt || copy.createdAt
+      copy.hitCount = insight.hitCount || 0
+      const { merged, target } = mergeOrPushInto({ targetPool: items, copy, cfg, nowIso: now })
+      pruneItems(items, capOf(cfg?.maxProject, 100), now, { protectedIds: new Set([target.id]) })
+      store.replaceInsightItems(items)
+      task.insights = (task.insights || []).filter((i) => i.id !== id)
+      store.markTasksDirty()
+      return {
+        ok: true,
+        text: merged ? `已提升并合并到 project 既有条目：${target.title}` : `已提升到 project：${copy.title}`,
+      }
+    }
+    return { ok: false, text: `task 级不支持动作: ${act}` }
+  }
+
+  if (s === 'project') {
+    const items = store.insightItems()
+    const idx = items.findIndex((i) => i.id === id)
+    if (idx === -1) return invalid()
+    const ins = items[idx]
+    if (act === 'archive' || act === 'restore') {
+      ins.archived = act === 'archive'
+      ins.updatedAt = new Date().toISOString()
+      store.replaceInsightItems(items)
+      return { ok: true, text: `已${act === 'archive' ? '归档' : '恢复'}` }
+    }
+    if (act === 'delete') {
+      recordDeleted({ store, globalStore: gs }, [{ ...ins, home: 'project' }])
+      items.splice(idx, 1)
+      store.replaceInsightItems(items)
+      forgetVectorsForDeleted({ store, gs, home: 'project', ids: [id] })
+      return { ok: true, text: `已删除 project 条目 ${id}` }
+    }
+    if (act === 'promote') {
+      // project → global
+      if (!gs) return { ok: false, text: 'global 存储不可用' }
+      const now = new Date().toISOString()
+      const copy = carryUsageFields(
+        normalizeInsight(ins, { scope: 'global', source: ins.source, nowIso: now }),
+        ins,
+      )
+      copy.id = id
+      copy.draft = false
+      copy.movedFrom = { scope: 'project', id, at: now }
+      copy.createdAt = ins.createdAt || copy.createdAt
+      copy.hitCount = ins.hitCount || 0
+      const { merged, target } = mergeOrPushInto({ targetPool: gs.items(), copy, cfg, nowIso: now })
+      pruneItems(gs.items(), capOf(cfg?.maxGlobalProcedures, 200), now, { protectedIds: new Set([target.id]) })
+      gs.markDirty()
+      items.splice(idx, 1)
+      store.replaceInsightItems(items)
+      return {
+        ok: true,
+        text: merged ? `已提升并合并到 global 既有条目：${target.title}` : `已提升到 global：${copy.title}`,
+      }
+    }
+    if (act === 'demote') {
+      // project → task（需目标任务）；去重/去留统一走 insight-store 的唯一实现。
+      const task = store.getTask(taskId)
+      if (!task) return { ok: false, text: '降级到任务需要 taskId' }
+      const moved = demoteToTask(store, taskId, id, new Date().toISOString(), cfg)
+      if (!moved.ok) return { ok: false, text: moved.error }
+      return {
+        ok: true,
+        text: moved.merged
+          ? `已降级并合并到任务 ${task.title} 的既有条目：${moved.target.title}`
+          : `已降级到任务 ${task.title}`,
+      }
+    }
+    return { ok: false, text: `project 级不支持动作: ${act}` }
+  }
+
+  if (s === 'global') {
+    if (!gs) return { ok: false, text: 'global 存储不可用' }
+    const items = gs.items()
+    const idx = items.findIndex((i) => i.id === id)
+    if (idx === -1) return invalid()
+    const ins = items[idx]
+    if (act === 'archive' || act === 'restore') {
+      ins.archived = act === 'archive'
+      ins.updatedAt = new Date().toISOString()
+      gs.markDirty()
+      return { ok: true, text: `已${act === 'archive' ? '归档' : '恢复'}` }
+    }
+    if (act === 'delete') {
+      recordDeleted({ store, globalStore: gs }, [{ ...ins, home: 'global' }])
+      items.splice(idx, 1)
+      gs.markDirty()
+      forgetVectorsForDeleted({ store, gs, home: 'global', ids: [id] })
+      return { ok: true, text: `已删除 global 条目 ${id}` }
+    }
+    if (act === 'demote') {
+      // global → project；去重/容量/去留统一走 insight-store 的唯一实现。
+      const moved = demoteToProject(store, gs, id, new Date().toISOString(), cfg)
+      if (!moved.ok) return { ok: false, text: moved.error }
+      return {
+        ok: true,
+        text: moved.merged
+          ? `已降级并合并到 project 既有条目：${moved.target.title}`
+          : `已降级到 project：${moved.target.title}`,
+      }
+    }
+    return { ok: false, text: `global 级不支持动作: ${act}` }
+  }
+  return { ok: false, text: `未知 scope: ${s}` }
+}
+
+/** 新建/保存记忆（project/global）。内部走与 save_lesson 同一 saveInsight 语义（去重合并）。 */
+export function saveMemoryItem({ store, gs, cfg, scope, fields }) {
+  const s = scope === 'global' ? 'global' : 'project'
+  if (s === 'global' && !gs) return { ok: false, text: 'global 存储不可用' }
+  const res = saveInsight({ store, globalStore: gs, raw: fields, scope: s, cfg, source: 'user' })
+  if (!res.ok) return res
+  return { ok: true, text: `${s} 记忆已保存（${res.action}）` }
+}
+
+const EDIT_FIELDS = new Set(['title', 'kind', 'body', 'pattern', 'fix', 'problem', 'solution', 'choice', 'reason', 'confidence', 'steps', 'trigger', 'tags', 'files', 'symbols'])
+
+/** 编辑既有条目（title/kind/正文/trigger 等白名单字段）。任务级按 id 在任务池定位。 */
+export function editMemoryItem({ store, gs, scope, id, fields, root }) {
+  if (!fields || typeof fields !== 'object') return { ok: false, text: 'edit 需要字段对象' }
+  const applyTo = (item) => {
+    let changed = false
+    let dropped = 0
+    const oldKind = item.kind
+    for (const key of Object.keys(fields)) {
+      const v = fields[key]
+      if (!EDIT_FIELDS.has(key)) continue
+      if (key === 'kind') {
+        if (!INSIGHT_KINDS.includes(v) || v === item.kind) continue
+        // 与自动覆盖同一条字段写入：旧 kind 进 prev，编辑可还原。
+        if (putInsightField(item, key, v)) changed = true
+        continue
+      }
+      if (key === 'trigger') {
+        if (!v || typeof v !== 'object') continue
+        // 合并而非重建：只改传进来的成员，when/guard/prevents 等 authored 触发面必须原样保留，
+        // 否则一次 /insight edit 就会把自动注入的 trigger 降级成 legacy keywords。
+        const next = { ...(item.trigger || {}) }
+        if (Array.isArray(v.keywords)) next.keywords = v.keywords.map(String)
+        if (Array.isArray(v.scope)) next.scope = v.scope.map(String)
+        if (Array.isArray(v.actions)) next.actions = v.actions.map(String)
+        if (Array.isArray(v.paths)) next.paths = v.paths.map(String)
+        if (Array.isArray(v.symbols)) next.symbols = v.symbols.map(String)
+        if (v.when && typeof v.when === 'object') next.when = v.when
+        if (v.guard && typeof v.guard === 'object') next.guard = v.guard
+        if (typeof v.prevents === 'string') next.prevents = v.prevents
+        if (putInsightField(item, 'trigger', next)) changed = true
+        continue
+      }
+      if (key === 'steps' || key === 'tags' || key === 'files' || key === 'symbols') {
+        if (!Array.isArray(v)) continue
+        // 写入期约束（与 save_lesson 同一判据）：files 只收项目内相对路径，项目外/逃出根的丢弃。
+        if (key === 'files') {
+          const norm = normalizeCitationFiles(v, root)
+          if (putInsightField(item, key, norm.files)) changed = true
+          dropped += norm.dropped.length
+        } else if (putInsightField(item, key, v.map(String))) {
+          changed = true
+        }
+        continue
+      }
+      if (key === 'confidence') {
+        const n = Number(v)
+        if (!Number.isFinite(n)) continue
+        if (putInsightField(item, key, Math.max(0, Math.min(1, n)))) changed = true
+        continue
+      }
+      const s = v === null || v === undefined ? '' : String(v)
+      if (key === 'title' && !s.trim()) continue
+      if (putInsightField(item, key, s)) changed = true
+    }
+    pruneKindFields(item, oldKind)
+    if (changed) {
+      item.updatedAt = new Date().toISOString()
+      refreshDerivedTrigger(item)
+    }
+    return { changed, dropped }
+  }
+  const droppedNote = (n) => (n ? `；${n} 个 files 是项目外路径，已丢弃` : '')
+  const s = scope || 'project'
+  if (!['task', 'project', 'global'].includes(s)) return { ok: false, text: `未知 scope: ${s}（只认 task/project/global）` }
+  if (s === 'task') {
+    const found = findTaskInsight(store, id)
+    if (!found) return { ok: false, text: `insight ${id} 不在任务层` }
+    const applied = applyTo(found.insight)
+    if (!applied.changed) return { ok: false, text: '没有可更新的字段' }
+    store.markTasksDirty()
+    return { ok: true, text: `已更新任务级记忆${droppedNote(applied.dropped)}` }
+  }
+  const items = s === 'global' ? (gs ? gs.items() : null) : store.insightItems()
+  if (!items) return { ok: false, text: '存储不可用' }
+  const item = items.find((i) => i.id === id)
+  if (!item) return { ok: false, text: `insight ${id} 不在 ${s} 层` }
+  const applied = applyTo(item)
+  if (!applied.changed) return { ok: false, text: '没有可更新的字段' }
+  if (s === 'global') gs.markDirty()
+  else store.replaceInsightItems(items)
+  return { ok: true, text: `已更新记忆条目${droppedNote(applied.dropped)}` }
+}
+
+/**
+ * 记忆动作处理器：`list [task|project|global]` | `confirm/promote/demote/archive/restore/delete <scope> <id> [taskId]`
+ * 等。
+ *
+ * ⚠️ 这里返回的定义**不再作为宿主命令注册**：合并后唯一的用户命令是 `/tasks`（见 workflow.js），
+ * 本处理器是它的 `insight` 子动词分支（`/tasks insight <动作> …`），由工作流卡片按钮经
+ * remote.commands.execute 驱动。`name` / `description` / `input` 只剩说明意义，真正被使用的是
+ * `handler`——它读 `invocation.rawInput` 自行分词，合并前后一字未变。
+ * @param {object} config - 插件配置
+ * @param {object} ctx - 宿主上下文
+ * @returns {{name: string, description: string, input: object, handler: Function}}
+ */
+export function insightCommandDefinition(config, ctx) {
+  return {
+    name: 'insight',
+    description: '记忆视图动作（面板按钮调用）：/tasks insight list project|global|task [offset] [limit]；/tasks insight <confirm|promote|demote|archive|restore|delete> <scope> <id> [taskId]',
+    input: { hint: 'list [scope] [offset] [limit] | <动作> <scope> <id> [taskId]' },
+    handler: (invocation) => {
+      try {
+        const { cwd } = invocationContext(invocation)
+        const lineRaw = (invocation?.rawInput || '').trim()
+        const raw = lineRaw.split(/\s+/).filter(Boolean)
+        const root = projectRootFor(cwd, config)
+        if (!root) return { kind: 'error', text: NO_PROJECT_ROOT_NOTE }
+        if (!raw[0]) return { kind: 'error', text: '[insight] 用法见面板' }
+        const verb = raw[0]
+        if (verb === 'list') {
+          if (raw[1] !== undefined && !['task', 'global', 'project'].includes(raw[1])) {
+            return { kind: 'error', text: `[insight] 未知 scope: ${raw[1]}（只认 task/project/global）` }
+          }
+          const scope = raw[1] || 'project'
+          // 分页参数可选：省略即维持"返回全部"的旧行为（老客户端 bundle 仍按此调用）。
+          // 显式给 limit 时封顶 INSIGHT_PAGE_MAX，避免一次请求把整个池子拉成超大载荷。
+          let offset = 0
+          let limit = null
+          if (raw[2] !== undefined) {
+            const n = Number.parseInt(raw[2], 10)
+            if (!Number.isFinite(n) || n < 0) return { kind: 'error', text: '[insight] offset 必须是不小于 0 的整数' }
+            offset = n
+          }
+          if (raw[3] !== undefined) {
+            const n = Number.parseInt(raw[3], 10)
+            if (!Number.isFinite(n) || n <= 0) return { kind: 'error', text: '[insight] limit 必须是正整数' }
+            limit = Math.min(n, INSIGHT_PAGE_MAX)
+          }
+          const store = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+          const gs = new GlobalStore(cfgInsight(config).globalFile || defaultGlobalFile()).load()
+          const payload = listInsights(store, gs, scope, { offset, limit })
+          const shown = offset + payload.items.length
+          const range = limit === null ? '' : `（显示 ${shown}/${payload.total}）`
+          return { kind: 'success', text: fencedJson(`记忆 ${scope}：${payload.count} 条${range}`, JSON.stringify(payload)) }
+        }
+        if (verb === 'save') {
+          // /insight save <scope> <json>（新建/合并；project|global）
+          const scope = raw[1]
+          if (scope !== 'project' && scope !== 'global') return { kind: 'error', text: '[insight] save 仅支持 project|global 作用域' }
+          const scopeIdx = lineRaw.indexOf(scope, verb.length)
+          const json = scopeIdx === -1 ? '' : lineRaw.slice(scopeIdx + scope.length).trim()
+          let fields
+          try {
+            fields = JSON.parse(json)
+          } catch {
+            return { kind: 'error', text: '[insight] save 需要 JSON 参数（由面板生成）' }
+          }
+          if (!fields || typeof fields !== 'object' || (!fields.title && !fields.pattern && !fields.topic)) {
+            return { kind: 'error', text: '[insight] save JSON 需要 title/pattern/topic' }
+          }
+          // 面板来的 files 也要走同一套写入期路径约束：项目外/绝对路径丢弃，不写进条目。
+          let droppedFiles = 0
+          if (Array.isArray(fields.files)) {
+            const norm = normalizeCitationFiles(fields.files, root)
+            droppedFiles = norm.dropped.length
+            fields = { ...fields, files: norm.files }
+          }
+          const store = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+          const gs = new GlobalStore(cfgInsight(config).globalFile || defaultGlobalFile()).load()
+          const res = saveMemoryItem({ store, gs, cfg: cfgInsight(config), scope, fields })
+          store.commit(() => 0)
+          gs.commit()
+          if (res.ok && (store.lastSaveOk === false || gs.lastCommitOk === false)) {
+            return { kind: 'error', text: `${res.text}；但写盘失败（权限/磁盘/锁），重启后会丢失` }
+          }
+          return res.ok
+            ? { kind: 'success', text: res.text + (droppedFiles ? `；${droppedFiles} 个 files 是项目外路径，已丢弃` : '') }
+            : { kind: 'error', text: res.text }
+        }
+        if (verb === 'edit') {
+          // /insight edit <scope> <id> <json>
+          const scope = raw[1]
+          const id = raw[2]
+          if (!id) return { kind: 'error', text: '[insight] edit 需要 id' }
+          const at = lineRaw.indexOf(id, 0)
+          const json = at === -1 ? '' : lineRaw.slice(at + id.length).trim()
+          let fields
+          try {
+            fields = JSON.parse(json)
+          } catch {
+            return { kind: 'error', text: '[insight] edit 需要 JSON 参数（由面板生成）' }
+          }
+          const store = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+          const gs = new GlobalStore(cfgInsight(config).globalFile || defaultGlobalFile()).load()
+          const res = editMemoryItem({ store, gs, scope, id, fields, root })
+          store.commit(() => 0)
+          gs.commit()
+          if (res.ok && (store.lastSaveOk === false || gs.lastCommitOk === false)) {
+            return { kind: 'error', text: `${res.text}；但写盘失败（权限/磁盘/锁），重启后会丢失` }
+          }
+          return res.ok ? { kind: 'success', text: res.text } : { kind: 'error', text: res.text }
+        }
+        const scope = raw[1]
+        const id = raw[2]
+        const taskId = raw[3]
+        if (!['confirm', 'promote', 'demote', 'archive', 'restore', 'delete'].includes(verb) || !id) {
+          return { kind: 'error', text: '[insight] 用法: /tasks insight <动作|save|edit> …' }
+        }
+        const store = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+        const gs = new GlobalStore(cfgInsight(config).globalFile || defaultGlobalFile()).load()
+        const res = actInsight({ store, gs, action: verb, scope, id, taskId, cfg: cfgInsight(config) })
+        store.commit(() => 0) // 项目侧（tasks/insights）落盘
+        gs.commit() // global 侧若有变更落盘
+        if (res.ok && (store.lastSaveOk === false || gs.lastCommitOk === false)) {
+          return { kind: 'error', text: `${res.text}；但写盘失败（权限/磁盘/锁），重启后会丢失` }
+        }
+        return res.ok ? { kind: 'success', text: res.text } : { kind: 'error', text: res.text }
+      } catch (err) {
+        return { kind: 'error', text: `[insight] ${err?.message || err}` }
+      }
+    },
+  }
+}

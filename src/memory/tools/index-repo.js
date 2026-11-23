@@ -1,0 +1,176 @@
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import { TEXT_OUTPUT, persistenceNote, rootParam } from './output.js'
+import path from 'node:path'
+import { existsSync, statSync } from 'node:fs'
+import { assertIndexRoot, assertSafeRoot, excludedEntryForPath, listProjectFiles, memoryDirName, memoryRootFor, relativePath, resolveIndexRoot, scanLimits, storeKey } from '../util/fs.js'
+import { DROP, OVERSIZE, UNCHANGED, commitFileUpdates, fileKind, planFileIndex, toFileUpdate } from '../index-pipeline.js'
+import { ProjectMemoryStore } from '../store.js'
+import { onFileIndexed, isTypeScriptFile, enhanceQueueStats } from '../enhancer.js'
+import { clearIndexFailure, listIndexFailures } from '../index-failures.js'
+
+/**
+ * 每批提交的文件数。旧实现把整棵树的 updates 攒到最后一次性 commit：一次全量扫描的
+ * 峰值内存 ≈ 整棵树的所有条目（家目录级别直接 OOM）。分批后峰值与树的大小解耦。
+ */
+const COMMIT_BATCH = 200
+
+export async function indexRepository(ctx, config, root, { reindex = false, allowUnsafe = false } = {}) {
+  // 先校验根目录：缺了它，下面 `new ProjectMemoryStore(...).load()` 的 save() 会把
+  // 不存在的 root 连同 .dsh-project-memory 一起 mkdirSync 出来。
+  assertIndexRoot(root)
+  // 再校验安全：家目录 / 系统目录 / Homebrew 前缀整体索引会吃满内存（issue #5）。
+  assertSafeRoot(root, { allowUnsafe, config })
+  const memoryDir = memoryRootFor(root, config.memoryDir)
+  const store = new ProjectMemoryStore(memoryDir).load()
+
+  const seen = new Set()
+  const failures = []
+  // 增强只能在文件的基础条目**落盘之后**排队：TS 增强是「合并进已有条目」，
+  // 若先于提交跑，随后 setEntries 会把增强结果整段覆盖掉。
+  const tsFiles = []
+  let batch = []
+  let indexed = 0
+  let updated = 0
+  let skipped = 0
+
+  const flushBatch = () => {
+    if (!batch.length) return
+    // 中间批次不做 unseen 清理（最后一批统一做）——否则每批都要遍历整个 store。
+    commitFileUpdates(store, { updates: batch })
+    batch = []
+  }
+
+  const { files, truncated, capped, skipped: nestedRoots, unreadable } = listProjectFiles(root, {
+    ...scanLimits(config),
+    nestedStoreName: memoryDirName(config),
+    config,
+  })
+  for (const filePath of files) {
+    const rel = storeKey(relativePath(root, filePath))
+    seen.add(rel)
+    const kind = fileKind(path.extname(filePath).toLowerCase())
+    if (!kind) continue
+
+    try {
+      const st = statSync(filePath)
+      const size = st.size
+      const record = store.fileRecord(rel)
+      const plan = await planFileIndex({ rel, filePath, kind, config, record, existingEntries: store.entries[rel], size, mtimeMs: st.mtimeMs, force: reindex })
+      if (plan.key === UNCHANGED) {
+        // 内容没变、mtime 变了（touch / checkout 还原）：把新 mtime 记回去，下一次扫描才命得快路径。
+        if (typeof plan.mtimeMs === 'number') store.refreshMtime(rel, plan.mtimeMs)
+        skipped++
+        continue
+      }
+      if (plan.key === OVERSIZE) {
+        // 体积超限的文件：旧记录一律清掉，避免检索命中一个已经不索引的文件。
+        batch.push({ rel, drop: true })
+        skipped++
+        if (batch.length >= COMMIT_BATCH) flushBatch()
+        continue
+      }
+      // 本轮已成功处理：之前任何瞬时失败都应从“后台失败”账本里消失。
+      clearIndexFailure(root, rel)
+      batch.push(toFileUpdate(rel, plan, record))
+      if (plan.key === DROP) skipped++
+      else if (plan.type === 'code') {
+        updated++
+        if (isTypeScriptFile(filePath)) tsFiles.push([rel, filePath])
+      } else {
+        indexed++
+      }
+      if (batch.length >= COMMIT_BATCH) flushBatch()
+    } catch (err) {
+      // 带上原因：只有路径的报告无法区分"没权限"和"解析器崩了"。
+      failures.push(`${rel} (${err?.message || err})`)
+    }
+  }
+
+  // 收尾：写完最后一批 + 清理本轮未见到的旧条目。
+  // 截断时**不做 unseen 清理**：没扫到的文件不等于被删了（`truncated` 同时覆盖"读不到的
+  // 目录"——那种情况下清理会静默删掉派生索引，见 src/util/fs.js walkDir）。
+  const { removed } = commitFileUpdates(store, {
+    updates: batch,
+    unseen: truncated ? null : seen,
+    root,
+    isExcludedRel: (rel) => Boolean(excludedEntryForPath(path.join(root, rel), config)),
+  })
+  const stats = store.stats()
+  let report =
+    `Indexed project: ${root}\n` +
+    `docs indexed: ${indexed}, code files updated: ${updated}, unchanged skipped: ${skipped}, removed: ${removed}\n` +
+    `memory store: ${stats.files} files, ${stats.entries} entries, ${stats.experience} experience notes`
+  if (unreadable.length) {
+    const rels = unreadable.map((p) => storeKey(relativePath(root, p)))
+    report +=
+      `\ncould not read ${unreadable.length} director${unreadable.length === 1 ? 'y' : 'ies'} (permissions?): ${rels.join(', ')}` +
+      '\n(scan incomplete → nothing is treated as deleted: previously indexed files under them are kept as-is; fix permissions and re-run)'
+  }
+  if (capped) {
+    const { maxFiles, maxDepth } = scanLimits(config)
+    report +=
+      `\nscan truncated at the safety limit (maxFiles=${maxFiles}, maxDepth=${maxDepth}): only part of the tree was indexed.` +
+      ' Raise maxScanFiles/maxScanDepth if this project is legitimately that large.'
+  }
+  if (nestedRoots.length) {
+    const rels = nestedRoots.map((p) => storeKey(relativePath(root, p)))
+    report +=
+      `\nskipped ${nestedRoots.length} nested project root(s) with their own store: ${rels.join(', ')}` +
+      "\n(their content lives in their own root's index; this root keeps no duplicate copy)"
+    if (removed) report += `, ${removed} stale duplicate entr${removed === 1 ? 'y' : 'ies'} removed`
+  }
+  if (failures.length) {
+    report += `\nfailed to index ${failures.length} file(s): ${failures.join(', ')}`
+  }
+  // 已删除的失败项也要摘掉，否则一次瞬时失败会永久出现在报告里。
+  for (const item of listIndexFailures(root, 50).items) {
+    if (!existsSync(path.join(root, item.rel))) clearIndexFailure(root, item.rel)
+  }
+  // 后台（watch / 懒索引）的失败不在本次扫描里，但它们同样意味着"这些文件没进语料"。
+  // 过去只写日志，用户看不到；这里跟随本次结果一起报出来。
+  const background = listIndexFailures(root, 5)
+  if (background.count) {
+    const detail = background.items.map((i) => `${i.rel} — ${i.message.slice(0, 100)}`).join('; ')
+    report += `\n${background.count} file(s) failing in background indexing (watch / lazy): ${detail}`
+  }
+
+  // Trigger TS enhancement for code files (TS/JS only), now that the base entries are on disk.
+  const dropsBefore = enhanceQueueStats().dropped
+  for (const [rel, filePath] of tsFiles) {
+    onFileIndexed(store, rel, filePath, config, root)
+  }
+  const dropped = enhanceQueueStats().dropped - dropsBefore
+  if (dropped) {
+    report +=
+      `\n${dropped} file(s) skipped TS enhancement (queue cap reached, lowest priority dropped first)` +
+      ': their L1 regex symbols are unaffected; they are re-queued on the next index or change.'
+  }
+
+  return report + persistenceNote(store)
+}
+
+export function indexRepoTool(ctx, config) {
+  return defineTool({
+    name: 'index_repo',
+    description:
+      'Index a project into memory (docs + code symbols), incremental by content hash. '
+      + 'Call once per project, then query_memory.',
+    parameters: {
+      root: rootParam({ required: true, description: 'project root (relative: session cwd)' }),
+      reindex: {
+        type: 'boolean',
+        description: 'ignore hashes, force re-extraction',
+      },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      // 相对 root 按会话当前工作目录解析（不是宿主进程 cwd）——见 util/fs.js 的 resolveIndexRoot。
+      const root = resolveIndexRoot(exec, args.root)
+      // 透传原始入参：Windows 风格路径在 POSIX 上会被 resolve 成 <cwd>/D:\...，
+      // 报错时要点明这是路径风格问题，而不是“目录被删了”。
+      assertIndexRoot(root, args.root)
+      assertSafeRoot(root, { requested: args.root, config })
+      return indexRepository(ctx, config, root, { reindex: Boolean(args.reindex) })
+    },
+  })
+}

@@ -1,0 +1,287 @@
+import path from 'node:path'
+import { statSync } from 'node:fs'
+import {
+  ROOT_SOURCES,
+  excludedEntryForPath,
+  findProjectRoot,
+  findProjectRootWithSource,
+  isGitIgnored,
+  isGitIgnoredBatch,
+  isDefaultIgnoredRel,
+  isHiddenPath,
+  memoryRootFor,
+  relativePath,
+  rootRejection,
+  storeKey,
+} from './util/fs.js'
+import { DROP, OVERSIZE, UNCHANGED, commitFileUpdates, fileKind, planFileIndex, toFileUpdate } from './index-pipeline.js'
+import { ProjectMemoryStore } from './store.js'
+import { onFileObserved } from './enhancer.js'
+import { sessionWorkingDir } from './util/session-dir.js'
+import { clearIndexFailure, recordIndexFailure } from './index-failures.js'
+
+// 根推导策略已收敛到 util/fs.js（唯一实现）。这里重新导出，保持既有 import 路径可用。
+export { findProjectRoot }
+
+/**
+ * 懒索引的成本结构（9p 代理实测，原生 NTFS 同序只是常数小）：
+ *   `findProjectRoot`（逐层 readdir）18–45ms、`git check-ignore`（起进程）30ms、
+ *   整读 + sha256 4ms、save 35ms。前两项**每个文件各付一次**，与文件内容变没变无关。
+ *
+ * 所以这里做三件事，且都不改变语义：
+ *   ① 根按目录缓存（5s 上限）：一次 flush 里的文件通常同目录，别每个文件走一遍祖先；
+ *   ② mtime + size 未变 → 不读盘、不问 git（`record.mtimeMs` 由写入侧记下）；
+ *   ③ 一次 flush 只 commit 一次、只起一次 `git check-ignore`。
+ * 根缓存只存**由标记推出**的根：`session` 兜底是"这一带还没有标记"的推断，钉 5s 会让
+ * `git init` / `npm init` 建出来的项目先落进会话根的 store（真根出现后就是一份重复条目）。
+ * 代价只是无标记目录仍按次走一遍祖先（与加缓存之前一致），有标记的项目热路径不受影响。
+ * 已有标记的根仍缓存 5s：在它的子目录里 5s 内嵌套新建项目，文件可能先落进父根的 store，
+ * 下一次解析就换根、父 store 里的副本留给扫描清理——这是缓存换热路径的必要取舍。
+ */
+const ROOT_CACHE_TTL_MS = 5000
+const ROOT_CACHE_MAX = 4096
+const rootCaches = new WeakMap()
+
+function rootCacheFor(config) {
+  let cache = rootCaches.get(config)
+  if (!cache) {
+    cache = new Map()
+    rootCaches.set(config, cache)
+  }
+  return cache
+}
+
+function cachedProjectRoot(config, filePath, watchManager, sessionRoot) {
+  const cache = rootCacheFor(config)
+  const dir = path.dirname(filePath)
+  const extraRoots = watchManager ? [...watchManager.roots.keys()] : []
+  // 会话工作目录 / watch 根集合变了，答案就可能变：都进 key，不做过期以外的失效。
+  const key = `${sessionRoot || ''}\u0000${extraRoots.join('\u0001')}\u0000${dir}`
+  const hit = cache.get(key)
+  const now = Date.now()
+  if (hit && now - hit.at < ROOT_CACHE_TTL_MS) return hit.root
+  const { root, source } = findProjectRootWithSource(filePath, { extraRoots, sessionRoot, config })
+  if (!root) return null
+  // 会话根兜底不进缓存：它是"没找到标记"的推断，而"后来才建出标记"正是唯一能让它失效的事件。
+  if (source === ROOT_SOURCES.SESSION) return root
+  if (cache.size >= ROOT_CACHE_MAX) cache.clear()
+  cache.set(key, { root, at: now })
+  return root
+}
+
+/**
+ * 一批"观察到的文件" → 每个 store 一次 commit。
+ *
+ * @param {object} config 插件配置
+ * @param {{filePath: string, sessionRoot: string|null, watchManager?: object|null}[]} items
+ * @returns {Promise<Map<string, boolean>>} filePath → 是否真的写入了条目（未变更 / 被排除 / 失败都是 false）
+ */
+export async function indexObservedBatch(config, items, watchManager = null) {
+  const results = new Map()
+  /** 需要进一步判定（可能真变了）的候选；未变更的文件在这一步就被排除了。 */
+  const candidates = []
+
+  for (const item of items) {
+    const { filePath: rawPath, sessionRoot } = item
+    const key = rawPath
+    try {
+      if (typeof rawPath !== 'string' || !rawPath) {
+        results.set(key, false)
+        continue
+      }
+      // FsTarget.displayPath 可能是工作区相对路径；按会话 cwd 解析，不能落到宿主进程 cwd。
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rawPath) || (/^[a-z][a-z0-9+.-]*:/i.test(rawPath) && !/^[a-z]:[\\/]/i.test(rawPath))) {
+        results.set(key, false)
+        continue
+      }
+      const filePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(sessionRoot || process.cwd(), rawPath)
+      const kind = fileKind(path.extname(filePath).toLowerCase())
+      if (!kind) {
+        results.set(key, false)
+        continue
+      }
+      // roots.exclude 是子树级否定：被排除的文件连根都不推导，直接不落任何记忆。
+      if (excludedEntryForPath(filePath, config)) {
+        results.set(key, false)
+        continue
+      }
+      const root = cachedProjectRoot(config, filePath, watchManager, sessionRoot)
+      if (!root || rootRejection(root, config)) {
+        results.set(key, false)
+        continue
+      }
+      const relRaw = relativePath(root, filePath)
+      // 与 index_repo/watch 同口径；判在 store 读盘与 stat 之前，省掉无谓 IO。
+      if (isHiddenPath(relRaw) || isDefaultIgnoredRel(relRaw)) {
+        results.set(key, false)
+        continue
+      }
+      const store = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+      const rel = storeKey(relRaw)
+      const record = store.fileRecord(rel)
+      const st = statSync(filePath)
+      // 快路径：mtime + size 都没动 → 连 git 都不用问。这是"重复读同一个文件"的主路径。
+      // doc 不走这条捷径：旧 store 的 terms 回填条件要看 entries，交给 planFileIndex 判。
+      if (kind === 'code' && record && typeof record.mtimeMs === 'number' && record.mtimeMs === st.mtimeMs && record.size === st.size) {
+        results.set(key, false)
+        continue
+      }
+      candidates.push({ store, root, rel, filePath, key, kind, record, size: st.size, mtimeMs: st.mtimeMs, gitRel: relRaw })
+      results.set(key, false)
+    } catch {
+      results.set(key, false)
+    }
+  }
+
+  if (candidates.length === 0) return results
+
+  // 按根分组：同一个 flush 里同根的文件共用一次 check-ignore 子进程。
+  const byRoot = new Map()
+  for (const cand of candidates) {
+    let list = byRoot.get(cand.root)
+    if (!list) {
+      list = []
+      byRoot.set(cand.root, list)
+    }
+    list.push(cand)
+  }
+
+  for (const [root, list] of byRoot) {
+    // gitignore 只管"**新条目**进不进语料"：已经有记录的条目（这次是内容变了要刷新）
+    // 不再逐次问 git —— 那是一次进程启动（9p 30ms / 原生 Windows 15–40ms），
+    // 而"文件被加进 .gitignore"由 index_repo / watch 的清理路径负责，不该在读路径上判。
+    const fresh = list.filter((c) => !c.record)
+    let ignored = new Set()
+    if (fresh.length > 0) {
+      try {
+        ignored = isGitIgnoredBatch(root, fresh.map((c) => c.gitRel))
+      } catch {
+        ignored = new Set()
+      }
+    }
+    const kept = ignored.size === 0 ? list : list.filter((c) => !ignored.has(c.gitRel))
+    if (kept.length === 0) continue
+
+    const store = kept[0].store
+    const updates = []
+    /** 基础条目落盘成功后才入增强队列（顺序与 index_repo / watch 一致）。 */
+    const codeToEnhance = []
+    let refreshed = false
+    for (const cand of kept) {
+      try {
+        const plan = await planFileIndex({
+          rel: cand.rel,
+          filePath: cand.filePath,
+          kind: cand.kind,
+          config,
+          record: cand.record,
+          existingEntries: store.entries[cand.rel],
+          size: cand.size,
+          mtimeMs: cand.mtimeMs,
+        })
+        if (plan.key === UNCHANGED) {
+          // 内容没变、只有 mtime 变了：把新 mtime 记回去，否则下次还要整读一遍。
+          if (typeof plan.mtimeMs === 'number' && store.refreshMtime(cand.rel, plan.mtimeMs)) refreshed = true
+          clearIndexFailure(cand.root, cand.rel)
+          continue
+        }
+        clearIndexFailure(cand.root, cand.rel)
+        if (plan.key === OVERSIZE) {
+          // 与 index_repo 同一语义：文件涨过阈值后，旧条目必须摘掉，而不是只跳过本轮。
+          updates.push({ rel: cand.rel, drop: true })
+          results.set(cand.key, false)
+          continue
+        }
+        updates.push(toFileUpdate(cand.rel, plan, cand.record))
+        if (plan.key !== DROP && plan.type === 'code') codeToEnhance.push([cand.rel, cand.filePath])
+        results.set(cand.key, plan.key !== DROP)
+      } catch (err) {
+        // 单文件读盘 / 解析失败不影响同批其它文件；但要登记，否则"读了却没索引成"
+        // 在界面上完全不可见（过去这里连日志都没有）。
+        recordIndexFailure(cand.root, cand.rel, err.message)
+        results.set(cand.key, false)
+      }
+    }
+
+    let addedWatch = false
+    if (watchManager && watchManager.addRoot(root)) {
+      // 只有真正新登记的根才持久化：addRoot 拒绝的根（不安全/不存在）不再被无条件
+      // addWatch 记进 watch.json —— 那样会造出一个每次启动都复活的"僵尸根"。
+      addedWatch = store.addWatch(root)
+    }
+
+    try {
+      if (updates.length > 0) {
+        const { stale } = commitFileUpdates(store, { updates })
+        // 增强是「合并进已有条目」：必须在基础条目落盘**之后**入队。先入队时 enhancer 的
+        // commit 会同步跑完、随后被本次 applyFileUpdate 的 setEntries 整段覆盖（实测 lazy
+        // 单文件读取会因此丢 L2 符号，甚至 0 条目）。
+        const staleSet = new Set(stale || [])
+        for (const [rel, filePath] of codeToEnhance) {
+          if (!staleSet.has(rel)) onFileObserved(store, rel, filePath, config, root)
+        }
+      }
+      // addedWatch 也要落盘：本轮可能没有任何条目更新（文件已是最新），但新登记的 watch 根
+      // 是独立的事实；不 save 的话重启后它不在 watch.json 里，监视会静默退回启动时的根集合。
+      else if (refreshed || addedWatch) store.commit(() => {})
+    } catch (err) {
+      console.error(`[dsh-project-memory] lazy index commit failed for ${root}: ${err.message}`)
+    }
+  }
+
+  return results
+}
+
+export async function indexFile(ctx, config, filePath, watchManager = null, sessionRoot = null) {
+  const results = await indexObservedBatch(config, [{ filePath, sessionRoot }], watchManager)
+  return results.get(filePath) === true
+}
+
+export function codeFirst(paths) {
+  return [...paths].sort((a, b) => {
+    const aCode = fileKind(path.extname(a).toLowerCase()) === 'code' ? 0 : 1
+    const bCode = fileKind(path.extname(b).toLowerCase()) === 'code' ? 0 : 1
+    return aCode - bCode
+  })
+}
+
+export function setupLazyIndexing(ctx, config, watchManager = null) {
+  const pending = new Map()
+  let timer = null
+
+  const flush = async () => {
+    timer = null
+    const batch = codeFirst([...pending.keys()]).map((filePath) => ({
+      filePath,
+      sessionRoot: pending.get(filePath) || null,
+    }))
+    pending.clear()
+    try {
+      await indexObservedBatch(config, batch, watchManager)
+    } catch (err) {
+      console.error(`[dsh-project-memory] lazy index batch failed: ${err.message}`)
+    }
+  }
+
+  const queue = (filePath, sessionRoot) => {
+    pending.set(filePath, sessionRoot || null)
+    if (!timer) {
+      timer = setTimeout(flush, 300)
+      if (timer.unref) timer.unref()
+    }
+  }
+
+  // 第三个参数是宿主工具执行上下文（tool-fs / str-replace-editor 都以 `exec` 发射），
+  // 取它的会话工作目录作为**本次读取所在会话**的工作目录——比 process.cwd() 精确
+  // （web profile 下同一进程可能有多个会话/项目）。0.2.1+ 该目录由 workingDirectory
+  // 投影决定（cd 后会变），见 util/session-dir.js。
+  ctx.on('fs/observed', (target, observation, actor) => {
+    if (!target || !observation || observation.kind !== 'present') return
+    if (typeof target.displayPath !== 'string' || !target.displayPath) return
+    queue(target.displayPath, sessionWorkingDir(actor?.agent?.session, { agent: actor?.agent }))
+  })
+
+  ctx.effect(() => () => {
+    if (timer) clearTimeout(timer)
+  })
+}

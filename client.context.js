@@ -117,8 +117,36 @@ window.__ModuleLoader__.load({
         sessionTitle: '本会话上下文',
         prefResetTitle: '重置偏好', prefResetDesc: '把上面各项恢复为默认值。',
         prefReset: '恢复默认',
+        modelsNav: '模型目录',
+        modelsTitle: '模型目录',
+        modelsIntro: '这一页来自网关的 /v1/models：打开时先显示上一次的清单（缓存），随后在后台静默核对，只有真的变了才把新清单写回配置——所以你永远不用等网关。',
+        modelsCount: '{n} 个模型',
+        modelsSyncedJustNow: '刚刚同步',
+        modelsSyncedAgo: '{age}前同步',
+        modelsNeverSynced: '尚未同步，正在后台核对',
+        modelsAgeMinutes: '{n} 分钟',
+        modelsAgeHours: '{n} 小时',
+        modelsAgeDays: '{n} 天',
+        modelsRefreshing: '后台更新中…',
+        modelsFailed: '更新失败：{reason}（仍显示上次的清单）',
+        modelsSyncNow: '立即同步',
+        modelsSyncBusy: '同步中…',
+        modelsAdded: '新增',
+        modelsEmpty: '还没有同步到模型清单；网关可达时下一次核对就会填上。',
+        modelsNoRoute: '当前 profile 里没有可同步的网关路由',
+        modelsCapImage: '图片',
+        modelsReasoning: '思考',
+        modelsWindow: '窗口',
+        modelsOutput: '输出',
+        modelsChip: '模型 {n} · {age}',
+        modelsChipBusy: '模型 · 更新中',
+        modelsChipFailed: '模型 · 读取失败',
+        modelsChipTitle: '模型目录：点击立即向网关核对一次',
+        modelsHint: '「新增」表示这次后台核对刚从网关带回来的模型。显示名由平台 / 计费 / 上下文窗口生成，能力取自网关声明；网关没声明的能力不会被补上。',
         quotaTitle: '订阅额度', quotaTileOf: '{source} 额度',
         quotaSourceDeepseek: 'DeepSeek', quotaSourceOpencode: 'OpenCode Go',
+        quotaSourceWorkbuddy: 'WorkBuddy',
+        quotaCreditsLine: '积分剩 {remain} / {total}',
         quotaWinRolling: '5h', quotaWinWeekly: '周', quotaWinMonthly: '月',
         quotaWinRollingLong: '5 小时', quotaWinWeeklyLong: '本周', quotaWinMonthlyLong: '本月',
         quotaWindowLine: '{label}：已用 {percent}%，{reset}',
@@ -220,8 +248,36 @@ window.__ModuleLoader__.load({
         sessionTitle: 'Session context',
         prefResetTitle: 'Reset preferences', prefResetDesc: 'Restore every setting above to its default.',
         prefReset: 'Reset to defaults',
+        modelsNav: 'Model catalog',
+        modelsTitle: 'Model catalog',
+        modelsIntro: 'This page comes from the gateway\'s /v1/models: it paints the last list first (cache) and then revalidates in the background, writing the new list back to the configuration only when it actually changed — you never wait for the gateway.',
+        modelsCount: '{n} models',
+        modelsSyncedJustNow: 'synced just now',
+        modelsSyncedAgo: 'synced {age} ago',
+        modelsNeverSynced: 'not synced yet; checking in the background',
+        modelsAgeMinutes: '{n} min',
+        modelsAgeHours: '{n} h',
+        modelsAgeDays: '{n} d',
+        modelsRefreshing: 'Updating in the background…',
+        modelsFailed: 'Update failed: {reason} (still showing the last list)',
+        modelsSyncNow: 'Check now',
+        modelsSyncBusy: 'Checking…',
+        modelsAdded: 'new',
+        modelsEmpty: 'No model list synced yet; the next check fills it in once the gateway answers.',
+        modelsNoRoute: 'This profile has no gateway route to sync',
+        modelsCapImage: 'image',
+        modelsReasoning: 'thinking',
+        modelsWindow: 'window',
+        modelsOutput: 'out',
+        modelsChip: 'models {n} · {age}',
+        modelsChipBusy: 'models · updating',
+        modelsChipFailed: 'models · read failed',
+        modelsChipTitle: 'Model catalog: click to check the gateway now',
+        modelsHint: '“new” marks models this background check just brought back. Display names are generated from platform / billing / window; capabilities come from the gateway\'s own declaration and are never invented.',
         quotaTitle: 'Subscription quota', quotaTileOf: '{source} quota',
         quotaSourceDeepseek: 'DeepSeek', quotaSourceOpencode: 'OpenCode Go',
+        quotaSourceWorkbuddy: 'WorkBuddy',
+        quotaCreditsLine: 'credits {remain} / {total} left',
         quotaWinRolling: '5h', quotaWinWeekly: 'wk', quotaWinMonthly: 'mo',
         quotaWinRollingLong: 'Rolling 5h', quotaWinWeeklyLong: 'This week', quotaWinMonthlyLong: 'This month',
         quotaWindowLine: '{label}: {percent}% used · {reset}',
@@ -671,6 +727,42 @@ window.__ModuleLoader__.load({
 .tc-budget{display:inline-flex;align-items:center;gap:6px;padding:0 8px;height:26px;border:1px solid var(--dsw-alias-border-l1);
   border-radius:var(--tc-radius-sm);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-tertiary);font-size:12px}
 .tc-budget input{width:80px;padding:0;border:none;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:right;outline:none}
+/* Settings header chip + model catalog page: paint the cache, refresh upstream
+   behind the panel. The chip is the lazy trigger — it mounts whenever settings
+   opens, so no polling exists on this path. */
+.tc-chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:12px;
+  border:.5px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);
+  font:inherit;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);
+  font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer}
+.tc-chip:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.tc-chip-dot{width:6px;height:6px;border-radius:50%;background:var(--dsw-alias-state-business-primary);flex:none}
+.tc-chip[data-busy='true'] .tc-chip-dot{animation:tc-pulse 1s ease-in-out infinite}
+@keyframes tc-pulse{0%,100%{opacity:.28}50%{opacity:1}}
+.tc-models-bar{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;
+  padding:2px 0 10px;border-bottom:.5px solid var(--dsw-alias-border-l2);margin-bottom:2px}
+.tc-models-meta{display:flex;flex-direction:column;gap:3px;min-width:0}
+.tc-models-status{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.tc-models-status[data-busy='true']{color:var(--dsw-alias-state-business-primary)}
+.tc-models-route{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-models-count{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);
+  font-variant-numeric:tabular-nums}
+.tc-model-list{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column}
+.tc-model-row{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:'main caps' 'id caps';
+  gap:2px 16px;padding:9px 0;border-bottom:.5px solid var(--dsw-alias-border-l2)}
+.tc-model-row:last-child{border-bottom:none}
+.tc-model-main{grid-area:main;display:flex;align-items:center;gap:6px;min-width:0}
+.tc-model-name{font-size:13px;line-height:18px;color:var(--dsw-alias-label-primary);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-model-tag{flex:none;padding:0 5px;height:15px;display:inline-flex;align-items:center;border-radius:8px;
+  font-size:10px;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-state-business-primary);
+  background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 14%,transparent)}
+.tc-model-id{grid-area:id;font-family:var(--dsw-font-family-code,ui-monospace,monospace);font-size:11px;line-height:16px;
+  color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tc-model-caps{grid-area:caps;display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+.tc-model-cap{flex:none;padding:0 6px;height:17px;display:inline-flex;align-items:center;border-radius:9px;
+  font-size:10px;line-height:17px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
 `;
 
     function fmtInt(n) { return Number(n || 0).toLocaleString('en-US'); }
@@ -887,6 +979,20 @@ window.__ModuleLoader__.load({
      * is the honest answer.
      */
     const QUOTA_CACHE_TTL_MS = 5 * 60 * 60 * 1000;
+    /**
+     * How long a candidate source must stay the answer before the foot switches.
+     *
+     * The chosen source is derived state: it depends on which session is running,
+     * which ones the list has hydrated, and which route each session's timeline
+     * has recorded so far. Right after a page load, a reconnect, or the moment a
+     * turn ends, those inputs land in several passes, so the derived answer walks
+     * through intermediate values — and every intermediate value used to paint a
+     * real figure. On a WorkBuddy session that showed up as the OpenCode windows
+     * flashing in and out: the OpenCode reading was a halfway state, not an
+     * answer. Waiting out a short settle window collapses that whole walk into
+     * its final value, so only a source that *persists* is ever read.
+     */
+    const QUOTA_SOURCE_DEBOUNCE_MS = 1200;
     const WALLET_SIGN = { CNY: '¥', USD: '$' };
 
     function money2(amount, currency) {
@@ -919,6 +1025,17 @@ window.__ModuleLoader__.load({
       const month = String(date.getUTCMonth() + 1).padStart(2, '0');
       const day = String(date.getUTCDate()).padStart(2, '0');
       return month + '-' + day + ' ' + clock(ms);
+    }
+
+    /**
+     * Same stamp for an instant already expressed in milliseconds.
+     *
+     * `quotaCycleOf` works in epoch ms (it compares spans, not strings), while
+     * every wire field it derives from is ISO. Keeping the two apart means one
+     * `stampOf` never has to guess which kind of value it was handed.
+     */
+    function stampOfMs(ms) {
+      return Number.isFinite(ms) ? stampOf(new Date(ms).toISOString()) : '';
     }
 
     /** Milliseconds from `now` to an ISO instant; `null` when the stamp is unusable. */
@@ -963,15 +1080,27 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The subscription cycle behind a window source. Its longest window is the
-     * billing period (monthly on OpenCode Go), so that window's reset is when the
-     * paid time ends — the only expiry the vendor's usage answer exposes. Returns
-     * `{ at, ms, window }`, or `null` for a wallet source and for a window without
-     * a usable reset stamp.
+     * The subscription cycle behind a window source, `{ at, ms, window, kind }`.
+     *
+     * Two ways a vendor states it, in precedence order:
+     *
+     *  1. `plan.expiresAt` — a source that *knows* its own subscription expiry
+     *     (WorkBuddy's credit packages, where the buckets each reset inside a
+     *     billing period that ends at its own moment). Nothing is inferred.
+     *  2. the longest window's reset — the only expiry the OpenCode Go usage
+     *     answer exposes (monthly is the billing period).
+     *
+     * Returns `null` for a wallet source and for a source with neither.
      */
     function quotaCycleOf(snapshot, now) {
       if (snapshot === null || snapshot === undefined) return null;
       if (snapshot.status !== 'ready' || snapshot.kind !== 'windows') return null;
+      const anchor = Number.isFinite(now) ? now : Date.now();
+      const declared = snapshot.plan === null || snapshot.plan === undefined ? null : snapshot.plan.expiresAt;
+      const declaredAt = Date.parse(String(declared || ''));
+      if (Number.isFinite(declaredAt)) {
+        return { at: declaredAt, ms: declaredAt - anchor, window: null, kind: 'plan' };
+      }
       let best = null;
       for (const window of snapshot.windows) {
         const at = Date.parse(String(window.resetsAt || ''));
@@ -979,8 +1108,7 @@ window.__ModuleLoader__.load({
         if (best === null || at > best.at) best = { at, window };
       }
       if (best === null) return null;
-      const anchor = Number.isFinite(now) ? now : Date.now();
-      return { at: best.at, ms: best.at - anchor, window: best.window };
+      return { at: best.at, ms: best.at - anchor, window: best.window, kind: 'window' };
     }
 
     /** One window's reset clause: `11-23 08:00 重置（剩 2 天）`. */
@@ -995,7 +1123,7 @@ window.__ModuleLoader__.load({
     /** One window's hover line: label, used percent and the reset clause. */
     function windowLineOf(window, t, now) {
       return t('quotaWindowLine', {
-        label: windowLong(window.key, t),
+        label: windowLong(window, t),
         percent: Math.round(safeCount(window.percent)),
         reset: resetClauseOf(window, t, now),
       });
@@ -1010,6 +1138,37 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * A credit amount, rounded for a tooltip: credits are decimal on the wire
+     * (`9223.54`) but the last hundredth never changes a decision, and the raw
+     * value in WorkBuddy's body has 20+ digits of float noise in it.
+     */
+    function credits(amount) {
+      const value = Number(amount);
+      if (!Number.isFinite(value)) return '';
+      // Two decimals, then strip only a trailing `.00` — never the significant
+      // ones. A big total rounds to whole credits because at that scale the
+      // hundredths are noise, but a bucket with 226 of 3700 left is exactly the
+      // number someone reads off the tooltip.
+      const fixed = value >= 1000 ? value.toFixed(0) : value.toFixed(2);
+      return fixed.replace(/\.00$/u, '');
+    }
+
+    /**
+     * Short label for one window *as the vendor names it*.
+     *
+     * Two vocabularies meet here. OpenCode Go reports fixed buckets
+     * (`rolling`/`weekly`/`monthly`) that the plugin translates; WorkBuddy
+     * reports buckets with their own Chinese names (`套餐积分`/`奖励积分`) and no
+     * fixed key at all. A vendor-supplied `label` therefore wins — translating a
+     * key this plugin has never seen would print `plan_base` at the user.
+     */
+    function windowName(window, t) {
+      const label = window !== null && typeof window === 'object' ? window.label : undefined;
+      if (typeof label === 'string' && label !== '') return label;
+      return windowShort(window !== null && typeof window === 'object' ? window.key : undefined, t);
+    }
+
+    /**
      * Tone of one usage window: colour carries "which limit is about to bite",
      * so three bare numbers stay readable at a glance — 90%+ errors, 70%+ warns,
      * everything else stays a plain secondary label.
@@ -1021,8 +1180,14 @@ window.__ModuleLoader__.load({
       return 'calm';
     }
 
-    /** Long window label used in tooltips and tiles. */
-    function windowLong(key, t) {
+    /**
+     * Long window label used in tooltips and tiles; same precedence as
+     * {@link windowName} — the vendor's own bucket name first, a known key second.
+     */
+    function windowLong(window, t) {
+      const label = window !== null && typeof window === 'object' ? window.label : undefined;
+      if (typeof label === 'string' && label !== '') return label;
+      const key = window !== null && typeof window === 'object' ? window.key : window;
       if (key === 'rolling') return t('quotaWinRollingLong');
       if (key === 'weekly') return t('quotaWinWeeklyLong');
       if (key === 'monthly') return t('quotaWinMonthlyLong');
@@ -1033,7 +1198,43 @@ window.__ModuleLoader__.load({
     function sourceName(source, t) {
       if (source === 'opencode-go') return t('quotaSourceOpencode');
       if (source === 'deepseek') return t('quotaSourceDeepseek');
+      if (source === 'workbuddy') return t('quotaSourceWorkbuddy');
       return String(source || '');
+    }
+
+    /**
+     * The subscription behind a window-based source, or `null`.
+     *
+     * WorkBuddy sends it because its credits are not a rolling window: the
+     * countdown that matters is "when does this plan run out", and no credit
+     * bucket answers that. DeepSeek/OpenCode Go never send it, and their
+     * countdown keeps coming from the longest window's reset instead.
+     */
+    function planOf(raw) {
+      if (raw === null || raw === undefined || typeof raw !== 'object') return null;
+      const name = typeof raw.name === 'string' ? raw.name : '';
+      const code = typeof raw.code === 'string' ? raw.code : '';
+      const expiresAt = typeof raw.expiresAt === 'string' && raw.expiresAt !== '' ? raw.expiresAt : null;
+      if (name === '' && code === '' && expiresAt === null) return null;
+      return { name, code, paid: raw.paid === true, expiresAt };
+    }
+
+    /** The lump credit figure across every bucket, or `null`. */
+    function totalsOf(raw) {
+      if (raw === null || raw === undefined || typeof raw !== 'object') return null;
+      const pick = (value) => {
+        const amount = Number(value);
+        return Number.isFinite(amount) && amount >= 0 ? amount : null;
+      };
+      const total = pick(raw.total);
+      const remain = pick(raw.remain);
+      if (total === null && remain === null) return null;
+      return {
+        total,
+        remain,
+        used: pick(raw.used),
+        unit: typeof raw.unit === 'string' && raw.unit !== '' ? raw.unit : 'credits',
+      };
     }
 
     /**
@@ -1042,7 +1243,13 @@ window.__ModuleLoader__.load({
      * "out of credit".
      */
     function quotaSnapshotOf(payload) {
-      const base = { source: QUOTA_DEFAULT_SOURCE, kind: null, wallets: [], windows: [], available: true };
+      const base = {
+        source: QUOTA_DEFAULT_SOURCE, kind: null, wallets: [], windows: [], available: true,
+        // `plan` / `totals` are WorkBuddy-only extras: the subscription behind the
+        // credits and one lump figure for "how much is left". Every other source
+        // leaves them null, and null is what every formatter treats as absent.
+        plan: null, totals: null,
+      };
       if (payload === null || typeof payload !== 'object') {
         return { ...base, status: 'failed', at: 0 };
       }
@@ -1061,14 +1268,31 @@ window.__ModuleLoader__.load({
           if (window === null || typeof window !== 'object') continue;
           const percent = Number(window.percent);
           if (!Number.isFinite(percent)) continue;
-          windows.push({
+          const row = {
             key: String(window.key || ''),
             percent: Math.max(0, Math.min(100, percent)),
             status: typeof window.status === 'string' ? window.status : 'ok',
             resetsAt: typeof window.resetsAt === 'string' ? window.resetsAt : null,
-          });
+          };
+          // A vendor that names its own buckets (WorkBuddy's credit packages)
+          // sends a label; the fixed rolling/weekly/monthly trio does not.
+          if (typeof window.label === 'string' && window.label !== '') row.label = window.label;
+          for (const field of ['total', 'remain']) {
+            const amount = Number(window[field]);
+            if (Number.isFinite(amount) && amount >= 0) row[field] = amount;
+          }
+          windows.push(row);
         }
-        return { ...base, source, status: 'ready', kind: 'windows', windows, at: safeCount(payload.at) };
+        return {
+          ...base,
+          source,
+          status: 'ready',
+          kind: 'windows',
+          windows,
+          plan: planOf(payload.plan),
+          totals: totalsOf(payload.totals),
+          at: safeCount(payload.at),
+        };
       }
       const wallets = [];
       for (const wallet of Array.isArray(payload.wallets) ? payload.wallets : []) {
@@ -1099,7 +1323,7 @@ window.__ModuleLoader__.load({
         if (snapshot.kind === 'windows') {
           if (snapshot.windows.length === 0) return t('quotaEmpty');
           return snapshot.windows
-            .map((window) => windowShort(window.key, t) + ' ' + Math.round(window.percent) + '%')
+            .map((window) => windowName(window, t) + ' ' + Math.round(window.percent) + '%')
             .join(' · ');
         }
         const total = moneyList(snapshot.wallets);
@@ -1122,7 +1346,7 @@ window.__ModuleLoader__.load({
         if (snapshot.windows.length === 0) return t('quotaEmpty');
         let tightest = snapshot.windows[0];
         for (const window of snapshot.windows) if (window.percent > tightest.percent) tightest = window;
-        return windowShort(tightest.key, t) + ' ' + Math.round(tightest.percent) + '%';
+        return windowName(tightest, t) + ' ' + Math.round(tightest.percent) + '%';
       }
       return quotaFigure(snapshot, t) || '—';
     }
@@ -1135,15 +1359,30 @@ window.__ModuleLoader__.load({
     function quotaDetail(snapshot, t, now) {
       const lines = [t('quotaTitle') + (snapshot.status === 'ready' ? '（' + sourceName(snapshot.source, t) + '）' : '')];
       if (snapshot.status === 'ready' && snapshot.kind === 'windows') {
+        // Which plan is paying — only sources that name it (WorkBuddy) show this.
+        const plan = snapshot.plan;
+        if (plan !== null && plan !== undefined && plan.name !== '') {
+          lines.push(plan.code === '' ? plan.name : plan.name + '（' + plan.code + '）');
+        }
         const cycle = quotaCycleOf(snapshot, now);
         if (cycle !== null) {
           lines.push(t('quotaCycleLine', {
-            time: stampOf(cycle.window.resetsAt),
+            time: stampOfMs(cycle.at),
             left: remainText(cycle.ms, t),
           }));
-          lines.push(t('quotaCycleHint'));
+          // The hint explains an inference. When the vendor states the expiry
+          // outright there is nothing to explain, so it is not printed.
+          if (cycle.kind === 'window') lines.push(t('quotaCycleHint'));
         }
         for (const window of snapshot.windows) lines.push(windowLineOf(window, t, now));
+        const totals = snapshot.totals;
+        if (totals !== null && totals !== undefined
+          && Number.isFinite(totals.remain) && Number.isFinite(totals.total)) {
+          lines.push(t('quotaCreditsLine', {
+            remain: credits(totals.remain),
+            total: credits(totals.total),
+          }));
+        }
         if (snapshot.at > 0) lines.push(t('quotaUpdated', { time: clock(snapshot.at) }));
         // A cached first paint and a failed retry both leave a real figure on
         // screen, so the hover text has to say which one it is looking at.
@@ -1222,6 +1461,11 @@ window.__ModuleLoader__.load({
      *     to any backend, and those windows belong to a different key.
      *   - `deepseek` / `opencode*` are the first-party platforms, where a wallet
      *     or consumption window really does describe what is left.
+     *   - `workbuddy` is the WorkBuddy gateway (the user's shim in front of
+     *     Tencent's copilot endpoint). Its allowance *is* readable — credits per
+     *     package — but only the shim holds the account token, so the Host reads
+     *     the shim's `/quota` instead of the vendor. That makes it a real source,
+     *     not a `NO_SOURCE` gateway: the shim answers for exactly one account.
      */
     const SOURCE_OF_PROVIDER = {
       'opencode': 'opencode-go',
@@ -1230,6 +1474,8 @@ window.__ModuleLoader__.load({
       'deepseek': 'deepseek',
       'deepseek-account': 'deepseek',
       'deepseek-official': 'deepseek',
+      'workbuddy': 'workbuddy',
+      'workbuddy-shim': 'workbuddy',
     };
 
     /**
@@ -1247,15 +1493,61 @@ window.__ModuleLoader__.load({
      * @returns the quota source, `NO_SOURCE` when the provider is known to have
      *   no quota to read, or `null` when the route names no vendor at all.
      */
-    function sourceOfRoute(provider, model) {
+    function sourceOfRoute(provider, model, label) {
       const id = String(provider || '').trim().toLowerCase();
       if (id !== '' && SOURCE_OF_PROVIDER[id] !== undefined) return SOURCE_OF_PROVIDER[id];
+      // A gateway route still names which account pays — in the model's display
+      // name, not in its provider id. `ai-router` fronts WorkBuddy, OpenCode Go,
+      // OpenRouter and friends, and its rows are labelled
+      // `<平台> · <计费> · <名字>` precisely so the picker says who serves them.
+      // Reading that first segment is what makes a WorkBuddy-backed model on the
+      // gateway show WorkBuddy's credits instead of「无额度可查」.
+      const platform = platformOfLabel(label) ?? platformOfLabel(model);
+      if (platform !== null) return platform;
       if (id !== '') return NO_SOURCE;
       // Without a provider only OpenCode's own product name can classify a
       // route; a bare model id names no plan, and neither does a gateway.
       const text = String(model || '');
       if (/opencode/i.test(text)) return 'opencode-go';
       return null;
+    }
+
+    /**
+     * Provider labels a gateway puts in front of a model name, mapped to the
+     * quota source that can answer for them.
+     *
+     * These are the same labels `host/model-sync/naming.js` emits, lowered so a
+     * label lookup is case-insensitive. A label absent here has no readable
+     * allowance (OpenRouter, SiliconFlow, Gemini, …), which makes the route
+     * `NO_SOURCE` — the honest answer, not a guess.
+     */
+    const SOURCE_OF_PLATFORM_LABEL = {
+      'workbuddy': 'workbuddy',
+      'opencode go': 'opencode-go',
+      'opencode zen': 'opencode-go',
+    };
+
+    /**
+     * Quota source named by the platform segment of a model label, or `null`.
+     *
+     * The label is `<平台> · <计费> · <名字>[ · <窗口>]`, so only the first
+     * segment is a provider; a model *named* "WorkBuddy" by some other backend
+     * would not match, because that word would sit in the third segment.
+     *
+     * @param label - a model display name, or a bare model id.
+     * @returns a source id, or `null` when the label names no readable plan.
+     */
+    function platformOfLabel(label) {
+      if (typeof label !== 'string' || label === '') return null;
+      const segments = label.split('·');
+      // A single segment is a plain model name with no platform in front of it —
+      // nothing to classify, so the caller keeps looking. Two or more means the
+      // generator emitted `<平台> · …`, and an unlisted platform then *is* the
+      // answer: that backend has no allowance this plugin can read.
+      if (segments.length < 2) return null;
+      const head = segments[0].trim().toLowerCase();
+      if (head === '') return null;
+      return SOURCE_OF_PLATFORM_LABEL[head] ?? NO_SOURCE;
     }
 
     /**
@@ -1282,18 +1574,118 @@ window.__ModuleLoader__.load({
       return { time: currentTime, provider: current.provider, model: current.model };
     }
 
-    /** Read the remembered vendor; `null` when absent or unreadable. */
+    /** One side of the `modelSelection` projection, or `undefined` when unnamed. */
+    function selectionOf(value) {
+      if (value === null || typeof value !== 'object') return undefined;
+      if (typeof value.provider !== 'string' || value.provider === '') return undefined;
+      if (typeof value.model !== 'string' || value.model === '') return undefined;
+      const selection = { provider: value.provider, model: value.model };
+      if (typeof value.label === 'string' && value.label !== '') selection.label = value.label;
+      return selection;
+    }
+
+    /**
+     * The route a session is *set to*: what its composer points at right now.
+     *
+     * `modelSelection.next` is exactly the composer's choice — a pending switch
+     * in the durable selection fold, with `lastUsed` behind it once a request has
+     * run. This is the answer for a session that is *not* working: the next turn
+     * will bill the model named in the composer, so that model's plan is the one
+     * to show. Falls back through the timeline for sessions whose selection
+     * projection has not arrived yet.
+     */
+    function selectedRouteOfSession(projections, id) {
+      const values = projections[id] === undefined ? undefined : projections[id].values;
+      const selection = selectionOf(values === undefined || values === null ? undefined : values.modelSelection?.next);
+      if (selection !== undefined) return selection;
+      const lastUsed = selectionOf(values === undefined || values === null ? undefined : values.modelSelection?.lastUsed);
+      if (lastUsed !== undefined) return lastUsed;
+      const route = routeOfSession(projections, id);
+      return route === undefined ? undefined : { provider: route.provider, model: route.model };
+    }
+
+    /**
+     * The route a session is *actually working on* — the opposite question from
+     * {@link selectedRouteOfSession}, and the reason a composer switch must not
+     * move the figure mid-turn.
+     *
+     * `modelSelection.lastUsed` is the selection the latest recorded request ran
+     * on; `pending` (exposed as `next`) is a switch that has not billed yet, so
+     * it must *not* answer here: a turn still streaming on WorkBuddy would show
+     * the OpenCode windows the user just picked for the *next* message. The
+     * timeline's `current` is the request-header route and outranks it only when
+     * the selection projection is absent.
+     */
+    function activeRouteOfSession(projections, id) {
+      const values = projections[id] === undefined ? undefined : projections[id].values;
+      const lastUsed = selectionOf(values === undefined || values === null ? undefined : values.modelSelection?.lastUsed);
+      if (lastUsed !== undefined) return lastUsed;
+      const route = routeOfSession(projections, id);
+      if (route !== undefined) return { provider: route.provider, model: route.model };
+      return selectedRouteOfSession(projections, id);
+    }
+
+    /**
+     * The session the main view is showing, or `null`.
+     *
+     * Only `retainedBy.mainView` rows count: the sidebar footer belongs to the
+     * whole app while the quota answers for one conversation, and the retained
+     * row *is* that conversation. Everything else in the list — background
+     * subagents, other workspaces, archived rows — is not what the user is
+     * looking at, so it must not decide what the foot reports.
+     */
+    function currentSessionIdOf(sessions) {
+      if (sessions === undefined || sessions === null) return null;
+      const byId = sessions.byId;
+      if (byId === undefined || byId === null) return null;
+      for (const id of Array.isArray(sessions.ids) ? sessions.ids : Object.keys(byId)) {
+        const row = byId[id];
+        if (row === undefined || row === null) continue;
+        if (safeCount(row.retainedBy?.mainView) > 0) return id;
+      }
+      return null;
+    }
+
+    /**
+     * Whether one session is mid-work, read from the Session UI status map.
+     *
+     * A pending question counts as *still working*, on purpose: an agent that
+     * stopped to ask something has not ended its turn, and answering it is not a
+     * new conversation — the same route keeps paying, so the foot must keep
+     * showing that route's plan instead of flipping to the composer's choice.
+     */
+    function runningOfSession(status, id) {
+      if (status === undefined || status === null) return false;
+      const entry = typeof status.get === 'function' ? status.get(id) : status[id];
+      if (entry === undefined || entry === null) return false;
+      if (entry.running === true) return true;
+      const pending = entry.pendingInteraction;
+      return pending !== undefined && pending !== null;
+    }
+
+    /**
+     * Read the remembered vendor; `null` when absent, unreadable, or not a vendor.
+     *
+     * `NO_SOURCE` is never remembered. "This route has no allowance" is a fact
+     * about one conversation's route, not a preference for the next session, and
+     * seeding the foot from it made every blank conversation open on「此供应商
+     * 无额度可查」even when its composer was set to a real, readable plan. A
+     * value already in storage from an older build is dropped the same way.
+     */
     function readStoredSource() {
       try {
         const stored = window.localStorage.getItem(QUOTA_SOURCE_KEY);
-        return typeof stored === 'string' && stored !== '' ? stored : null;
+        if (typeof stored !== 'string' || stored === '' || stored === NO_SOURCE) return null;
+        return stored;
       } catch { return null; }
     }
 
     /** Remember the vendor so a fresh blank session opens on the same plan. */
     function storeSource(source) {
       try {
-        if (typeof source === 'string' && source !== '') window.localStorage.setItem(QUOTA_SOURCE_KEY, source);
+        if (typeof source === 'string' && source !== '' && source !== NO_SOURCE) {
+          window.localStorage.setItem(QUOTA_SOURCE_KEY, source);
+        }
       } catch { /* storage disabled */ }
     }
 
@@ -1364,24 +1756,157 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Pick the quota source the current work runs on: the newest route among the
-     * hydrated sessions decides, so switching the model switches the plan being
-     * measured.
+     * Per-service memo of {@link createComposerFace}, so a render does not build a
+     * new face table every pass (the faces map outlives the component).
      *
-     * Precedence: the newest route's provider → the vendor remembered from the
-     * last session → none. Two deliberate non-answers:
-     *   - `NO_SOURCE` — the newest route is a provider with no quota (a
-     *     self-hosted gateway). The remembered vendor is **not** consulted here:
-     *     yesterday's OpenCode window must not stand in for today's gateway.
-     *   - `null` — nothing has named a route yet. The foot shows no figure
-     *     rather than presenting some other plan's numbers.
+     * @param directories - the `modelDirectories` service, or `undefined`.
+     * @returns `(sessionId) => { read, subscribe }`.
+     */
+    const composerFaceCache = new WeakMap();
+    function composerFaceOf(directories) {
+      if (directories === undefined || directories === null) return createComposerFace(directories);
+      let face = composerFaceCache.get(directories);
+      if (face === undefined) {
+        face = createComposerFace(directories);
+        composerFaceCache.set(directories, face);
+      }
+      return face;
+    }
+
+    /** Display name of one selection in a model-directory snapshot. */
+    function modelNameOf(state, selection) {
+      const groups = Array.isArray(state?.groups) ? state.groups : [];
+      for (const group of groups) {
+        if (group.id !== selection.provider) continue;
+        for (const model of Array.isArray(group.models) ? group.models : []) {
+          if (model.id === selection.model) return String(model.name ?? '');
+        }
+      }
+      return '';
+    }
+
+    /**
+     * The composer's own model choice, read from the model-selection service.
+     *
+     * A blank session has no `modelSelection` projection yet — nothing has been
+     * recorded, because nothing has run — so the projection cannot answer for a
+     * fresh conversation. The composer seat does know: it renders
+     * `modelDirectories.directoryFor(sessionId).store`, whose `current` is the
+     * saved selection (and `pending` a switch still settling). That store is the
+     * same one the picker in the input box writes to, which makes it the only
+     * honest answer to "which model is this box set to".
+     *
+     * `useSyncExternalStore` needs a stable snapshot, so the face hands out one
+     * flat `"provider\u0000model\u0000name"` key instead of a fresh object per
+     * read; a session the service does not know yields `null`, which the caller
+     * treats as "no opinion" and falls through to the projection.
+     *
+     * @param directories - the `modelDirectories` service, or `undefined`.
+     * @returns `(sessionId) => { read, subscribe }` returning a selection key.
+     */
+    function createComposerFace(directories) {
+      const empty = { read: () => null, subscribe: () => () => {} };
+      const none = () => empty;
+      if (directories === undefined || directories === null || typeof directories.directoryFor !== 'function') {
+        return none;
+      }
+      const faces = new Map();
+      return (sessionId) => {
+        if (sessionId === null || sessionId === undefined) return empty;
+        const cached = faces.get(sessionId);
+        if (cached !== undefined) return cached;
+        let store;
+        try {
+          store = directories.directoryFor(sessionId).store;
+        } catch { return empty; }
+        if (store === undefined || store === null || typeof store.getSnapshot !== 'function') return empty;
+        const face = {
+          read: () => {
+            const state = store.getSnapshot();
+            const selection = selectionOf(state?.pending) ?? selectionOf(state?.current);
+            if (selection === undefined) return null;
+            // Carry the display name as the third field: a gateway route puts
+            // the real platform in it (`WorkBuddy · 付费 · …`), which the model
+            // id alone cannot express.
+            return selection.provider + '\u0000' + selection.model + '\u0000' + modelNameOf(state, selection);
+          },
+          subscribe: store.subscribe,
+          /**
+           * Display name of any route in this session's catalog.
+           *
+           * The same question as `read`, for a route the composer is *not* set
+           * to: while a turn runs on a gateway, the paying plan is only named by
+           * that model's display name, and the catalog is the only place it
+           * exists. Empty when the catalog does not list the route.
+           */
+          describe: (provider, model) => modelNameOf(store.getSnapshot(), { provider, model }),
+        };
+        faces.set(sessionId, face);
+        return face;
+      };
+    }
+
+    /** Split a `createComposerFace` key back into a route, or `undefined`. */
+    function routeOfComposerKey(key) {
+      if (typeof key !== 'string' || key === '') return undefined;
+      const parts = key.split('\u0000');
+      if (parts.length < 2 || parts[0] === '' || parts[1] === '') return undefined;
+      return { provider: parts[0], model: parts[1], label: parts[2] ?? '' };
+    }
+
+    /**
+     * Pick the quota source to display, from the conversation in the main view.
+     *
+     * The question the foot answers is "what is left of the plan paying for what
+     * I am looking at", so the answer depends on whether that conversation is
+     * working right now:
+     *
+     *   - **Running** (or waiting on a question — an agent that stopped to ask
+     *     has not ended its turn): the route the work *is* on, i.e.
+     *     `modelSelection.lastUsed` / the billed timeline. A switch sitting in
+     *     the composer is a promise about the next turn, and showing the new
+     *     plan mid-turn is exactly the flash this function exists to prevent.
+     *   - **Idle**: the route the composer is *set to*, because that is the plan
+     *     the next message will bill.
+     *
+     * With no main-view session (a fresh app, or nothing retained yet) the
+     * remembered vendor stands in. Two deliberate non-answers survive from
+     * before: `NO_SOURCE` for a provider with no quota to read, and `null` while
+     * nothing has named a vendor — better blank than another plan's numbers.
      *
      * @param sessions - the session list snapshot, or `undefined` before it arrives.
+     * @param status - the Session UI status map (`running` / `pendingInteraction`).
+     * @param composer - the composer's own selection for the main-view session
+     *   (`{ provider, model }`), used when nothing has been recorded yet.
+     * @param describe - `(provider, model) => display name` from the composer's
+     *   catalog; the only place a gateway route's real platform is written down.
      * @returns a source id, `NO_SOURCE`, or `null` while nothing is known.
      */
-    function sourceOfSessions(sessions) {
+    function sourceOfSessions(sessions, status, composer, describe) {
       const projections = sessions === undefined || sessions === null ? undefined : sessions.projectionsBySession;
       if (projections === undefined || projections === null) return readStoredSource();
+      const current = currentSessionIdOf(sessions);
+      // A retained conversation answers for itself; without one, the newest
+      // route anywhere is the best evidence of what is paying.
+      if (current !== null) {
+        // Running work answers with what is actually billing; an idle session
+        // answers with what its composer is set to. Recorded history outranks the
+        // composer face, which only fills the gap a blank session leaves behind.
+        const route = runningOfSession(status, current)
+          ? activeRouteOfSession(projections, current)
+          : (selectedRouteOfSession(projections, current) ?? selectionOf(composer));
+        if (route !== undefined) {
+          // The paying platform of a gateway route is named only by the model's
+          // display name, which lives in the composer's catalog — for any route,
+          // not just the selected one. The projection carries a bare provider id
+          // and model id, which is not enough to tell WorkBuddy from OpenRouter
+          // behind the same gateway.
+          const label = route.label ?? describe?.(route.provider, route.model) ?? '';
+          const known = sourceOfRoute(route.provider, route.model, label);
+          if (known !== null) return known;
+        }
+        return readStoredSource();
+      }
       let best = null;
       for (const id of Array.isArray(sessions.ids) ? sessions.ids : Object.keys(projections)) {
         const route = routeOfSession(projections, id);
@@ -1394,6 +1919,86 @@ window.__ModuleLoader__.load({
         if (known !== null) return known;
       }
       return readStoredSource();
+    }
+
+    /**
+     * Debounced view of {@link sourceOfSessions}.
+     *
+     * A candidate source must survive {@link QUOTA_SOURCE_DEBOUNCE_MS} before it
+     * is committed, because the inputs behind it land in several passes — the
+     * session list hydrating, the projections arriving, a turn closing, a status
+     * frame landing — and each pass produces an intermediate answer. Reading a
+     * source is not free of consequence: it paints a figure, and a figure that
+     * lives for two frames is a flash. Holding the previous answer until the new
+     * one settles removes the flicker without adding a perceptible delay.
+     *
+     * `settle(0)` commits immediately (a press, or a first paint that has nothing
+     * to keep); the ordinary path is `settle(QUOTA_SOURCE_DEBOUNCE_MS)`.
+     *
+     * @param resolve - computes the current candidate on demand.
+     * @param options.timer - `setTimeout` substitute, for tests.
+     * @param options.materialize - decides whether a raw candidate is showable.
+     * @param options.initial - a source already known before the first schedule
+     *   (the remembered vendor), so the first paint has something real to show.
+     * @returns `{ read, schedule, cancel, subscribe }` over the committed source.
+     */
+    function createSourceSettler(resolve, options = {}) {
+      const timer = options.timer ?? ((fn, ms) => (ms > 0 ? setTimeout(fn, ms) : (fn(), 0)));
+      const clear = options.clearTimer ?? ((handle) => { if (handle !== 0) clearTimeout(handle); });
+      const isShowable = options.materialize ?? (() => true);
+      const listeners = new Set();
+      /**
+       * Seed the committed value from the *remembered* source only.
+       *
+       * Seeding from this render's candidate would be the very flash the settler
+       * exists to stop: on the first render after a reload the session list is
+       * still arriving, so the candidate is a halfway state. The remembered
+       * vendor is normally the same plan anyway, and when it is not, the real
+       * answer replaces it once it has settled — one quiet swap beats a figure
+       * that lives two frames.
+       *
+       * `read` is a `getSnapshot` for `useSyncExternalStore`, which requires a
+       * stable reference until something really changed, so it never resolves on
+       * demand: only `schedule` advances the committed value.
+       */
+      const seedStored = options.initial !== undefined && options.initial !== null ? options.initial : null;
+      let committed = isShowable(seedStored) ? seedStored : null;
+      let handle = 0;
+      /** Publish one committed value to the React subscribers. */
+      const commit = (next) => {
+        if (next === committed) return;
+        committed = next;
+        for (const listener of [...listeners]) listener();
+      };
+      /** Drop a scheduled commit; the next `schedule` starts from scratch. */
+      const cancel = () => { clear(handle); handle = 0; };
+      /** The source the surface should act on right now. */
+      const read = () => committed;
+      /**
+       * Ask for a re-evaluation. An unchanged candidate cancels a pending commit
+       * (the intermediate answer did not survive); a source with nothing to show
+       * commits at once, since there is no figure to keep on screen and
+       * therefore no flash to avoid; everything else settles for `delayMs`.
+       */
+      const schedule = (delayMs = QUOTA_SOURCE_DEBOUNCE_MS) => {
+        const raw = resolve();
+        if (raw === committed) { cancel(); return committed; }
+        cancel();
+        if (delayMs <= 0 || !isShowable(raw)) {
+          commit(raw);
+          return committed;
+        }
+        handle = timer(() => {
+          handle = 0;
+          commit(resolve());
+        }, delayMs);
+        return committed;
+      };
+      const subscribe = (listener) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+      };
+      return { read, schedule, cancel, subscribe };
     }
 
     /**
@@ -1599,6 +2204,193 @@ window.__ModuleLoader__.load({
         area.remove();
         return Promise.resolve(ok);
       } catch { return Promise.resolve(false); }
+    }
+
+    // ── §2.6 gateway model catalog (cache-first) ─────────────────────────────
+    // Looking at models is a read, not a poll. Every surface that shows the
+    // catalog paints what it already has — the Host's own stored list (the very
+    // list the picker serves) plus this browser's last paint — and lets the Host
+    // revalidate the gateway in the background. A refresh that brings new models
+    // lands as a config write on the Host side; the next look here picks it up
+    // silently. Nothing on this path makes the user wait for the gateway.
+
+    /** Same-origin route registered by the Host half. */
+    const MODELS_URL = '/dsh-turn-cost/models';
+    /** Last painted catalog, so a reload paints the list before the Host answers. */
+    const MODELS_CACHE_KEY = 'dsh-turn-cost:model-catalog';
+    /** A persisted paint older than this is not worth showing; models move. */
+    const MODELS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+    /** Follow-up look after a reply that reported a background refresh in flight. */
+    const MODELS_FOLLOW_MS = 1500;
+    /** Follow-ups stop here, so one stuck refresh cannot poll forever. */
+    const MODELS_FOLLOW_TRIES = 8;
+
+    /** Snapshot shape every catalog surface renders, cached or live. */
+    function emptyCatalog() {
+      return {
+        phase: 'idle', route: null, settingsNs: null, baseURL: null,
+        models: [], count: 0, syncedAt: null, stale: true, refreshing: false,
+        last: null, error: null, addedIds: [], paintedFromCache: false, at: 0,
+      };
+    }
+
+    /** The last paint this browser stored, or `null` when absent/expired/unusable. */
+    function readCachedCatalog(now) {
+      try {
+        const raw = window.localStorage.getItem(MODELS_CACHE_KEY);
+        if (raw === null) return null;
+        const parsed = JSON.parse(raw);
+        if (parsed === null || typeof parsed !== 'object' || !Array.isArray(parsed.models)) return null;
+        if (!(now - Number(parsed.at) < MODELS_CACHE_TTL_MS)) return null;
+        return {
+          ...emptyCatalog(),
+          phase: 'cache', route: parsed.route ?? null, settingsNs: parsed.settingsNs ?? null,
+          baseURL: parsed.baseURL ?? null, models: parsed.models, count: parsed.models.length,
+          syncedAt: parsed.syncedAt ?? null, at: Number(parsed.at) || 0, paintedFromCache: true,
+        };
+      } catch { return null; }
+    }
+
+    /** Persist one paint; a later reload starts from it instead of an empty list. */
+    function writeCachedCatalog(snapshot) {
+      if (!Array.isArray(snapshot.models) || snapshot.models.length === 0) return;
+      try {
+        window.localStorage.setItem(MODELS_CACHE_KEY, JSON.stringify({
+          route: snapshot.route, settingsNs: snapshot.settingsNs, baseURL: snapshot.baseURL,
+          models: snapshot.models, syncedAt: snapshot.syncedAt, at: snapshot.at,
+        }));
+      } catch { /* quota or privacy mode: the live read still works */ }
+    }
+
+    /**
+     * Map one Host reply onto the snapshot, remembering which models this paint
+     * had not shown yet — that is what marks a row「新增」after a silent refresh.
+     */
+    function catalogSnapshotOf(body, previous, at) {
+      const models = Array.isArray(body?.models) ? body.models : [];
+      const before = new Set((previous?.models ?? []).map(model => model?.id));
+      const hadAny = before.size > 0;
+      return {
+        phase: 'live',
+        route: typeof body?.route === 'string' ? body.route : null,
+        settingsNs: typeof body?.settingsNs === 'string' ? body.settingsNs : null,
+        baseURL: typeof body?.baseURL === 'string' ? body.baseURL : null,
+        models,
+        count: models.length,
+        syncedAt: Number.isFinite(body?.syncedAt) ? body.syncedAt : null,
+        stale: body?.stale === true,
+        refreshing: body?.refreshing === true,
+        last: body?.last ?? null,
+        error: null,
+        addedIds: hadAny ? models.map(model => model?.id).filter(id => id !== undefined && !before.has(id)) : [],
+        paintedFromCache: false,
+        at,
+      };
+    }
+
+    /** One same-origin read; `force` also asks the Host to check the gateway now. */
+    function readModelsRoute(force, fetchImpl) {
+      const url = force === true ? MODELS_URL + '?force=1' : MODELS_URL;
+      return Promise.resolve(fetchImpl(url, { headers: { accept: 'application/json' }, cache: 'no-store' }))
+        .then((response) => {
+          if (!response || response.ok !== true) throw new Error('http-' + String(response && response.status));
+          return response.json();
+        });
+    }
+
+    /**
+     * Cache-first catalog store shared by the settings header chip and the
+     * catalog page: one read in flight, follow-ups only while the Host reports a
+     * background revalidation, and a persisted paint for the next page load.
+     */
+    function createModelsStore(options = {}) {
+      const now = options.now ?? (() => Date.now());
+      const listeners = new Set();
+      let snapshot = readCachedCatalog(now()) ?? emptyCatalog();
+      let reader = null;
+      let inflight = null;
+      let timer = null;
+      let tries = 0;
+      const publish = (next) => {
+        snapshot = next;
+        for (const listener of [...listeners]) listener();
+      };
+      const settle = (next) => {
+        publish(next);
+        if (next.phase === 'live') writeCachedCatalog(next);
+      };
+      const clearFollow = () => {
+        if (timer !== null) { clearTimeout(timer); timer = null; }
+      };
+      const read = (force) => {
+        if (reader === null) return Promise.resolve(snapshot);
+        if (inflight !== null) return inflight;
+        if (snapshot.phase === 'idle' || snapshot.phase === 'cache') publish({ ...snapshot, phase: 'loading' });
+        inflight = Promise.resolve()
+          .then(() => reader(force === true))
+          .then((body) => {
+            const next = catalogSnapshotOf(body, snapshot, now());
+            settle(next);
+            clearFollow();
+            if (next.refreshing && tries < MODELS_FOLLOW_TRIES) {
+              tries += 1;
+              timer = setTimeout(() => { timer = null; void read(false); }, MODELS_FOLLOW_MS);
+            } else if (!next.refreshing) {
+              tries = 0;
+            }
+            return next;
+          })
+          .catch((error) => {
+            // A failed read keeps the painted list: an unreachable Host is not a
+            // reason to claim there are no models.
+            publish({
+              ...snapshot,
+              phase: snapshot.models.length > 0 ? 'stale' : 'error',
+              refreshing: false,
+              error: String(error && error.message ? error.message : error),
+            });
+            return snapshot;
+          })
+          .finally(() => { inflight = null; });
+        return inflight;
+      };
+      return {
+        attach(nextReader) { reader = nextReader; },
+        read,
+        force() { return read(true); },
+        subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+        getSnapshot() { return snapshot; },
+        dispose() { clearFollow(); listeners.clear(); reader = null; },
+      };
+    }
+
+    /** One model's declared capabilities, in the picker's own vocabulary. */
+    function catalogCaps(model) {
+      const input = Array.isArray(model?.input) ? model.input : [];
+      const efforts = model?.reasoningEfforts;
+      const levels = efforts !== null && typeof efforts === 'object' && !Array.isArray(efforts)
+        ? Object.keys(efforts).filter(level => efforts[level] !== null)
+        : [];
+      return { image: input.includes('image'), text: input.length === 0 || input.includes('text'), levels };
+    }
+
+    /** Compact capacity: 1000000 → 1M, 960000 → 960K, absent → —. */
+    function compactCapacity(value) {
+      const n = safeCount(value);
+      if (n <= 0) return '—';
+      if (n >= 1e6) return (n / 1e6).toFixed(n % 1e6 === 0 ? 0 : 1) + 'M';
+      if (n >= 1e3) return Math.round(n / 1e3) + 'K';
+      return String(n);
+    }
+
+    /** Relative age of the last successful sync, in the user's language. */
+    function syncAgeLabel(t, syncedAt, at) {
+      if (!Number.isFinite(syncedAt) || syncedAt <= 0) return t('modelsNeverSynced');
+      const diff = Math.max(0, at - syncedAt);
+      if (diff < 60_000) return t('modelsSyncedJustNow');
+      const unit = diff < 3_600_000 ? 'modelsAgeMinutes' : diff < 86_400_000 ? 'modelsAgeHours' : 'modelsAgeDays';
+      const n = Math.floor(diff / (unit === 'modelsAgeMinutes' ? 60_000 : unit === 'modelsAgeHours' ? 3_600_000 : 86_400_000));
+      return t('modelsSyncedAgo').replace('{age}', t(unit).replace('{n}', String(n)));
     }
 
     // ── §3 primitives ────────────────────────────────────────────────────────
@@ -2911,6 +3703,107 @@ window.__ModuleLoader__.load({
         path('M5.9 11.4h4.2', 'bar2'));
     }
 
+    /**
+     * Settings header chip. It is mounted for as long as the settings panel is
+     * open, so its first render is the lazy trigger: opening settings — on any
+     * page, including the native model editor — asks the Host for the catalog
+     * (answered from the stored list, never from the gateway) and lets it
+     * revalidate upstream behind the panel. A click re-checks the gateway now.
+     */
+    function ModelsChip({ t, catalog }) {
+      const state = React.useSyncExternalStore(catalog.subscribe, catalog.getSnapshot, catalog.getSnapshot);
+      React.useEffect(() => { void catalog.read(false); }, [catalog]);
+      if (state.phase === 'idle' && state.route === null) return null;
+      // An older Host has no catalog route at all; leave the header alone instead
+      // of advertising a feature this deployment does not serve.
+      if (state.error !== null && state.error.includes('http-404')) return null;
+      const busy = state.refreshing || state.phase === 'loading';
+      const label = busy
+        ? t('modelsChipBusy')
+        : state.error !== null
+          ? t('modelsChipFailed')
+          : t('modelsChip')
+            .replace('{n}', String(state.count))
+            .replace('{age}', syncAgeLabel(t, state.syncedAt, Date.now()));
+      return h('button', {
+        type: 'button',
+        className: 'tc-chip',
+        title: t('modelsChipTitle'),
+        'data-busy': busy ? 'true' : 'false',
+        onClick: () => { void catalog.force(); },
+      },
+        h('span', { className: 'tc-chip-dot', 'aria-hidden': 'true' }),
+        h('span', null, label));
+    }
+
+    /** One catalog row: display name, id, and what the model accepts. */
+    function modelRow(t, model, isNew) {
+      const caps = catalogCaps(model);
+      return h('li', { className: 'tc-model-row', key: model.id },
+        h('div', { className: 'tc-model-main' },
+          h('span', { className: 'tc-model-name' }, String(model.name ?? model.id)),
+          isNew ? h('span', { className: 'tc-model-tag' }, t('modelsAdded')) : null),
+        h('span', { className: 'tc-model-id' }, model.id),
+        h('span', { className: 'tc-model-caps' },
+          caps.image ? h('span', { className: 'tc-model-cap' }, t('modelsCapImage')) : null,
+          caps.levels.length > 0
+            ? h('span', { className: 'tc-model-cap' }, t('modelsReasoning') + ' ' + caps.levels.join('/'))
+            : null,
+          h('span', { className: 'tc-model-cap' },
+            t('modelsWindow') + ' ' + compactCapacity(model.contextWindow)
+            + ' · ' + t('modelsOutput') + ' ' + compactCapacity(model.maxTokens))));
+    }
+
+    /**
+     * `settings.section`: the catalog page. It paints the last list straight away
+     * (Host cache, then this browser's persisted paint) and shows the background
+     * refresh as a line of text, not as an empty screen.
+     */
+    function ModelsSection({ t, catalog }) {
+      const state = React.useSyncExternalStore(catalog.subscribe, catalog.getSnapshot, catalog.getSnapshot);
+      React.useEffect(() => { void catalog.read(false); }, [catalog]);
+      const busy = state.refreshing || state.phase === 'loading';
+      const added = new Set(state.addedIds ?? []);
+      const status = state.error !== null
+        ? t('modelsFailed').replace('{reason}', state.error)
+        : busy
+          ? t('modelsRefreshing')
+          : state.route === null
+            ? t('modelsNoRoute')
+            : syncAgeLabel(t, state.syncedAt, Date.now());
+      return h('section', { className: 'tc-settings tc-models' },
+        h('h2', { className: 'tc-settings-title' }, t('modelsTitle')),
+        h('p', { className: 'tc-settings-intro' }, t('modelsIntro')),
+        h('div', { className: 'tc-models-bar' },
+          h('div', { className: 'tc-models-meta' },
+            h('span', { className: 'tc-models-status', 'data-busy': busy ? 'true' : 'false' }, status),
+            state.route === null ? null : h('span', { className: 'tc-models-route' },
+              state.route + (state.baseURL ? ' · ' + state.baseURL : '')),
+            state.count > 0
+              ? h('span', { className: 'tc-models-count' }, t('modelsCount').replace('{n}', String(state.count)))
+              : null),
+          h('button', {
+            type: 'button',
+            className: 'tc-btn',
+            disabled: busy,
+            onClick: () => { void catalog.force(); },
+          }, busy ? t('modelsSyncBusy') : t('modelsSyncNow'))),
+        state.models.length === 0
+          ? h('p', { className: 'tc-note' }, t('modelsEmpty'))
+          : h('ul', { className: 'tc-model-list' },
+            state.models.map(model => modelRow(t, model, added.has(model.id)))),
+        h('p', { className: 'tc-note' }, t('modelsHint')));
+    }
+
+    /** Nav glyph for the catalog page: stacked layers. */
+    function modelsIcon(size) {
+      const px = Number.isFinite(size) && size > 0 ? size : 16;
+      return h('svg', { width: px, height: px, viewBox: '0 0 16 16', 'aria-hidden': 'true' },
+        h('path', { d: 'M8 2.2 14 5 8 7.8 2 5l6-2.8Z', fill: 'none', stroke: 'currentColor', strokeWidth: 1, strokeLinejoin: 'round' }),
+        h('path', { d: 'm2 8 6 2.8L14 8', fill: 'none', stroke: 'currentColor', strokeWidth: 1, strokeLinecap: 'round', strokeLinejoin: 'round' }),
+        h('path', { d: 'm2 11 6 2.8L14 11', fill: 'none', stroke: 'currentColor', strokeWidth: 1, strokeLinecap: 'round', strokeLinejoin: 'round' }));
+    }
+
     // ── §5 views ─────────────────────────────────────────────────────────────
     function ContextView(props, pricing) {
       const t = props.t;
@@ -3447,12 +4340,35 @@ window.__ModuleLoader__.load({
      * visible without opening anything; pressing it refreshes the read while
      * opening the dashboard.
      */
-    function OverviewButton({ t, pricing, store, openSession, useSessions, quota, wide }) {
+    function OverviewButton({ t, pricing, store, openSession, useSessions, useSessionStatus, modelDirectories, quota, wide }) {
       const open = React.useSyncExternalStore(store.subscribe, store.getSnapshot, () => false);
       const preference = usePrefsOf(pricing);
       const tier = preference.tier;
       const currency = preference.currency;
       const sessions = useOptional(useSessions, s => s);
+      const status = useOptional(useSessionStatus, s => s);
+      // The composer's own model picker. A blank session records no
+      // `modelSelection` event, so the projection is silent exactly where the
+      // input box is the only evidence of which plan the next message will bill;
+      // this face reads that picker's store instead.
+      const composerFace = composerFaceOf(modelDirectories);
+      const mainSessionId = currentSessionIdOf(sessions);
+      const composerKey = React.useSyncExternalStore(
+        React.useMemo(() => (mainSessionId === null ? () => () => {} : composerFace(mainSessionId).subscribe),
+          [composerFace, mainSessionId]),
+        React.useMemo(() => (mainSessionId === null ? () => null : composerFace(mainSessionId).read),
+          [composerFace, mainSessionId]),
+        () => null,
+      );
+      const composerRoute = routeOfComposerKey(composerKey);
+      // The composer catalog names the platform behind every gateway route, not
+      // just the selected one — the only way a running turn's plan is knowable.
+      const composerDescribe = React.useMemo(
+        () => (mainSessionId === null
+          ? undefined
+          : (provider, model) => composerFace(mainSessionId).describe?.(provider, model) ?? ''),
+        [composerFace, mainSessionId],
+      );
       const balance = useQuota(quota);
       const figure = quotaFigure(balance, t);
       // A figure the client remembers from the last load (or one whose refresh
@@ -3469,13 +4385,43 @@ window.__ModuleLoader__.load({
       // "when does my subscription run out" means for a window-based vendor.
       const cycle = quotaCycleOf(balance);
       const remain = cycle === null ? '' : remainText(cycle.ms, t);
-      // The quota follows the route the newest request ran on, so switching
-      // models switches the figure instead of showing another plan's numbers.
-      // `null` (nothing known) and `NO_SOURCE` (a gateway with no allowance) both
+      // The quota answers for the conversation in the main view: while it is
+      // working (or waiting on a question, which is not the end of a turn) the
+      // route the work is on pays, and only once it is idle does the composer's
+      // own choice become the plan the next message will bill. A switch made
+      // mid-turn is a promise about the next turn, so it waits.
+      //  `null` (nothing known) and `NO_SOURCE` (a gateway with no allowance) both
       // leave the foot without a figure — better blank than another vendor's
-      // wallet — but only `NO_SOURCE` is remembered, so a new blank session on
+      // wallet — but only a real source is remembered, so a new blank session on
       // the same gateway does not fall back to somebody else's plan.
-      const source = sourceOfSessions(sessions);
+      //
+      // The derived answer is settled before it is used: `sessions` and `status`
+      // arrive in several passes (list hydration, projection frames, the turn
+      // closing), and reading a halfway state paints a figure that lives two
+      // frames — the OpenCode flash on a WorkBuddy session.
+      // One settler per mount. The resolver reads through a ref so it always sees
+      // the current render's snapshot while the committed value survives — that
+      // is what makes the debounce work: intermediate snapshots are seen, but
+      // only a source that outlives the settle window is ever read and painted.
+      const resolveRef = React.useRef(() => sourceOfSessions(sessions, status, null, undefined));
+      resolveRef.current = () => sourceOfSessions(sessions, status, composerRoute, composerDescribe);
+      const settlerRef = React.useRef(null);
+      if (settlerRef.current === null) {
+        settlerRef.current = createSourceSettler(() => resolveRef.current(), {
+          initial: readStoredSource(),
+          materialize: (candidate) => candidate !== null,
+        });
+      }
+      const settler = settlerRef.current;
+      const source = React.useSyncExternalStore(settler.subscribe, settler.read, settler.read);
+
+      React.useEffect(() => {
+        settler.schedule();
+        // A source that was already showable commits synchronously inside
+        // `schedule` (notifying subscribers); a deferred one lands on the settle
+        // timer and notifies from there, so no extra render is scheduled here.
+      }, [settler, sessions, status, composerKey, composerDescribe]);
+      React.useEffect(() => () => settler.cancel(), [settler]);
       React.useEffect(() => {
         quota.setSource(source);
         if (source !== null) storeSource(source);
@@ -3491,7 +4437,7 @@ window.__ModuleLoader__.load({
         h('span', { className: 'tc-entry-label' }, t('entry')),
         remain === '' ? null : h('span', {
           className: 'tc-entry-remain', 'data-tone': remainTone(cycle.ms),
-          title: t('quotaCycleLine', { time: stampOf(cycle.window.resetsAt), left: remain }),
+          title: t('quotaCycleLine', { time: stampOfMs(cycle.at), left: remain }),
         }, remain));
       const body = figure === ''
         ? null
@@ -3505,7 +4451,7 @@ window.__ModuleLoader__.load({
                 title: windowLineOf(window, t),
               },
                 h('span', { className: 'tc-meter-head' },
-                  h('i', { className: 'tc-meter-label' }, windowShort(window.key, t)),
+                  h('i', { className: 'tc-meter-label' }, windowName(window, t)),
                   h('b', { className: 'tc-meter-value' }, percent + '%')),
                 h('span', { className: 'tc-meter-track', 'aria-hidden': 'true' },
                   h('i', { className: 'tc-meter-fill', style: { width: percent + '%' } })));
@@ -3561,6 +4507,14 @@ window.__ModuleLoader__.load({
       // Subscription balance shown at the sidebar foot; §4b installs its reader.
       const quotaStore = createQuotaStore();
       ctx.effect(() => () => quotaStore.dispose(), 'tc-context: quota store');
+
+      // Gateway model catalog: the settings header chip and the catalog page read
+      // one store, so opening either costs one read and shares one paint. The store
+      // asks the Host — which answers from the stored list — and follows the
+      // background revalidation the Host starts on a stale read.
+      const modelsStore = createModelsStore();
+      modelsStore.attach((force) => readModelsRoute(force, (url, init) => fetch(url, init)));
+      ctx.effect(() => () => modelsStore.dispose(), 'tc-context: model catalog store');
 
       // 1. `/context` command — client-owned input trigger, no Host command.
       ctx.inject(['inputTriggers'], (ictx) => {
@@ -3623,11 +4577,15 @@ window.__ModuleLoader__.load({
       // 4. Sidebar-foot button; it portals the cross-session dashboard itself,
       //    so no dependency on a root `shell.overlay` declaration timing. The
       //    same button carries the live subscription balance.
+      //    `modelDirectories` (the composer's model picker service) is optional:
+      //    without it a blank session falls back to its recorded projection, and
+      //    a missing service never breaks the foot.
       ctx.effect(() => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
         name: 'sidebar.footer.action', id: 'tc-overview', order: 20, locale: NS,
       }, (props) => h(OverviewButton, {
         ...props, t, pricing, store: overviewStore, openSession, quota: quotaStore,
-      }))), 'tc-context: sidebar button');
+        modelDirectories: ctx.get && ctx.get('modelDirectories'),
+      }))), 'tc-context: sidebar button');;
 
       // 4b. Subscription quota reader. The Host route owns the platform call and
       //     the provider key, so this is one same-origin fetch with no secret in
@@ -3663,8 +4621,32 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
         name: 'settings.section.icon', id: 'turn-cost', order: 30, label: () => t('nav'),
       }, (props) => sectionIcon(props === undefined || props === null ? 16 : props.size))), 'tc-context: settings section icon');
+
+      // 6. Settings →「模型」: the gateway catalog page. Opening it (or opening
+      //    settings at all, which mounts the header chip) is the lazy trigger —
+      //    the list paints from cache and the revalidation happens behind the UI.
+      ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
+        name: 'settings.section', id: 'tc-models', order: 31, label: () => t('modelsNav'), locale: NS,
+      }, (props) => h(ModelsSection, { ...props, t, catalog: modelsStore }))), 'tc-context: model catalog page');
+
+      ctx.effect(() => ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+        name: 'settings.section.icon', id: 'tc-models', order: 31, label: () => t('modelsNav'),
+      }, (props) => modelsIcon(props === undefined || props === null ? 16 : props.size))), 'tc-context: model catalog icon');
+
+      ctx.effect(() => ctx.slots.inject('settings.action', () => ctx.slots.register({
+        name: 'settings.action', id: 'tc-models-chip', order: 20, locale: NS,
+      }, (props) => h(ModelsChip, { ...props, t, catalog: modelsStore }))), 'tc-context: model catalog chip');
     }
 
-    return { apply };
+    // `models` exposes the catalog store for the Node-side behavioral test
+    // (`test/model-catalog-client.test.js`); the web loader only reads `apply`.
+    return {
+      apply,
+      models: {
+        emptyCatalog, readCachedCatalog, writeCachedCatalog, catalogSnapshotOf, readModelsRoute,
+        createModelsStore, catalogCaps, compactCapacity, syncAgeLabel,
+        ModelsSection, ModelsChip, modelRow,
+      },
+    };
   },
 });

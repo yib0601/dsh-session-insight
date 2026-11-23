@@ -90,9 +90,19 @@
 
 侧栏脚「用量总览」是一条两行卡片，直接显示**当前正在用的那个订阅**还剩多少、还够用多少天；点按按钮同时强刷额度并打开总览：
 
-- **跟随供应商，只看 provider**：判定源用请求里记录的 **provider id**（`tcTimeline` 的 `current` / `requests[*]`），不看模型名——同一个 `deepseek-v4.1-flash` 既可能由 DeepSeek 官方平台服务，也可能由 OpenCode 服务，还可能由自建网关转发，只有 provider 能说明**是谁的订阅在扣**。映射只有两条：`opencode` / `opencode-go` / `opencode-go-v41` → OpenCode Go；`deepseek` / `deepseek-account` / `deepseek-official` → DeepSeek。provider 完全缺失时只认模型名里的 `OpenCode` 字样。
-- **自建网关没有额度，就不显示额度**：`ai-router` 这类自建网关是多后端的转发层（后端可能是 oc-go / oc-zen / openrouter / gemini…），它按**上游密钥**分别计费，网关自己的密钥 `quota_requests` / `quota_tokens` 通常为 null，`/health` 描述的也只是后端状态而不是调用方的余量——因此**没有任何诚实的数字可显示**。这类 provider 归入 `NO_SOURCE`：卡片不显示金额、不显示百分比、不算倒计时、**一次额度请求都不发**，只写一行「此供应商无额度可查」，悬浮补一句为什么。不借用 OpenCode 的窗口来顶替：网关可能把请求转给任意后端，而那些窗口属于另一把密钥。
-- **切模型立刻生效**：`tcTimeline` 的 `current` 由 `model/selection` 写入并带自身时间戳，所以**改完模型不必先发一条消息**额度就跟着换；比较时 `current` 与各会话 `requests` 末尾按时间排，谁新听谁的，旧切换不会压过别处更新的请求。
+- **跟随供应商，只看 provider**：判定源用请求里记录的 **provider id**（`tcTimeline` 的 `current` / `requests[*]`），不看模型名——同一个 `deepseek-v4.1-flash` 既可能由 DeepSeek 官方平台服务，也可能由 OpenCode 服务，还可能由自建网关转发，只有 provider 能说明**是谁的订阅在扣**。映射：`opencode` / `opencode-go` / `opencode-go-v41` → OpenCode Go；`deepseek` / `deepseek-account` / `deepseek-official` → DeepSeek；`workbuddy` / `workbuddy-shim` → WorkBuddy。provider 完全缺失时只认模型名里的 `OpenCode` 字样。
+- **WorkBuddy 是「有额度」的网关，不是 `NO_SOURCE`**：它确实是网关（本机 shim → `copilot.tencent.com`），但那条链只服务**一个账号**，额度是账号级的真事实（积分分包 + 订阅周期）。差别在于令牌只在 shim 手里，所以 Host 读的是 shim 的 `/quota`（`WorkBuddy 额度` 页面承认的正是它），不是腾讯的计费接口。工作端点取 `DSH_TURN_COST_WORKBUDDY_QUOTA_URL`，缺省 `http://127.0.0.1:8898/quota`；生产 shim 只在 Vultr 的回环上，本机用一条常驻 SSH 转发（`workbuddy-shim-tunnel.service`）把它搬到 `127.0.0.1:8898`。凭据 ref `WORKBUDDY_SHIM_TOKEN`（即 shim 的 `WORKBUDDY_SHIM_TOKEN`，不是供应商密钥）。
+- **WorkBuddy 的窗口与别人不同**：它没有 rolling/weekly/monthly 三档，而是按**积分包分组**（`套餐积分` / `赠送积分` / `加量包` / `奖励积分`），每档给 `percent`、余量与**重置时刻**。所以窗口标签优先用上游 `label`（供应商自己命名的桶），没有 `label` 才回落到内置词表；`plan`（套餐名 + 到期时刻）是唯一诚实倒计时来源，有它就**不再**「取最长窗口的重置」推周期，也不打印那句推断说明；`totals` 给一个跨桶总量（`积分剩 9226 / 12700`）。空分组（没买过加量包：容量 0、包数 0）不画成 0%，直接不列。
+- **网关路由看模型显示名里的平台段**：`ai-router` 这类自建网关是多后端转发层，但它的每一行模型都**锁定单一后端**，而 `host/model-sync/naming.js` 正是把后端写进显示名首段——`<平台> · <计费> · <名字>[ · <窗口>]`。所以 `WorkBuddy · 付费 · DeepSeek-V4.1-Flash · 1M` 这一行确实由 WorkBuddy 账号付费，读 shim 的 `/quota` 是诚实的。判定顺序：provider id 命中映射表 → 显示名首段命中 `workbuddy` / `OpenCode Go` / `OpenCode Zen` → 有 provider 但都不命中则 `NO_SOURCE`。显示名从**输入框模型目录**（`modelDirectories` 服务的 `directoryFor(sessionId).store`，`models[].name`）取，对任意路由都查得到，不限于当前选中项。`platformOfLabel` 只把**首段**当平台：模型名里出现 "WorkBuddy" 字样的第三方模型不会被误判。
+- **没有可读额度就不显示**：`OpenRouter` / `SiliconFlow` / `Gemini` / `NVIDIA NIM` 这类后端本插件读不到余量，落到 `NO_SOURCE`：不显示金额、不显示百分比、不算倒计时、**一次额度请求都不发**，只写一行「此供应商无额度可查」，悬浮补一句为什么。绝不借用 OpenCode 的窗口来顶替别人后端的花费。
+- **`NO_SOURCE` 不进“记住的源”**：「这条路由没有可读额度」是某一段对话路由的事实，不是下一段对话的偏好。写进 `localStorage` 的只有真额度源；旧版本存下的 `none` 在读取时就被丢掉，否则每个空会话都会一开屏写「此供应商无额度可查」，哪怕输入框选的是可读的套餐。
+- **只看主视图那一个会话**：额度回答的是「我正在看的这段对话在花哪份订阅」，所以只认 `retainedBy.mainView > 0` 的那一行，别的会话（后台子 agent、别的 workspace、已归档）再新也不能接管侧栏脚。
+- **会话在跑时用正在跑的模型，跑完才用输入框选的模型**：判定来自 `modelSelection` 投影与 Session UI 状态（`useSessionStatus`）：
+  - **运行中** → 取 `lastUsed`（上一笔真实请求用的路由），即 `activeRouteOfSession`。输入框里刚切成 OpenCode 只是**下一轮**的承诺，本轮还在 WorkBuddy 上烧积分，此时切源就会闪出 OpenCode 的窗口。
+  - **等待你回答**（`pendingInteraction` 非空，含 DSH 的提问）→ **仍算运行中**。停下来提问不等于结束这一轮，也不是新一轮对话，同一路由继续在付费，所以继续显示正在跑的那份额度。
+  - **空闲**（本轮结束、等下一轮或空会话）→ 取 `modelSelection.next ?? lastUsed`，即 `selectedRouteOfSession`：输入框选的那个模型，下一句话就要它付费。
+  - 两条路径都回落到 `tcTimeline`（`current` / `requests` 末尾），用于投影还没到达的会话。
+- **切源防抖 1.2 秒**：候选源在 `QUOTA_SOURCE_DEBOUNCE_MS`（1200ms）内被反复改写时不提交，只有活下来的那个才真正去读并落画。页面加载、重连、一轮结束这些时刻，会话列表、投影、状态帧是分几趟到达的，中间态都是「看起来像答案」的值——以前的 OpenCode 窗口闪现就是这个中间态被当成答案画了出来。硬约束：`read()` 是 `useSyncExternalStore` 的 `getSnapshot`，**必须引用稳定**，所以只在 `schedule()` 里推进提交值；`null`（无源）与首次落画都立即提交，因为此时没有数字要保、也就没有闪烁可防。首帧只按「记住的源」着墨，绝不采纳可能处于中间态的候选。
 - **无源时留白**：拿不到 provider 也没有上次记忆时，卡片**不显示任何数字**（状态 `idle`，`refresh` 直接返回，不读任何源）。这是刻意的——以前路由参数默认 `deepseek`，刷新页面会在会话自己的路由还没到达前先画一次 DeepSeek 钱包，OpenCode 订阅的账户就看到了「DeepSeek 官方额度」。
 - **两种「不显示」要分清**：`idle` = 还不知道（等会话路由），`nostore` = 已经知道，且该 provider 本来就没有额度。前者悬浮只有标题，后者给出原因；`NO_SOURCE` 也会被记忆，所以新开空会话仍然不会回落到别的套餐。
 - **记住上次的源**：认出的源写进 `localStorage` 的 `dsh-turn-cost:quota-source`，新开空会话或刷新时先按它显示，等会话自己的路由到达再覆盖。
@@ -106,6 +116,52 @@
 - **异常分支**：读失败（网络、超时、非 2xx）→「额度不可用」；Host 未配置该源密钥 →「未配置密钥」；余额/窗口为 0 →「零余额」。三者都不伪装成 0 消耗。失败不写缓存，下一次轮询／点按会重试；缓存里的上一次成功值继续服务非强制读。
 - **无源分支**：既没有会话路由也没有记忆 → 卡片只有标题与按钮，不显示金额、不显示百分比、不发请求。
 - **失败是安全的**：Host 没有 `webServer` 或 `credentials` 时不会注册路由，按钮退回普通样式（首读失败即静默），费用与上下文功能完全不受影响。未知 `source` 参数由 Host 直接 400，不会悄悄给成默认源。
+
+## 模型清单自动同步（自建网关）
+
+DSH 只给 **pi-ai 内置目录里的** provider 路由准备运行时模型目录；`ai-router` 这类自建网关不在目录里，于是 profile 里 `models` 声明的那份清单**就是**模型选择器——网关上新了模型、下线了模型、改了上下文窗口，都不会自己出现。设置页的「获取可用模型」能拉一次，但它只把候选递进表单（`id / name / 上下文 / 输出上限`），模态与思考档位会丢，而且要手点保存。
+
+本插件把这一步自动化：
+
+- **查看即读，读即核对**：「设置 → 模型目录」这一页和设置面板头部的模型 chip 一出现，就先画上次的清单（Host 里已存的 profile 清单 + 本浏览器上次的快照），再让 Host 在后台核对一次网关；核对回来的新清单在下一帧静默换上，这一轮新出现的模型标「新增」。你永远不用等网关。
+- 每次打开设置都会触发一次核对（chip 挂在面板头部，所以直接去 DSH 原生的模型页也算），但同一个 `staleMs`（默认 5 分钟）窗口内只核对一次；另有启动后 20 秒 + 每 10 分钟一轮的兜底轮询。
+- 核对时逐行生成条目：显示名 `<平台> · <计费> · <名字> · <窗口>`（多供应商自动降级的行写成 `<名字> · <计费>自动降级`）、`input` 模态、`contextWindow` / `maxTokens`、`reasoningEfforts` 与 `effective` 所需的两个 compat 开关；条目上本模块不拥有的字段（例如手动加的请求级图片限额）原样保留。
+- 与 profile 里已存的清单**逐条比较**，只有真的不一致才写回；写回走 DSH 的 `settings` 服务（校验条目 → 落盘 profile → 重建 provider 一个事务），所以不打补丁、不改 `node_modules`、不手写 `cordis.patch.yml`。
+- 三种情况一个字都不写，保持旧清单：清单拉不到（超时 / 非 2xx / 不是 JSON / 超大）、清单为空、生成的显示名越界（含 router 历史标记 `· Trae` / `· 付费源待命`）。
+- 行上没有声明的能力不补不猜：`input` 缺省仍是 `["text"]`，思考档位缺省就不写——把文本模型标成收图会在消息落盘后才被上游拒，比提前拦下更糟。
+- 手改过的 `reasoningEfforts`（出现非 canonical 键、或 wire 值与档位不等）视为用户所有：整块保留，同步只刷新它自己生成的字段。
+
+状态与手动触发（同一 Host；不带 `force=1` 时立即回缓存、只在后台核对）：
+
+```bash
+curl -s http://127.0.0.1:3080/dsh-turn-cost/models | jq .last
+curl -s 'http://127.0.0.1:3080/dsh-turn-cost/models?force=1' | jq .last
+```
+
+关掉/改频率见 README 的环境变量表。**在设置页保存过模型卡之后**（它会把上游 `name` 回写、并按表单重建条目），下一轮同步会把显示名与能力补回来——这段时间里选择器可能短暂显示朴素名字。
+
+## 项目记忆（同一个包里的另一半边）
+
+这一半来自原 `dsh-project-memory`，现在不是独立插件行，而是由 `index.js` 挂载的库 + 第三个懒加载 chunk + 随包 skill。它与会话成本**没有调用关系**：两半各自 try/catch 挂载，记忆引擎崩了照常算钱，额度路由挂了照常用记忆。
+
+- **存三样东西**（项目根的 `.dsh-project-memory/`，`memoryDir` 可改）：
+  - **索引语料**：Markdown / PDF / 文本 + 代码符号（JS/TS、Python、Go、Rust、C 族、Shell 六类，按声明行提取），每条带 `path:line` 引用。索引期**零 LLM 调用**，分块默认 3000 字符、单文件上限 40 块、单文件内存闸门 10 MB（峰值 RSS 约为磁盘的 10–22 倍，闸门挡的是整文件物化的那一下）。
+  - **经验条目**：`lesson`（问题 → 修法）、`decision`（选了什么 + 为什么）、`procedure`（步骤）、`experience`（记录）。写入侧按重叠度去重、按置信度强化/提升（项目级超 `maxProject` 才归档），全局文件单独一份。
+  - **任务**：跨会话工作记录（步骤 + 热文件），会话可绑定到一条；绑定后按 `tasklist.syncHostOnAdopt` 把它推成宿主 todo 快照。
+- **12 个工具**：`list_tasks` / `select_task` / `archive_task` / `show_task_panel` / `index_doc` / `index_repo` / `query_memory` / `remember` / `forget` / `save_lesson` / `watch_repo` / `pm_stats`。逐个注册：某个名字被别的插件占了只丢那一个，并在 `ctx.logger` 里点名（这条日志是"插件装了但工具全没了"的唯一线索）。
+- **唯一命令 `/tasks`**：裸 `/tasks` 给任务清单快照；`/tasks switch|archive|unbind|rename|todos …` 与 `/tasks insight list|confirm|promote|…` 是子动词，主要由面板按钮经 `remote.commands.execute` 驱动。它**不声明 `input`**，所以手敲 `/tasks` 回车立刻执行（代价是带参数的行不再被认成命令，那些入口本来就在按钮上）。
+- **每步静默注入**：`agent/pre-step` 时在请求前追加一条记忆消息——「entry 常驻块」（最近任务与高置信经验，默认最多 6 条 / 400 token）+ 按当前提示相关性门控的条目。同一条正文没变就不重发；单会话保险丝 60 条 / 24000 字符；`auditLog` / `shadowLog` 只写盘不进 prompt（影子日志每步一行，含全部候选判据，为的是能离线重放"换个阈值会怎样"）。无项目 root 可解析时零副作用。
+- **召回**：三层（doc / symbol / experience-insight）BM25 起手；装了 `leanvec` 且 `vectorDir` 指到模型目录时，经验与洞察层的**排序**再用向量融合（`vectorAlpha` 默认 0.5，纯向量实测更差）；闸门与返回条数不因装没装改变。
+- **界面**（懒加载 chunk `client.memory.js`，源码 `client-memory-src/`）：任务面板（`shell.overlay` 浮层：任务页 / 记忆页 / 新建表单 / 分页 / 拖拽）、`/tasks` 的命令节点（接管内置的大段文本卡片，避免 JSON 载荷刷屏）、`show_task_panel` 的工具视图（结果一渲染就开面板——面板状态只在浏览器侧，宿主碰不到）、`/` 菜单的「工作流」组（纯客户端开面板页，不发宿主命令）、插件详情页设置卡（启动全量索引 / 刷新间隔 / 检索时扩展查询）。
+- **软依赖一律降级、不静默**：缺 `slots` / `configForms` / `locale` / `inputTriggers` 任一项，界面那部分跳过并在 3 秒宽限期后打一条**点名**告警（"装配异步、apply 时还没 provide" 是正常现象，所以不立刻报）。Host 侧同理：`tools` / `commands` / `skills` 缺失只少对应注册。
+- **危险根护栏**：家目录、文件系统根、系统目录、包管理器前缀默认**拒绝**当根（整树扫描会吃满内存）。`roots.allow` 放行、`roots.deny` / `roots.exclude` 仍优先；`maxScanFiles` / `maxScanDepth` 超限即截断并跳过"删除本轮未见到条目"的清理。
+- **给别的插件用的 seam**：`installProjectMemoryService` 经 `ctx.provide('projectMemory')` 暴露召回与写入；老宿主没有 `ctx.provide` 时安全跳过。
+
+体检（无经验文件、泛化标题、超长小节、超大文件）：
+
+```bash
+node skills/project-memory/scripts/pm-digest.mjs <项目根>
+```
 
 ## 偏好设置
 

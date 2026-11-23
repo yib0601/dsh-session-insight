@@ -1,0 +1,551 @@
+// 动作平面：把"这一步在做什么"从工具调用解析成有限的 op + 写目标 + 主机环境。
+// 不能用文本匹配：语料（路径、命令、被读文件正文）里的字符串可以冒充动作。
+// op 与 target 是低维、可枚举、可审计的：不随文本长度变化，也不会被正文污染。
+// 只读"是什么动作"，不决定注入什么（那是 readiness/auto-inject）；刻意不 import 它，避免循环。
+// 路径 token 规则收在 util/path-token.js —— 它无依赖，两个模块共用。
+
+import { extractPathTokens } from './util/path-token.js'
+import { patchFilePaths } from './util/patch.js'
+
+/** op 闭集。新增一个 op 必须同时想清楚：它是动作，不是话题。 */
+export const OP_IDS = [
+  'file-write',
+  'file-delete',
+  'shell-run',
+  'git-commit',
+  'git-push',
+  'release',
+  'npm-publish',
+  'deploy',
+  'migrate',
+  'go-public',
+  'render-doc',
+  'index-doc',
+  'read-image',
+  'fetch-web',
+  'run-bench',
+  'query-memory',
+]
+
+/**
+ * 兜底 op：信息量低、假阳性高。允许写进 `when.ops`，但自检会 warn——只该命中兜底级记忆。
+ */
+export const FALLBACK_OPS = new Set(['shell-run', 'file-write', 'query-memory'])
+
+/**
+ * 弱 op：日常动作，本身不构成边界。条目**已有更精确的 writes** 时迁移会丢掉弱 op，
+ * 留着只会把"改这个文件时"扩大成"任何一次提交时"。实测 `git-commit` 让一条"别删内部文档"
+ * 的教训在发版场景里被注入。
+ */
+export const WEAK_OPS = new Set([...FALLBACK_OPS, 'git-commit', 'git-push'])
+
+/** 旧 action id → op；没有对应动作的映射为 null。 */
+export const LEGACY_ACTION_ALIAS = {
+  'git-add': 'git-commit',
+  'npm-pack': 'npm-publish',
+  'release': 'release',
+  'generate-pptx': 'render-doc',
+  'render': 'render-doc',
+  'read-image': 'read-image',
+  'web-fetch': 'fetch-web',
+  'benchmark': 'run-bench',
+  'cleanup': 'file-delete',
+  'delete': 'file-delete',
+  'recover': null, // 没有对应动作：恢复是意图，不是工具动作
+  'research': null,
+  'survey': null,
+  'interview-prep': null,
+  'write-resume': null,
+  'report-metrics': null,
+  'write-docs': null,
+}
+
+const WRITE_TOOLS = new Set(['write', 'edit', 'multi_edit', 'str_replace', 'create_file', 'notebook_edit'])
+const READ_IMAGE_TOOLS = new Set(['read_image'])
+const INDEX_TOOLS = new Set(['index_doc', 'index_repo', 'watch_repo'])
+const FETCH_TOOLS = new Set(['web_fetch', 'web_search'])
+const SHELL_TOOLS = new Set(['bash', 'shell', 'pwsh', 'powershell', 'run', 'exec', 'job_run'])
+const QUERY_TOOLS = new Set(['query_memory', 'recall'])
+
+/**
+ * 会写盘的文件类命令头。**只作用于命令头**，不对整条命令做无锚点正则：
+ * 参数、路径、引号里的词都只是**提及**（`find … bench …` 的目录名、`grep -rn "migrate" docs`）。
+ * 命令头才是"这个 shell 到底在做什么"的唯一可靠位置。
+ */
+/** git 子命令里会改工作区/索引的写族：op 映射与 targets 抽取必须同一口径。 */
+const GIT_WRITE_SUBCOMMANDS = new Set([
+  'rm', 'checkout', 'restore', 'reset', 'apply', 'merge', 'rebase', 'cherry-pick', 'stash', 'mv', 'clean',
+])
+
+const WRITE_HEADS = new Set(['rm', 'rmdir', 'unlink', 'shred', 'mv', 'cp', 'touch', 'tee', 'truncate', 'mkdir'])
+/**
+ * Windows / PowerShell 的写盘命令。与 POSIX 同名命令并列而不是另开分支：`isWriteSegment()` 与
+ * `opsOfHead()` 都按命令头查表，多一组名字就够了。缺了它们，Windows 上的 `del a.ts` /
+ * `copy a b` / `Set-Content a.ts` 会全部退化成兜底 op `shell-run`，`writes` 也抽不出来。
+ */
+const WINDOWS_WRITE_HEADS = new Set([
+  'del', 'erase', 'rd', 'move', 'ren', 'rename', 'copy', 'xcopy', 'robocopy', 'md',
+  'remove-item', 'clear-content', 'new-item', 'set-content', 'add-content', 'out-file',
+  'copy-item', 'move-item', 'rename-item',
+])
+/** 包在真命令前面的词：跳过它们再取命令头。 */
+const WRAPPERS = new Set(['sudo', 'env', 'command', 'builtin', 'exec', 'time', 'nohup', 'nice', 'stdbuf'])
+/** 递归解析 `bash -c "…"` / `pwsh -Command "…"` / `cmd /c …` 的壳；深度上限防套娃。 */
+const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh', 'pwsh', 'powershell', 'cmd'])
+/** 分段：按未加引号的 `\n ; && || | &` 切。引号里的分隔符是正文，不是命令边界。 */
+function unquotedSegments(text) {
+  const out = []
+  let cur = ''
+  let quote = null
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (quote) {
+      cur += c
+      if (c === '\\' && quote === '"' && i + 1 < text.length) { cur += text[++i]; continue }
+      if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; cur += c; continue }
+    // `#` 只有在词首才是注释：URL 的 fragment、`#!` 之类不能当注释切掉。
+    if (c === '#' && (i === 0 || /\s/.test(text[i - 1]))) {
+      while (i < text.length && text[i] !== '\n') i++
+      out.push(cur)
+      cur = ''
+      continue
+    }
+    if (c === '\n' || c === ';') { out.push(cur); cur = ''; continue }
+    if ((c === '&' || c === '|') && text[i + 1] === c) { out.push(cur); cur = ''; i++; continue }
+    if (c === '|' || c === '&') { out.push(cur); cur = ''; continue }
+    cur += c
+  }
+  out.push(cur)
+  return out.map((s) => s.trim()).filter(Boolean)
+}
+
+/** 剥掉 heredoc 正文，只留 opener 那一行：正文是脚本内容，不是 shell 命令。 */
+function stripHeredocBodies(text) {
+  return text.replace(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n[\s\S]*?\n\2(?=\s*(?:$|\n))/g, (m) => `${m.split('\n')[0]}\n`)
+}
+
+/** 简单词法切分（去引号、保转义）。只用于取命令头与参数，不追求完整 shell 语义。 */
+function tokenizeWords(segment) {
+  const out = []
+  let cur = ''
+  let quote = null
+  for (let i = 0; i < segment.length; i++) {
+    const c = segment[i]
+    if (quote) {
+      if (c === quote) { quote = null; continue }
+      // 双引号里的 `\"` 是转义；但 Windows 路径 `"C:\Program Files\nodejs\npm.cmd"` 里的 `\`
+      // 是分隔符，吞掉它命令头就变成 `c:program files…`，整个动作面失配。
+      if (c === '\\' && quote === '"' && i + 1 < segment.length && /["\\]/.test(segment[i + 1])) {
+        cur += segment[++i]
+        continue
+      }
+      cur += c
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; continue }
+    if (/\s/.test(c)) { if (cur) { out.push(cur); cur = '' } continue }
+    if (c === '\\' && i + 1 < segment.length) {
+      // POSIX 的 `\ ` 是转义空格，Windows 的 `\` 是路径分隔符，两种都要能吃：只有"被转义的
+      // 确实是分隔语义字符"时才吞掉反斜杠，否则按字面量保留（`src\util\fs.js` 不能被压成
+      // `srcutilfs.js`，否则写目标与命令头都抽不出来）。
+      const next = segment[i + 1]
+      if (/[\s"'`\\|&;<>()$#]/.test(next)) { cur += next; i++; continue }
+      cur += c
+      continue
+    }
+    cur += c
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+/** shell 复合命令的关键字：它们不是可执行命令，跳过后再取真正的命令头。 */
+const SHELL_KEYWORDS = new Set([
+  'if', 'then', 'else', 'elif', 'fi', 'while', 'until', 'for', 'do', 'done',
+  'case', 'esac', 'function', 'in', 'select', 'time',
+])
+/**
+ * 包装器带值的选项：`nice -n 10 npm publish` / `sudo -u user rm` / `env -u NAME rm`。
+ * 只跳过选项本身不够——值会被当成命令头，动作与写目标一起丢。
+ */
+const WRAPPER_VALUE_FLAGS = new Set([
+  '-n', '--adjustment', '-u', '--user', '-g', '--group', '-C', '--chdir', '-p', '--prompt',
+  '-r', '--role', '-t', '--type', '-U', '--other-user', '-f', '--format', '-o', '--output',
+  '-S', '--split-string', '-c', '--command', '-D', '--chdir',
+])
+
+/** 跳过环境变量赋值、包装器（及其选项/值）与 shell 关键字，返回真正的命令头与参数。 */
+function commandHead(tokens) {
+  let i = 0
+  /** 最近一个包装器：`time -p` 与 `sudo -p <prompt>` 的 -p 语义不同，需要知道是谁。 */
+  let wrapper = null
+  while (i < tokens.length) {
+    const t = tokens[i]
+    if (WRAPPERS.has(t)) { wrapper = t; i++; continue }
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || SHELL_KEYWORDS.has(t)) { i++; continue }
+    if (t === '(' || t === '{' || t === '}' || t === ')') { i++; continue }
+    if (t.startsWith('-') && t !== '-') {
+      // 包装器/命令的选项：带值的连值一起跳，避免把值当成可执行命令。
+      // `time -p` 是 POSIX 的“不打印计时”，不带值；其余同名 -p（sudo -p prompt）带值。
+      const takesValue = WRAPPER_VALUE_FLAGS.has(t) && !(wrapper === 'time' && t === '-p')
+      if (takesValue && i + 1 < tokens.length) i += 2
+      else i++
+      continue
+    }
+    break
+  }
+  let raw = tokens[i] || ''
+  // `(rm` / `{rm` 这类紧挨着的分段：剥掉开头括号再取命令头。
+  raw = raw.replace(/^[({]+/, '')
+  // 目录（两种分隔符）+ Windows 可执行后缀都要剥：`C:\Program Files\nodejs\npm.cmd` → `npm`。
+  // 只 `split('/')` 会让 Windows 上的绝对路径命令头整个失配，`.cmd`/`.exe` 同理。
+  const head = raw.split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|com|ps1)$/, '')
+  let rest = tokens.slice(i + 1)
+  if (rest.length && /[)}]+$/.test(rest[rest.length - 1])) {
+    rest[rest.length - 1] = rest[rest.length - 1].replace(/[)}]+$/, '')
+  }
+  if (rest.length && rest[rest.length - 1] === ')') rest = rest.slice(0, -1)
+  return { head, rest }
+}
+
+// 路径两侧的分隔符都算：Windows 上 `node scripts\bench.mjs` 与 `pnpm exec marp\cli` 是常态。
+const BENCH_ARG = /(^|[\\/])bench(mark)?([\\/]|\.(mjs|js|ts|cjs|mts|json)$)/i
+const RENDER_ARG = /(^|[\\/])(pptxgenjs|soffice|libreoffice|pandoc|marp|slidev)(\b|[\\/])/i
+/** npm script 名（`bench` / `bench:peak` / `benchmark`）：`npm run bench` 是文档里的跑法。 */
+const BENCH_SCRIPT = /^(bench|benchmark)(:[\w.-]+)?$/i
+/** 包管理器里带值的全局 flag（`npm --prefix x …`）。 */
+const PM_VALUE_FLAGS = new Set(['-C', '--prefix', '--cwd', '-w', '--workspace', '--filter', '-F', '--dir'])
+
+/**
+ * 包管理器子命令：先扫已知动词（`publish` / `version` / `run` / `exec` …），再退回第一个非选项。
+ * 不能直接取第一个非 `-` 参数：`npm --registry <url> publish` / `npm --otp 123456 publish`
+ * 会先把 flag 的值当子命令，发布动作因此识别不到（而 `npm publish --registry …` 正常）。
+ */
+const PM_VERBS = new Set([
+  'publish', 'pack', 'version', 'run', 'run-script', 'exec', 'dlx', 'x', 'test', 't', 'tst',
+  'install', 'i', 'add', 'remove', 'rm', 'uninstall', 'un', 'update', 'up', 'link', 'why',
+  'audit', 'config', 'init', 'create', 'start', 'stop', 'restart', 'rebuild', 'ci', 'dedupe',
+  'prune', 'outdated', 'view', 'info', 'search', 'login', 'logout', 'whoami', 'owner', 'team',
+  'token', 'deprecate', 'dist-tag', 'unpublish', 'workspace', 'workspaces',
+])
+
+/** 跳过全局 flag，返回第一个子命令及其后的参数。 */
+function packageSubcommand(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (typeof a !== 'string') continue
+    if (a.startsWith('-')) {
+      if (PM_VALUE_FLAGS.has(a)) i++
+      continue
+    }
+    if (PM_VERBS.has(a.toLowerCase())) return { sub: a.toLowerCase(), rest: args.slice(i + 1) }
+  }
+  // 没有已知动词：退回旧行为，保留 `yarn bench` / `pnpm dlx …` 这类按脚本名直接跑的形态。
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith('-')) {
+      if (PM_VALUE_FLAGS.has(args[i])) i++
+      continue
+    }
+    return { sub: args[i].toLowerCase(), rest: args.slice(i + 1) }
+  }
+  return { sub: '', rest: [] }
+}
+
+/** 包管理器 / npx 之后的参数里识别动作。只有命令头是 runner 时才走这里。 */
+function runnerOps(args) {
+  const ops = []
+  if (args.some((a) => RENDER_ARG.test(a))) ops.push('render-doc')
+  if (args.some((a) => BENCH_ARG.test(a) || BENCH_SCRIPT.test(a))) ops.push('run-bench')
+  if (args[0] === 'migrate' || args.some((a) => /^db:migrate$/.test(a))) ops.push('migrate')
+  return ops
+}
+
+/** 命令头 → op。空数组表示"认得这个头，但它不是这些动作"。 */
+function opsOfHead(head, rest) {
+  const sub = String(rest[0] || '').toLowerCase()
+  switch (head) {
+    case 'npm': case 'pnpm': case 'yarn': case 'bun': {
+      const { sub: name, rest: after } = packageSubcommand(rest)
+      if (name === 'publish' || name === 'pack') return ['npm-publish']
+      if (name === 'version') return ['release']
+      if (name === 'run' || name === 'exec' || name === 'dlx' || name === 'x') return runnerOps(after)
+      // `yarn bench` / `bun bench` 这类"直接按脚本名跑"的形态
+      if (name && BENCH_SCRIPT.test(name)) return ['run-bench']
+      return []
+    }
+    case 'npx': case 'pnpx': case 'bunx':
+      return runnerOps(rest)
+    case 'node': case 'tsx': case 'deno':
+      return rest.some((a) => BENCH_ARG.test(a)) ? ['run-bench'] : []
+    case 'git': {
+      const gsub = firstSubcommand(rest)
+      if (gsub === 'commit' || gsub === 'add') return ['git-commit']
+      if (gsub === 'push') return ['git-push']
+      if (gsub === 'tag') return ['release']
+      if (gsub === 'rm' || gsub === 'clean') return ['file-delete']
+      if (GIT_WRITE_SUBCOMMANDS.has(gsub)) return ['file-write']
+      return []
+    }
+    case 'rm': case 'rmdir': case 'unlink': case 'shred':
+      return ['file-delete']
+    case 'kubectl': case 'systemctl': case 'pm2': case 'vercel': case 'netlify':
+      return ['deploy']
+    case 'docker':
+      return sub === 'push' || sub === 'compose' || sub === 'stack' ? ['deploy'] : []
+    case 'migrate': case 'alembic':
+      return ['migrate']
+    case 'prisma':
+      return sub === 'migrate' || sub === 'db' ? ['migrate'] : []
+    case 'soffice': case 'libreoffice': case 'pandoc': case 'marp': case 'slidev':
+      return ['render-doc']
+    case 'bench': case 'benchmark':
+      return ['run-bench']
+    case 'curl': case 'wget':
+      return ['fetch-web']
+    // Windows / PowerShell 的写盘命令：与上面的 POSIX 名字同等对待。
+    case 'del': case 'erase': case 'rd':
+    case 'remove-item': case 'clear-content':
+      return ['file-delete']
+    case 'copy': case 'move': case 'ren': case 'rename': case 'xcopy': case 'robocopy':
+    case 'new-item': case 'set-content': case 'add-content': case 'out-file':
+    case 'copy-item': case 'move-item': case 'rename-item':
+      return ['file-write']
+    default:
+      return []
+  }
+}
+
+/** 未加引号的 `>` / `>>` 目标。引号里的 `>` 是正文（`echo "a > b"`），`<<` 不是写。 */
+function redirectTargets(segment) {
+  const out = []
+  let quote = null
+  for (let i = 0; i < segment.length; i++) {
+    const c = segment[i]
+    if (quote) {
+      if (c === '\\' && quote === '"') { i++; continue }
+      if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; continue }
+    if (c === '\\') { i++; continue }
+    if (c !== '>') continue
+    if (segment[i + 1] === '>') i++
+    let j = i + 1
+    while (j < segment.length && /\s/.test(segment[j])) j++
+    let tok = ''
+    while (j < segment.length && !/[\s;|&)]/.test(segment[j])) { tok += segment[j]; j++ }
+    i = Math.max(i, j - 1)
+    if (!tok) continue
+    // `nul` 是 Windows 的 /dev/null：`2>nul` 不是写文件。
+    if (tok.startsWith('&') || /^nul:?$/i.test(tok) || tok === '/dev/null' || tok.startsWith('/dev/stdout') || tok.startsWith('/dev/stderr')) continue
+    if (/^\d+$/.test(tok)) continue
+    out.push(tok)
+  }
+  return out
+}
+
+/** 这个段落在写盘吗？写盘命令头、`sed -i`、重定向都算。 */
+function isWriteSegment(head, rest, redirects) {
+  if (redirects.length) return true
+  if (WRITE_HEADS.has(head) || WINDOWS_WRITE_HEADS.has(head)) return true
+  if (head === 'sed' && rest.includes('-i')) return true
+  // `git -C repo checkout -- src/a.ts` / `git -c core.x=y rm …`：子命令在全局 flag 之后，
+  // 不能只看 rest[0]（否则 ops 判对了，targets 仍为空，when.writes 守卫静默失效）。
+  if (head === 'git' && GIT_WRITE_SUBCOMMANDS.has(firstSubcommand(rest))) return true
+  return false
+}
+
+/**
+ * git 的子命令要跳过全局 flag（`git -C repo commit` 不能被读成 `-C`）。
+ * @param {string[]} args
+ * @returns {string} 小写子命令；没有则空串
+ */
+function firstSubcommand(args) {
+  const takesValue = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path'])
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (arg.startsWith('-')) {
+      if (takesValue.has(arg)) i++
+      continue
+    }
+    return arg.toLowerCase()
+  }
+  return ''
+}
+
+/** 合并去重（保持顺序）。 */
+function pushUnique(list, value) {
+  if (!list.includes(value)) list.push(value)
+}
+
+/** WSL 路径或 Windows 壳的签名：只用于 hosts，不参与动作判定。 */
+const WSL_HINT_RE = /\/mnt\/[a-z]\//i
+
+function safeJson(text) {
+  if (typeof text !== 'string' || !text.trim()) return null
+  try {
+    const v = JSON.parse(text)
+    return v && typeof v === 'object' ? v : null
+  } catch {
+    return null
+  }
+}
+
+function argsFields(argsText) {
+  const obj = safeJson(argsText)
+  if (!obj) return {}
+  const pick = (...keys) => keys
+    .map((k) => obj[k])
+    .filter((v) => typeof v === 'string' && v)
+    .join(' ')
+  return {
+    command: pick('command', 'cmd', 'script', 'code'),
+    path: pick('file_path', 'path', 'file', 'target', 'notebook_path'),
+  }
+}
+
+/** 内部的递归实现：`bash -c` 会再解析一层。 */
+function classifyCommand(command, depth) {
+  const raw = String(command || '')
+  const ops = []
+  const targets = []
+  for (const segment of unquotedSegments(stripHeredocBodies(raw))) {
+    const { head, rest } = commandHead(tokenizeWords(segment))
+    // 每段单独收 op：写段是否补 file-write 只看本段是否为删除（`rm a && touch b` 不能吞 touch）。
+    const segmentOps = []
+    if (SHELLS.has(head) && depth < 2) {
+      // POSIX 的 `-c` / `-lc` / `-ec`；PowerShell 的 `-Command`；cmd 的 `/c`。
+      const ci = rest.findIndex((a) => /^-[A-Za-z]{0,4}c$/.test(a) || /^-command$/i.test(a) || /^\/c$/i.test(a))
+      if (ci >= 0 && rest[ci + 1]) {
+        const inner = classifyCommand(rest.slice(ci + 1).join(' '), depth + 1)
+        for (const op of inner.ops) if (op !== 'shell-run') pushUnique(segmentOps, op)
+        for (const t of inner.targets) pushUnique(targets, t)
+      }
+    } else {
+      for (const op of opsOfHead(head, rest)) pushUnique(segmentOps, op)
+    }
+    const redirects = redirectTargets(segment)
+    if (isWriteSegment(head, rest, redirects)) {
+      for (const t of extractPathTokens(segment)) pushUnique(targets, t)
+      // 写段补 file-write：之前这些命令只剩 shell-run，`when.ops:['file-write']` 永不命中。
+      // 删除段保持 file-delete，不升级成写。
+      if (!segmentOps.includes('file-delete')) pushUnique(segmentOps, 'file-write')
+    }
+    for (const op of segmentOps) pushUnique(ops, op)
+  }
+  if (!ops.length) ops.push('shell-run')
+  // 主机面：`/mnt/c/…` 是 WSL 的路径签名；`pwsh.exe` / `powershell.exe` / `cmd.exe` 是**原生
+  // Windows** 的壳签名——旧实现把它也标成 `wsl`，于是 `guard.hosts: ['wsl']` 的条目在原生
+  // Windows 上会被放行（它本该只在 WSL 里生效）。壳名后面必须跟一个选项（`-Command` / `/c`），
+  // 否则 `grep cmd README.md` 这种"正文里提到 cmd"也会被当成壳签名——`hosts` 只用于收窄，误判的
+  // 代价是让本该被挡住的条目放行。
+  const nativeShell = /\b(powershell|pwsh|cmd)(\.exe)?\b\s*(?:-\S|\/c\b)/i
+  const hosts = WSL_HINT_RE.test(raw) ? ['wsl'] : nativeShell.test(raw) ? ['windows'] : []
+  return { ops, targets, hosts }
+}
+
+export function classifyShellCommand(command) {
+  return classifyCommand(command, 0)
+}
+
+/**
+ * 一次工具调用 → { ops, targets, hosts }。
+ * @param {string} name 工具名
+ * @param {string} argsText 工具参数（JSON 字符串或裸文本）
+ */
+export function classifyToolCall(name, argsText) {
+  const tool = String(name || '').toLowerCase()
+  const { command, path } = argsFields(argsText)
+  if (SHELL_TOOLS.has(tool)) return classifyShellCommand(command || String(argsText || ''))
+  // 宿主的 `str_replace_editor` 用 path + command（view/create/str_replace/insert），
+  // 不是 file_path；view 是读，其余三个才是写。漏掉它时文件编辑既不产 file-write，也进不了
+  // TaskBridge 的热点文件。
+  if (tool === 'str_replace_editor') {
+    const obj = safeJson(argsText) || {}
+    const filePath = typeof obj.path === 'string' ? obj.path : ''
+    const cmd = typeof obj.command === 'string' ? obj.command.toLowerCase() : ''
+    if (!filePath || !['create', 'str_replace', 'insert'].includes(cmd)) {
+      return { ops: [], targets: [], hosts: [] }
+    }
+    const targets = [filePath, ...extractPathTokens(filePath)]
+    return { ops: ['file-write'], targets: [...new Set(targets)], hosts: [] }
+  }
+  // 0.2.2 的 `apply_patch` 没有 path/file_path：目标文件只写在补丁正文的
+  // `*** Add/Update/Delete File:` 与 `*** Move to:` 行里。漏掉它时跨文件补丁
+  // 只留下一个没有目标的 file-write，审计与热点都指不到具体文件。
+  // 同名工具若走 `path`/`file_path`（非 dsh 形状），退回通用路径，别把旧行为弄丢。
+  if (tool === 'apply_patch') {
+    const obj = safeJson(argsText) || {}
+    const files = patchFilePaths(obj.input)
+    const fromArgs = files.length > 0
+      ? files
+      : [obj.file_path, obj.path].filter((v) => typeof v === 'string' && v)
+    const targets = fromArgs.flatMap((p) => [p, ...extractPathTokens(p)])
+    const hosts = targets.some((t) => WSL_HINT_RE.test(t)) ? ['wsl'] : []
+    return { ops: ['file-write'], targets: [...new Set(targets)], hosts }
+  }
+  if (READ_IMAGE_TOOLS.has(tool)) return { ops: ['read-image'], targets: [], hosts: [] }
+  if (INDEX_TOOLS.has(tool)) return { ops: ['index-doc'], targets: [], hosts: [] }
+  if (FETCH_TOOLS.has(tool)) return { ops: ['fetch-web'], targets: [], hosts: [] }
+  if (QUERY_TOOLS.has(tool)) return { ops: ['query-memory'], targets: [], hosts: [] }
+  if (WRITE_TOOLS.has(tool)) {
+    const targets = path ? [path, ...extractPathTokens(path)] : []
+    const hosts = targets.some((t) => WSL_HINT_RE.test(t)) ? ['wsl'] : []
+    return { ops: ['file-write'], targets: [...new Set(targets)], hosts }
+  }
+  return { ops: [], targets: [], hosts: [] }
+}
+
+/**
+ * 把一组已观察到的工具调用合成这一个线程的动态面。
+ * @param {{name?: string, arguments?: string}[]} calls
+ */
+export function activityFromCalls(calls) {
+  const ops = new Set()
+  const targets = new Set()
+  const hosts = new Set()
+  for (const call of calls || []) {
+    const r = classifyToolCall(call?.name, call?.arguments)
+    for (const op of r.ops) ops.add(op)
+    for (const t of r.targets) targets.add(t)
+    for (const h of r.hosts) hosts.add(h)
+  }
+  return { ops: [...ops], targets: [...targets], hosts: [...hosts] }
+}
+
+/**
+ * 没拿到结构化调用时的兜底：直接对一段文本跑 shell 规则。
+ * 用于 `actionText` 形式的就绪上下文（测试与老宿主），以及人类消息里的动作词。
+ */
+export function activityFromText(text) {
+  const s = String(text || '')
+  if (!s) return { ops: [], targets: [], hosts: [] }
+  const lines = s.split('\n').filter(Boolean)
+  const ops = new Set()
+  const targets = new Set()
+  const hosts = new Set()
+  for (const line of lines) {
+    // 先按"工具调用"解析（`edit {"file_path":"..."}`）：结构化参数比正则猜命令可靠得多。
+    const call = /^\s*([A-Za-z_][\w-]*)\s+(\{[\s\S]*\})\s*$/.exec(line)
+    const r = call ? classifyToolCall(call[1], call[2]) : classifyShellCommand(line)
+    // 纯文本行里没有 shell 动作时不要退化成 shell-run（噪音源）。但**只丢这个 op**：
+    // 行里的写目标/主机是具体事实，一起丢会让 shell-run-only 的写意图到不了 when.writes。
+    const noiseOp = r.ops.length === 1 && r.ops[0] === 'shell-run' && !/\b\w+\s+-/.test(line)
+    if (!noiseOp) for (const op of r.ops) ops.add(op)
+    for (const t of r.targets) targets.add(t)
+    for (const h of r.hosts) hosts.add(h)
+  }
+  return { ops: [...ops], targets: [...targets], hosts: [...hosts] }
+}
+
+/** 旧 action id（含死值）→ op；无法映射返回 null。 */
+export function opForLegacyAction(action) {
+  const a = String(action || '')
+  if (!a) return null
+  if (OP_IDS.includes(a)) return a
+  if (a in LEGACY_ACTION_ALIAS) return LEGACY_ACTION_ALIAS[a]
+  return null
+}

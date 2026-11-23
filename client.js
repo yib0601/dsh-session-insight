@@ -6,10 +6,10 @@
  *
  * HMR note: the Host watches this entry file only. After editing
  * `client.context.js`, touch this file too so the owner revision (and thus the
- * chunk URL) changes and the browser loads the fresh chunk. (rev 39 — the
- * "context items" card was restructured into four visual levels: window
- * summary band, tab bar with item counts, per-bucket scale strip, and labelled
- * item rows with a one-line gist, a magnitude bar and a share column.)
+ * chunk URL) changes and the browser loads the fresh chunk. (rev 41 — the
+ * sidebar-foot quota answers for the main-view conversation: what a running
+ * turn is billing wins over the composer's pick, and the source change is
+ * settled for 1.2s so a hydration halfway state never paints a figure.)
  * Touch this file after every `client.context.js` edit.
  *
  * Sections (a static dsh.client bundle must be one file):
@@ -1195,6 +1195,19 @@ window.__ModuleLoader__.load({
           ctx.effect(() => context.apply(ctx, PRICING_API), 'dsh-turn-cost: context surfaces');
         }).catch((error) => {
           console.error('[dsh-turn-cost] context chunk failed to load:', error);
+        });
+
+        // 项目记忆 UI（任务面板 / 记忆列表 / 设置卡）同样是懒加载的兄弟 chunk。
+        // 它是从原 @yolk_vat-y/dsh-project-memory 合并进来的独立半边，源码在
+        // client-memory-src/，与成本 UI 零交集；装载失败只记日志，绝不连累成本显示。
+        //
+        // 注意：chunk 是**按需**加载的 —— 不在这里 require.async，宿主 boot manifest
+        // 里根本不会出现 client.memory.js（实测清单只含 client.js / client.context.js），
+        // 表现是"Host 工具都在、界面上却没有任务面板"，且没有任何报错。
+        void require.async('./client.memory.js').then((memory) => {
+          ctx.effect(() => memory.apply(ctx), 'dsh-turn-cost: project memory surfaces');
+        }).catch((error) => {
+          console.error('[dsh-turn-cost] memory chunk failed to load:', error);
         });
       },
 

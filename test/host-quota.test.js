@@ -9,8 +9,9 @@
 import assert from 'node:assert/strict';
 import {
   BALANCE_ENDPOINT, CACHE_MS, QUOTA_PATH, QUOTA_SOURCES, TIMEOUT_MS, KEY_REFS,
-  USAGE_ENDPOINT, USAGE_WINDOWS, DEFAULT_SOURCE,
-  normalizeBalance, normalizeOpenCodeUsage, createQuotaReader, mountQuotaRoute,
+  USAGE_ENDPOINT, USAGE_WINDOWS, DEFAULT_SOURCE, WORKBUDDY_QUOTA_ENDPOINT,
+  normalizeBalance, normalizeOpenCodeUsage, normalizeWorkbuddyQuota,
+  createQuotaReader, mountQuotaRoute,
 } from '../host/quota.js';
 
 // ── constants ───────────────────────────────────────────────────────────────
@@ -19,11 +20,13 @@ assert.equal(USAGE_ENDPOINT, 'https://opencode.ai/zen/go/v1/usage');
 assert.equal(QUOTA_PATH, '/dsh-turn-cost/quota');
 assert.equal(KEY_REFS.deepseek, 'DEEPSEEK_API_KEY');
 assert.equal(KEY_REFS['opencode-go'], 'OPENCODE_GO_API_KEY');
+assert.equal(KEY_REFS.workbuddy, 'WORKBUDDY_SHIM_TOKEN');
+assert.equal(WORKBUDDY_QUOTA_ENDPOINT, 'http://127.0.0.1:8898/quota');
 assert.equal(DEFAULT_SOURCE, 'deepseek');
 assert.deepEqual([...USAGE_WINDOWS], ['rolling', 'weekly', 'monthly']);
 assert.equal(CACHE_MS, 5 * 60 * 1000);
 assert.equal(TIMEOUT_MS, 12_000);
-assert.deepEqual(Object.keys(QUOTA_SOURCES).sort(), ['deepseek', 'opencode-go']);
+assert.deepEqual(Object.keys(QUOTA_SOURCES).sort(), ['deepseek', 'opencode-go', 'workbuddy']);
 
 // ── normalizeBalance (DeepSeek body) ────────────────────────────────────────
 const official = {
@@ -46,6 +49,43 @@ assert.equal(normalizeBalance({ balance_infos: [{ currency: 'CNY', total_balance
   'an unparseable amount is dropped, not zeroed');
 assert.equal(normalizeBalance({ balance_infos: 'nope' }), null, 'a bad shape fails outright');
 assert.equal(normalizeBalance(null), null);
+
+// ── normalizeWorkbuddyQuota (shim body) ─────────────────────────────────────
+const shimBody = {
+  supported: true,
+  kind: 'windows',
+  windows: [
+    { key: 'plan_base', label: '套餐积分', percent: 0, status: 'ok', resetsAt: '2026-12-22T17:46:03Z', total: 4000, remain: 4000, used: 0 },
+    { key: 'benefit', label: '奖励积分', percent: 93.9, status: 'ok', resetsAt: '2026-12-15T20:38:18Z', total: 3700, remain: 226.16, used: 3473.84 },
+  ],
+  plan: { name: '高级版', code: 'TCACA_code_026', paid: true, expiresAt: '2026-12-22T17:46:03Z' },
+  totals: { total: 12700, remain: 9226.16, used: 3473.84, unit: 'credits' },
+};
+const wb = normalizeWorkbuddyQuota(shimBody);
+assert.equal(wb.kind, 'windows');
+assert.equal(wb.windows.length, 2);
+assert.equal(wb.windows[1].label, '奖励积分', 'the vendor bucket name survives');
+assert.equal(wb.windows[1].percent, 93.9);
+assert.equal(wb.windows[1].total, 3700);
+assert.equal(wb.plan.name, '高级版', 'the plan is what the countdown comes from');
+assert.equal(wb.plan.expiresAt, '2026-12-22T17:46:03Z');
+assert.equal(wb.totals.remain, 9226.16);
+assert.equal(normalizeWorkbuddyQuota({ supported: false, reason: 'no token' }), null,
+  'a shim that reports no allowance is a null, never a zero balance');
+assert.equal(normalizeWorkbuddyQuota({ supported: true, windows: [] }), null);
+assert.equal(normalizeWorkbuddyQuota({ supported: true, windows: [{ key: 'x', percent: 'nope' }] }), null);
+assert.equal(normalizeWorkbuddyQuota(null), null);
+const labelledNone = normalizeWorkbuddyQuota({ supported: true, windows: [{ key: 'plan_base', percent: 10 }] });
+assert.deepEqual(labelledNone.plan, null, 'a shim without a plan section renders no plan line');
+assert.equal(labelledNone.windows[0].label, undefined, 'an unlabelled bucket keeps its key only');
+const snapped = normalizeWorkbuddyQuota({
+  supported: true,
+  windows: [{ key: 'a', percent: 150, label: '' }],
+  totals: { total: -1, remain: 'x' },
+});
+assert.equal(snapped.windows[0].percent, 100, 'percent clamps');
+assert.equal(snapped.windows[0].label, undefined, 'an empty label is not a label');
+assert.equal(snapped.totals, null, 'an unusable totals block is dropped');
 
 // ── normalizeOpenCodeUsage (OpenCode Go body) ───────────────────────────────
 const usageBody = {

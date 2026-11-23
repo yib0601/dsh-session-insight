@@ -124,3 +124,37 @@ assert.match(src, /@media \(max-width:820px\)\{\.tc-grid>\*\{flex-basis:100%/,
   'phones drop to one card per row by basis, not by a grid span override');
 
 console.log('ok — the Context tab aggregates the Agent family card; no fleet tab');
+
+// ── gateway model catalog (cache-first surfaces) ────────────────────────────
+// The list must be a read that paints and then revalidates, never a poll that
+// blocks. These are source contracts: the chunk is loaded by the DSH web app,
+// not by Node, so the file is asserted rather than executed.
+assert.ok(src.includes("const MODELS_URL = '/dsh-turn-cost/models';"), 'catalog route constant');
+assert.equal(src.split("function createModelsStore(").length - 1, 1, 'one catalog store');
+assert.equal(src.split('modelsStore.attach(').length - 1, 1, 'one reader attached to the store');
+assert.ok(/modelsStore\.attach\(\(force\) => readModelsRoute\(force, \(url, init\) => fetch\(url, init\)\)\)/
+  .test(src), 'the store reads the Host route through fetch');
+assert.ok(src.includes('?force=1'), 'the explicit check asks for a forced cycle');
+assert.ok(src.includes('MODELS_CACHE_KEY') && src.includes('localStorage.setItem'),
+  'the last paint is persisted for the next page load');
+assert.ok(src.includes('paintedFromCache') || src.includes('phase: \'cache\''),
+  'the snapshot distinguishes a cached paint from a live one');
+assert.ok(src.includes("snapshot.models.length > 0 ? 'stale' : 'error'"),
+  'a failed read keeps the painted list, and only an empty one reports an error');
+assert.ok(src.includes('MODELS_FOLLOW_TRIES'), 'follow-ups are bounded');
+
+// The header chip is the lazy trigger: it mounts whenever settings opens, which is
+// what makes the refresh on-demand instead of timed.
+assert.equal(src.split("name: 'settings.action', id: 'tc-models-chip'").length - 1, 1,
+  'the settings header carries the catalog chip');
+assert.equal(src.split("id: 'tc-models', order: 31, label: () => t('modelsNav')").length - 1, 2,
+  'the catalog page and its nav icon share one id');
+
+// Locale hygiene: every catalog key exists in both dictionaries.
+for (const key of ['modelsNav', 'modelsTitle', 'modelsIntro', 'modelsCount', 'modelsSyncedJustNow',
+  'modelsSyncedAgo', 'modelsNeverSynced', 'modelsAgeMinutes', 'modelsAgeHours', 'modelsAgeDays',
+  'modelsRefreshing', 'modelsFailed', 'modelsSyncNow', 'modelsSyncBusy', 'modelsAdded', 'modelsEmpty',
+  'modelsNoRoute', 'modelsCapImage', 'modelsReasoning', 'modelsWindow', 'modelsOutput',
+  'modelsChip', 'modelsChipBusy', 'modelsChipFailed', 'modelsChipTitle', 'modelsHint']) {
+  assert.equal(src.split(`${key}:`).length - 1, 2, `${key} must exist in both dictionaries`);
+}

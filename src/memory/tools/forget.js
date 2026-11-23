@@ -1,0 +1,69 @@
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import { TEXT_OUTPUT, persistenceNote, rootParam } from './output.js'
+import { openProjectContext } from './context.js'
+import { DELETED_KEEP, GlobalStore, defaultGlobalFile, removeMemory } from '../insight-store.js'
+import { forgetVectorRows } from '../vector-index.js'
+
+/** 回报用的一行：`ins_xxx《标题》(project)`。标题已在 removeMemory 里截断。 */
+function line(e) {
+  return `${e.id}《${e.title}》(${e.home})`
+}
+
+/**
+ * 删除留痕的回报后缀：把留痕文件的**真实路径**直接写进结果。
+ *
+ * 为什么不只写在工具描述里、而是每次删除都回报：描述是静态文本，说不清项目目录在哪
+ * （`memoryDir` 可配、项目根随会话变）；而模型要"自己去找"就必须先知道路径。这条不影响
+ * 任何判据，只是把地址递到手里。
+ * @param {{keptIn?: string[]}} res - removeMemory 的返回
+ * @returns {string} 直接拼在删除回报后面的文本（无留痕时为空串）
+ */
+function keptHint(res) {
+  const files = Array.isArray(res?.keptIn) ? res.keptIn : []
+  if (!files.length) return ''
+  return `\nLast ${DELETED_KEEP} deleted entries kept for manual recovery (read them to restore, then save again):\n`
+    + files.map((f) => `- ${f}`).join('\n')
+}
+
+export function forgetTool(config) {
+  return defineTool({
+    name: 'forget',
+    description:
+      'Delete memories by id or keywords (task/project/global). Real deletion, no undo; '
+      + 'the last 5 deleted entries stay in deleted.json. Above the match cap nothing is deleted, '
+      + 'only the candidates are listed.',
+    parameters: {
+      id_or_query: {
+        type: 'string',
+        required: true,
+        description: 'exact id or keywords; id takes priority',
+      },
+      root: rootParam(),
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const { memoryDir, store, cfg } = openProjectContext(exec, args, config)
+      const globalStore = new GlobalStore(cfg.globalFile || defaultGlobalFile()).load()
+      let res
+      store.commit((s) => {
+        res = removeMemory({ store: s, globalStore, idOrQuery: args.id_or_query, maxMatches: cfg.maxForgetMatches })
+        return res
+      })
+      globalStore.commit() // global 侧若被删过才落盘
+      if (res && res.removed.length) {
+        // 向量缓存也是"这条记忆"的一部分：`vectors.json` 里那行是标题的 256 维均值池化，
+        // 留着就不算真删。这里不加载模型（只读文件 + 原子重写），失败也只是缓存残留。
+        try { forgetVectorRows({ dir: memoryDir, ids: res.removed.map((e) => e.id) }) } catch { /* 缓存删除失败不影响删除承诺 */ }
+      }
+      if (res && res.tooMany) {
+        const head = res.matches.slice(0, 10).map(line)
+        const more = res.matches.length > head.length ? ` …（共 ${res.matches.length} 条）` : ''
+        return `Matched ${res.matches.length} memories (cap ${cfg.maxForgetMatches}), removed none — narrow the query or delete by id:\n` + head.map((l) => `- ${l}`).join('\n') + more
+      }
+      if (!res || !res.ok || !res.removed.length) return 'No matching memory found.'
+      return `Removed ${res.removed.length} memory entries:\n`
+        + res.removed.map((e) => `- ${line(e)}`).join('\n') + persistenceNote(store, globalStore)
+        + keptHint(res)
+    },
+  })
+}

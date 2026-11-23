@@ -44,16 +44,63 @@ modules:
     not_responsible_for: ["价格", "UI", "网络请求", "写会话日志", "保留工具输出正文（surface 只留 140 字预览与估价）", "界面文案（label 只放工具名与 kind id）"]
   - name: quota-host
     kind: internal
-    responsibility: "订阅额度两条官方源：DeepSeek 余额（balance_infos → {currency,total,toppedUp,granted}）与 OpenCode Go 用量窗口（usage.rolling/weekly/monthly → {key,percent,status,resetsAt}，clamp 0–100）；按源缓存 5 分钟（失败不缓存，成功值在失败后继续服务非强制读）、12s 超时，并在 Host web server 上注册 GET /dsh-turn-cost/quota?source=&force=1；供应商密钥按次解析，只留在 Host。窗口只透传 percent 与 resetsAt：官方应答没有到期/续费字段，订阅周期结束时刻由 Client 取最长窗口（月）的 resetsAt 推出"
+    responsibility: "订阅额度三条源：DeepSeek 余额（balance_infos → {currency,total,toppedUp,granted}）、OpenCode Go 用量窗口（usage.rolling/weekly/monthly → {key,percent,status,resetsAt}）与 WorkBuddy 积分包（读 shim 的 /quota → {windows:[{key,label,percent,total,remain,resetsAt}],plan,totals}，窗口标签由上游命名）；percent 一律 clamp 0–100；按源缓存 5 分钟（失败不缓存，成功值在失败后继续服务非强制读）、12s 超时，并在 Host web server 上注册 GET /dsh-turn-cost/quota?source=&force=1；密钥按次解析，只留在 Host（WorkBuddy 那条是 shim 的 bearer，不是供应商密钥），端点由 DSH_TURN_COST_WORKBUDDY_QUOTA_URL 配置。是否声明订阅到期由源决定：OpenCode 只有窗口 resetsAt，周期结束由 Client 取最长窗口推出；WorkBuddy 给 plan.expiresAt，Client 直接用，不再推断"
     owns: ["host/quota.js"]
     exposes:
-      - "GET /dsh-turn-cost/quota?source=deepseek|opencode-go[&force=1] -> {status: ready|failed|unconfigured, source, kind: balance|windows, available?, wallets?[], windows?[], at, reason?}"
-      - "normalizeBalance(payload) / normalizeOpenCodeUsage(payload) (pure)"
+      - "GET /dsh-turn-cost/quota?source=deepseek|opencode-go|workbuddy[&force=1] -> {status: ready|failed|unconfigured, source, kind: balance|windows, available?, wallets?[], windows?[{key,label?,percent,status,resetsAt,total?,remain?}], plan?{name,code,paid,expiresAt}, totals?{total,remain,used,unit}, at, reason?}"
+      - "normalizeBalance(payload) / normalizeOpenCodeUsage(payload) / normalizeWorkbuddyQuota(payload) (pure)"
+      - "WORKBUDDY_QUOTA_ENDPOINT / KEY_REFS.workbuddy (constants; endpoint overridable by DSH_TURN_COST_WORKBUDDY_QUOTA_URL)"
       - "QUOTA_SOURCES / KEY_REFS / USAGE_WINDOWS / DEFAULT_SOURCE (constants)"
       - "createQuotaReader({cacheMs,timeoutMs,fetch,now}) (pure I/O boundary, cache per source)"
       - "mountQuotaRoute(ctx, reader, readKey) -> route disposer"
-    depends_on: ["ctx.webServer", "ctx.credentials (DEEPSEEK_API_KEY / OPENCODE_GO_API_KEY)"]
-    not_responsible_for: ["计价", "UI 渲染", "充值/告警", "把密钥或原始 payload 交给页面", "落盘缓存", "判断当前会话在用哪个源（Client 依 provider id 决定，不看模型名；provider 已知但无额度则归 NO_SOURCE 并一次都不读，完全认不出则留白）", "把 resetsAt 换算成倒计时文案（Client 做，Host 只透传时刻）"]
+    depends_on: ["ctx.webServer", "ctx.credentials (DEEPSEEK_API_KEY / OPENCODE_GO_API_KEY / WORKBUDDY_SHIM_TOKEN)", "网关 shim 的 GET /quota（WorkBuddy 源；本机经 SSH 转发或同机部署）"]
+    not_responsible_for: ["计价", "UI 渲染", "充值/告警", "把密钥或原始 payload 交给页面", "落盘缓存", "判断当前会话在用哪个源（Client 依 provider id 决定，不看模型名；provider 已知但无额度则归 NO_SOURCE 并一次都不读，完全认不出则留白）", "把 resetsAt 换算成倒计时文案（Client 做，Host 只透传时刻）", "读 WorkBuddy 供应商计费接口本身（那是 shim 的事，Host 只读 shim 归一后的 envelope）", "把逐模型的免费额度桶混进订阅额度（shim 的 models 字段丢弃，两者语义不同）"]
+  - name: model-sync-host
+    kind: internal
+    responsibility: "让「目录外 provider 路由（自建网关，如 ai-router）的模型清单」跟随网关 /v1/models，且**查看即读、读即核对**：读路由时立即用 profile 里已存的清单应答（那份清单就是选择器本身，因此读永远不等网关），同时按 staleMs（默认 5 分钟）判断是否在后台静默核对一次；核对只在有差异时经 settings 服务整体写回（校验条目 + 落盘 + 重建 provider 一个事务），一致就什么都不写。条目生成覆盖显示名三段式/两段式、输入模态、上下文与输出上限、思考档位与两个 compat 开关，其余字段原样保留。启动延迟 + 定时轮询只作兜底。拉取失败 / 空清单 / 显示名越界（含 router 历史标记）三种情况一个字都不写，宁可保持旧清单"
+    owns: ["host/model-sync/naming.js", "host/model-sync/catalog.js", "host/model-sync/listing.js", "host/model-sync/sync.js", "host/model-sync/mount.js"]
+    exposes:
+      - "GET /dsh-turn-cost/models[?force=1] -> {enabled, route, routes[], settingsNs, baseURL, models[], count, syncedAt, stale, refreshing, last: {at, ok, reason, detail?, count, added, removed} | null, intervalMs, staleMs}（**缓存优先**：普通读立即用已存清单应答、不 await 网关，stale 时在后台核对；force=1 才同步等一轮）"
+      - "displayName(id,row) / nameOk(name) / fmtWindow(tokens) (pure)"
+      - "buildEntry(id,row,existing) / buildCatalog(rows,stored) / modalitiesOf / reasoningLevelsOf / isGeneratedReasoning (pure)"
+      - "listingUrl(baseURL,api) / parseListing(body) / fillMissingPlatforms(rows) / fetchModels(options)"
+      - "createModelSync({readTarget,readStored,writeModels,fetchImpl,now,timeoutMs,logger}) -> {run,running,last}"
+      - "resolveSyncOptions(env) / mountModelSync(scoped,options) -> {sync,status,stop}"
+    depends_on: ["ctx.settings", "ctx.credentials (route 的 apiKeyEnv)", "ctx.webServer (可选，仅状态/目录路由)", "网关 GET /v1/models"]
+    not_responsible_for: ["改 DSH 安装树（不打任何补丁、不改 node_modules）", "直接改写 profile 的 cordis.patch.yml（只经 settings.update，让 DSH 校验+落盘+重建 provider 一个事务完成）", "猜能力（行上没声明的模态/档位不写入，保留已有声明）", "替用户手改的 reasoningEfforts/compat 收编（发现非本模块生成的形状就整块不动）", "计价", "UI 渲染（页面/chip 在 context-client）", "把密钥或网关原始 payload 交给页面", "在普通读上阻塞等待网关（只有 force=1 才等）", "决定轮询之外的重试（失败等下一次查看或下个周期）"]
+  - name: memory-host
+    kind: internal
+    responsibility: "项目记忆引擎（原 @yolk_vat-y/dsh-project-memory 的 Host 半边，现为库而非独立插件行）：索引语料（文档 + 代码符号，带 path:line 引用）、insight 实体（lesson / decision / procedure / experience，分层去重-强化-提升-容量-归档）、跨会话任务（task 实体 + 宿主 todo 同步）；召回期向每步追加记忆消息（entry 常驻块 + relevance 门控 + 单会话预算），写入侧近重复检测；12 个工具与唯一命令 /tasks；把同一份能力暴露成宿主 skill 与原生服务 projectMemory，供别的插件消费。所有可选服务缺失都降级（失败点名打日志，不静默）"
+    owns:
+      - "index.js#Config (memory schema) / index.js#apply (memory 半边)"
+      - "src/memory/index.js (toolDefinitions / registerTools / apply)"
+      - "src/memory/{chunker,doc-index,doc-pipeline,index-pipeline,index-failures,symbols,enhancer,lazy,watch,recall,auto-inject,inject-visible,insight-store,store,similarity,vector-index,reflection-pipeline,project-profile,project-memory-service,readiness,llm,llm-route,link,ops,global-seed,audit,skill}.js"
+      - "src/memory/{tools,commands,util,setup}/"
+      - "skills/project-memory/SKILL.md"
+      - "skills/project-memory/scripts/pm-digest.mjs"
+    exposes:
+      - "tools: list_tasks / select_task / archive_task / show_task_panel / index_doc / index_repo / query_memory / remember / forget / save_lesson / watch_repo / pm_stats（逐个注册，单个重名或 schema 非法只丢那一个）"
+      - "宿主命令 /tasks（唯一：裸 /tasks 给清单快照，子动词 switch|archive|unbind|rename|todos 与 insight list|confirm|promote|… 由面板按钮经 remote.commands.execute 驱动；不声明 input，裸回车立刻执行）"
+      - "宿主 skill project-memory（setupSkill 注册；无 skills 服务则静默跳过）+ scripts/pm-digest.mjs 体检脚本"
+      - "原生服务 projectMemory（installProjectMemoryService：别的插件/宿主可经 ctx.get('projectMemory') 消费召回与写入；老宿主无 ctx.provide 时安全跳过）"
+      - "agent/pre-step 注入（installAutoInject：默认开，无项目 root 可解析时零副作用，异常交回默认决策）"
+      - "Config（bundle 行唯一配置面：memoryDir / chunkChars / maxFileSizeMb / lazyIndexing / watch / autoIndexOnFirstUse / watchInterval / roots.* / insight.* / reflection.* / autoContext.* / tasklist.*）；volatile 字段只有 autoIndexOnFirstUse / watchInterval / llmQueryExpansion"
+      - "磁盘契约：<root>/.dsh-project-memory/（索引、insight、任务、审计与影子日志），单项目日志硬上限 2×shadowMaxBytes + 2×auditMaxBytes"
+    depends_on: ["ctx.tools", "ctx.commands (可选)", "ctx.skills (可选)", "ctx.llm (可选，召回期查询扩展/反思)", "ctx.session (session/event · session/disposed)", "ctx.provide (可选)", ".dsh-project-memory/ 与项目工作目录"]
+    not_responsible_for: ["计价 / token 统计 / 上下文投影（成本半边的事）", "UI 渲染（面板与设置卡在 memory-client）", "索引期调用 LLM（索引全本地；LLM 只出现在召回期查询扩展与反思，且默认关）", "扫描家目录 / 文件系统根 / 系统目录（assertSafeRoot 默认拒绝，roots.allow 才放行）", "在 DSH 安装树里打补丁或改写会话日志", "把索引正文塞进 prompt（注入只带摘要与引用）"]
+  - name: memory-client
+    kind: internal
+    responsibility: "项目记忆的界面半边（懒加载兄弟 chunk）：任务面板（shell.overlay 浮层，任务页 / 记忆页 / 新建条目表单 / 分页 / 拖拽），会话内 /tasks 命令节点（接管内置大段文本卡片，避免 JSON 载荷刷屏），show_task_panel 的工具视图（结果一渲染就开面板 —— 面板状态只在浏览器侧），`/` 菜单「工作流」斜杠源（纯客户端开面板页，不发宿主命令），以及插件详情页的可视化设置卡（三个 volatile 字段，经 configForms 宿主校验 + revision fence 原地生效）。全部软依赖：slots / configForms / locale / inputTriggers 缺任一项只降级成一条点名告警，绝不静默消失"
+    owns: ["client.memory.js", "client-memory-src/"]
+    exposes:
+      - "shell.overlay (list, id=dsh-project-memory-task-panel, order=100)"
+      - "conversation.chat.commandview (keyed, key=tasks)"
+      - "tool.call.toolview (keyed, key=show_task_panel)"
+      - "inputTriggers source project-memory (line /，order 1，组标题由行上的 section 取代)"
+      - "plugins.bundle.config (keyed, key=@local/dsh-turn-cost, locale dsh-project-memory.settings)"
+      - "locale namespace dsh-project-memory.settings (zh/en)"
+    depends_on: ["ctx.slots (shell.overlay / conversation.chat.commandview / tool.call.toolview)", "ctx.configForms + ctx.locale (设置卡)", "ctx.inject(inputTriggers, sessions)", "react (宿主模块表)", "memory-host 的工具与 remote.commands（只在动作上，非装配依赖）", "client.js 的 require.async 装载"]
+    not_responsible_for: ["索引 / 召回 / 注入策略（memory-host）", "直接读写 .dsh-project-memory/（面板只走工具与 remote）", "成本 / 额度 / 上下文界面（client.js 与 client.context.js）", "早退式降级（缺服务也必须挂载并说明原因）"]
   - name: context-items
     kind: internal
     responsibility: "上下文明细的估价口径：DSH 固定密度启发式（4 字符 ≈ 1 token、每块 4 token framing、每条消息 4 token 角色开销）+ 三种明细切分（系统提示词按标题/规则线/【…】标签分区、工具定义逐条按 JSON 体积估价、压缩区间按 shadow price 回撤）"
@@ -67,7 +114,8 @@ modules:
     owns: ["client.context.js"]
     exposes:
       - "conversation.view (list, id=tc-context, order=20)"
-      - "settings.section (list, id=turn-cost, order=30)"
+      - "settings.section (list, id=turn-cost, order=30；id=tc-models, order=31 模型目录)"
+      - "settings.action (list, id=tc-models-chip, order=20 — 设置面板打开即挂载，是模型目录的惰性触发器)"
       - "settings.section.icon (list, id=turn-cost, order=30)"
       - "conversation.input.overlay (list, id=tc-context-modal, order=20)"
       - "sidebar.footer.action (list, id=tc-overview, order=20)"
@@ -77,7 +125,7 @@ modules:
     depends_on: ["pricing face", "react", "react-dom", "ctx.slots", "ctx.locale", "ctx.inject(inputTriggers/sidebarRightTabs)", "quota-host route (HTTP only)"]
     not_responsible_for: ["价格计算", "会话事件折叠"]
 
-dependency_direction: "composition -> presentation -> pricing; context-client -> pricing face; context-client -> projections (read-only); context-client -> quota-host over one same-origin HTTP route (no import)"
+dependency_direction: "composition -> presentation -> pricing; context-client -> pricing face; context-client -> projections (read-only); context-client -> quota-host / model-sync-host over same-origin HTTP routes (no import); model-sync-host -> naming -> catalog -> listing (pure chain, one direction); index.js 只做注入与挂载，不碰 model-sync 内部; 记忆半边与成本半边在装配期互不引用（index.js 分别 try/catch 挂载，一边失败不连坐另一边）: memory-client -> memory-host 只经工具与 remote.commands，不 import Host 代码; memory-host -> src/memory/util -> 存储目录，单向"
 forbidden:
   - "跨模块引用 internal 实现"
   - "反向或循环依赖"
@@ -87,6 +135,8 @@ forbidden:
   - "写 Session 事件或读取原始会话日志文件"
   - "让供应商密钥或官方原始 payload 进入页面"
   - "把余额缓存到磁盘"
+  - "在 DSH 安装树（node_modules / lib）里打补丁，或绕过 settings 服务直接写 profile 配置"
+  - "在行上没有声明时给模型补能力（模态、思考档位）——宁缺毋滥"
 public_slots:
   - key: conversation.chat.assistant-actions
     kind: list
@@ -135,6 +185,25 @@ public_slots:
     id: turn-cost
     order: 30
     locale: tcContext
+  - key: settings.section
+    kind: list
+    scope: root
+    id: tc-models
+    order: 31
+    locale: tcContext
+  - key: settings.section.icon
+    kind: list
+    scope: root
+    inline: true
+    id: tc-models
+    order: 31
+    locale: tcContext
+  - key: settings.action
+    kind: list
+    scope: root
+    id: tc-models-chip
+    order: 20
+    locale: tcContext
   - key: settings.section.icon
     kind: list
     scope: root
@@ -142,10 +211,28 @@ public_slots:
     id: turn-cost
     order: 30
     locale: tcContext
+  - key: shell.overlay
+    kind: list
+    scope: root
+    id: dsh-project-memory-task-panel
+    order: 100
+  - key: conversation.chat.commandview
+    kind: keyed
+    scope: session
+    key: tasks
+  - key: tool.call.toolview
+    kind: keyed
+    scope: session
+    key: show_task_panel
+  - key: plugins.bundle.config
+    kind: keyed
+    scope: root
+    key: "@local/dsh-turn-cost"
+    locale: dsh-project-memory.settings
 contract_exceptions:
   - rule: "single file <= 400 lines"
-    reason: "static dsh.client entry is served as one client.js; sibling chunks can only be loaded via async require.async"
-    mitigation: "section-separated pure pricing core independently unit-tested; Host and lazy chunk are separate files; no shared mutable state"
+    reason: "static dsh.client entry is served as one client.js and the lazy chunks as one client.context.js / client.memory.js; a chunk is reached only through async require.async, so a surface cannot be split across synchronously required files"
+    mitigation: "section-separated pure pricing core independently unit-tested; the model-catalog store/helpers are exported to test/model-catalog-client.test.js and executed there; client.memory.js 是 client-memory-src/ 23 个模块按 __ModuleLoader__ 协议装配出来的 chunk（改源码后重新装配并 touch 入口），面板/store/命令解析各自成文件；Host 侧按文件分模块（src/memory/ 单文件均 < 300 行，host/model-sync 同理）且全部可单测；no shared mutable state"
 replacement:
   target: "dsh-context v0.59.0 (not installed in this profile; the plugin now owns the surfaces)"
   kept_internal_ids: "tc* slot ids/projection keys stay prefixed so a future co-install cannot collide"

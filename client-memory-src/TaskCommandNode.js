@@ -1,0 +1,94 @@
+/**
+ * /tasks（含 /tasks insight …）与旧版 /task、/insight 节点的渲染器（conversation.chat.commandview）。
+ * 列表型命令只显示一行摘要；记忆动作类只显示一句结果——
+ * 目的：大 JSON 载荷绝不整段渲染进对话（否则切视图会刷屏）。
+ *
+ * 由 .tsx 手写改写为 createElement（原 92 行，5 处 JSX），CSS 复用原 hashed 类名。
+ */
+import { createElement as h, useEffect, useRef } from 'react'
+import { IconFolderOpenOutline16 } from './icons.js'
+import { parseTaskPayloadText, taskDataStore } from './task-data-store.js'
+import { parseInsightPayloadText } from './memory-load.js'
+import { taskUIStore } from './task-ui-store.js'
+import { cmdCss as css } from './styles.js'
+
+export function TaskCommandNode({ node }) {
+  const name = node?.name ?? 'task'
+  const outcome = node?.outcome ?? null
+  const args = typeof node?.args === 'string' ? node.args : ''
+  const tokens = args.trim().split(/\s+/).filter(Boolean)
+  const verb = tokens[0] ?? ''
+  const sub = tokens[1] ?? ''
+  const isTasks = name === 'tasks'
+  // 合并后只有一个用户命令 /tasks：记忆列表是 `/tasks insight list …`，
+  // 不能只按命令名判断——否则切一次记忆页就会留一行“已执行”节点。
+  const isInsight = name === 'insight' || (isTasks && verb === 'insight')
+  const insightVerb = name === 'insight' ? verb : sub
+  const isList = isInsight
+    ? (name === 'insight' ? (!verb || verb === 'list') : sub === 'list')
+    : isTasks && !verb
+  const text = outcome?.text ?? ''
+
+  const parsedTasks = isInsight ? null : parseTaskPayloadText(text)
+  const parsedInsights = isInsight ? parseInsightPayloadText(text) : null
+
+  // 该节点是否“现场执行”（挂载时处于执行中）：为 true 说明是用户当场输入的命令，
+  // 完成后同步数据并打开面板。刷新/切换会话后历史节点以完成态重挂载，
+  // 此时只做展示、不再写数据/开面板（面板保持关闭，与“刷新后不显示”一致）。
+  const live = useRef(outcome === null)
+
+  // 载荷进数据 store；列表型任务命令（/tasks、无动词 /task）同步数据并打开面板
+  useEffect(() => {
+    if (!parsedTasks || !live.current) return
+    taskDataStore.actions.setTasks({
+      tasks: parsedTasks.tasks,
+      boundTaskId: parsedTasks.boundId,
+      archivedCount: parsedTasks.archived,
+      root: parsedTasks.root,
+    })
+    if (isList) taskUIStore.actions.open()
+  }, [text])
+
+  if (outcome === null) {
+    return h('div', { className: css.row, 'data-variant': 'running' }, `/${name} 执行中…`)
+  }
+
+  if (outcome.kind === 'error') {
+    const brief = String(text ?? '').split('\n')[0].slice(0, 120)
+    return h('div', { className: css.row, 'data-variant': 'error' },
+      `/${name} 失败${brief ? `：${brief}` : ''}`)
+  }
+
+  // 列表型命令是**面板自己的读通道**，不是对话内容：宿主每次 execute 都会写
+  // command/run + command/done，客户端唯一能抑制的就是这里的渲染。载荷已同步进 store
+  // （/tasks 还会打开面板），再留一行只会让切页/刷新在会话里堆节点。
+  // 解析失败时保留一行，避免"命令成功了却什么都不显示"。
+  if (isList && (isInsight ? parsedInsights : parsedTasks)) return null
+
+  // 记忆动作：只显示一句结果（永不整段渲染）。新命令是 /tasks insight …，
+  // 旧会话里仍可能留着 name='insight' 的节点。
+  if (isInsight) {
+    const note = String(text ?? '').split('\n')[0].slice(0, 120)
+    const label = name === 'insight' ? '/insight' : '/tasks insight'
+    return h('div', { className: css.row, 'data-variant': 'ok' },
+      `${label} ${insightVerb} ${note || '已完成'}`)
+  }
+
+  if (!isList) {
+    const note = String(text ?? '')
+      .split(/\n{2,}/)[0]
+      .replace(/```.*$/s, '')
+      .trim()
+      .slice(0, 200)
+    return h('div', { className: css.row, 'data-variant': 'ok' }, `/${name} ${note || '已完成'}`)
+  }
+
+  const count = parsedTasks ? parsedTasks.tasks.length : 0
+  const archived = parsedTasks ? parsedTasks.archived : 0
+  const label = parsedTasks
+    ? `任务 ${count} 套${archived ? `（归档 ${archived}）` : ''} · 已同步到任务面板`
+    : `/${name} 已执行`
+  return h('div', { className: css.row, 'data-variant': 'ok' },
+    h(IconFolderOpenOutline16, { className: css.icon }),
+    h('span', null, label))
+}

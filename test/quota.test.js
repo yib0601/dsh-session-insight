@@ -46,7 +46,11 @@ const ctx = runInNewContext(
    ({ money2, moneyList, clock, stampOf, windowShort, windowLong, sourceName,
       msUntil, remainText, remainTone, quotaCycleOf, windowLineOf, resetClauseOf,
       quotaSnapshotOf, quotaFigure, quotaDetail, quotaSubOf, quotaTileValue, sourceOfSessions,
-      sourceOfRoute, routeOfSession, readStoredSource, storeSource, NO_SOURCE,
+      sourceOfRoute, routeOfSession, selectedRouteOfSession, activeRouteOfSession,
+      currentSessionIdOf, runningOfSession, createSourceSettler,
+      QUOTA_SOURCE_DEBOUNCE_MS,
+      readStoredSource, storeSource, NO_SOURCE,
+      windowName, planOf, totalsOf, credits,
       createQuotaStore, readQuotaRoute, QUOTA_URL, QUOTA_POLL_MS, QUOTA_DEFAULT_SOURCE,
       QUOTA_SOURCE_KEY, QUOTA_CACHE_KEY, QUOTA_CACHE_TTL_MS,
       readCachedQuota, writeCachedQuota })`,
@@ -57,7 +61,11 @@ const {
   money2, moneyList, clock, stampOf, windowShort, windowLong, sourceName,
   msUntil, remainText, remainTone, quotaCycleOf, windowLineOf, resetClauseOf,
   quotaSnapshotOf, quotaFigure, quotaDetail, quotaSubOf, quotaTileValue, sourceOfSessions,
-  sourceOfRoute, routeOfSession, readStoredSource, storeSource, NO_SOURCE,
+  sourceOfRoute, routeOfSession, selectedRouteOfSession, activeRouteOfSession,
+  currentSessionIdOf, runningOfSession, createSourceSettler,
+  QUOTA_SOURCE_DEBOUNCE_MS,
+  readStoredSource, storeSource, NO_SOURCE,
+  windowName, planOf, totalsOf, credits,
   createQuotaStore, readQuotaRoute, QUOTA_URL, QUOTA_POLL_MS, QUOTA_DEFAULT_SOURCE, QUOTA_SOURCE_KEY,
   QUOTA_CACHE_KEY, QUOTA_CACHE_TTL_MS, readCachedQuota, writeCachedQuota,
 } = ctx;
@@ -67,6 +75,7 @@ const t = (key, params = {}) => {
   const table = {
     quotaTitle: '订阅额度', quotaTileOf: '{source} 额度',
     quotaSourceDeepseek: 'DeepSeek', quotaSourceOpencode: 'OpenCode Go',
+    quotaSourceWorkbuddy: 'WorkBuddy', quotaCreditsLine: '积分剩 {remain} / {total}',
     quotaWinRolling: '5h', quotaWinWeekly: '周', quotaWinMonthly: '月',
     quotaWinRollingLong: '5 小时', quotaWinWeeklyLong: '本周', quotaWinMonthlyLong: '本月',
     quotaWindowLine: '{label}：已用 {percent}%，{reset}',
@@ -110,7 +119,10 @@ assert.equal(windowShort('rolling', t), '5h');
 assert.equal(windowShort('weekly', t), '周');
 assert.equal(windowShort('monthly', t), '月');
 assert.equal(windowShort('weird', t), 'weird', 'an unknown window keeps its key');
-assert.equal(windowLong('weekly', t), '本周');
+assert.equal(windowLong({ key: 'weekly' }, t), '本周', 'a known key translates');
+assert.equal(windowLong({ key: 'plan_base', label: '套餐积分' }, t), '套餐积分', 'a vendor label wins over its key');
+assert.equal(windowName({ key: 'benefit', label: '奖励积分' }, t), '奖励积分');
+assert.equal(windowName({ key: 'rolling' }, t), '5h', 'no label falls back to the key vocabulary');
 assert.equal(sourceName('opencode-go', t), 'OpenCode Go');
 assert.equal(sourceName('deepseek', t), 'DeepSeek');
 
@@ -169,6 +181,7 @@ assert.equal(lines[7], '点按刷新额度');
 // ── quotaCycleOf / window lines ─────────────────────────────────────────────
 const cycle = quotaCycleOf(windows, clockNow);
 assert.equal(cycle.window.key, 'monthly', 'the longest window anchors the billing period');
+assert.equal(cycle.kind, 'window', 'an OpenCode cycle is inferred from a window, so the hint explains it');
 assert.equal(cycle.at, Date.parse('2026-12-02T15:30:38.000Z'));
 assert.equal(cycle.ms, Date.parse('2026-12-02T15:30:38.000Z') - clockNow);
 assert.equal(quotaCycleOf({ status: 'ready', source: 'deepseek', kind: 'balance', wallets: [] }), null,
@@ -231,8 +244,16 @@ assert.equal(sourceOfRoute('opencode-go', 'deepseek-v4.1-flash'), 'opencode-go',
   'the OpenCode gateway serving a DeepSeek model draws on the OpenCode quota');
 assert.equal(sourceOfRoute('ai-router', 'deepseek-v4.1-flash'), 'none',
   'a self-hosted gateway bills per upstream key and sets no allowance, so it has no quota to read');
-assert.equal(sourceOfRoute('ai-router', 'OpenCode Go · 付费 · Qwen3.8-Max'), 'none',
-  'the gateway keeps no quota even when it fronts an OpenCode account');
+assert.equal(sourceOfRoute('ai-router', 'OpenCode Go · 付费 · Qwen3.8-Max'), 'opencode-go',
+  'a gateway row locked to one platform names the account that pays, so its allowance is readable');
+assert.equal(sourceOfRoute('ai-router', 'WorkBuddy · 付费 · DeepSeek-V4.1-Flash · 1M'), 'workbuddy',
+  'a WorkBuddy-backed gateway row reads WorkBuddy credits, not「无额度可查」');
+assert.equal(sourceOfRoute('ai-router', 'kimi-k3', 'WorkBuddy · 付费 · kimi-k3'),
+  'workbuddy', 'the display name carries the platform when the model id does not');
+assert.equal(sourceOfRoute('ai-router', 'OpenRouter · 付费 · gpt-5', ''),
+  'none', 'a platform with no readable allowance stays quota-less rather than borrowing another plan');
+assert.equal(sourceOfRoute('', 'nvidia · 免费 · llama-4'), 'none',
+  'an unreadable platform is settled even without a provider id');
 assert.equal(sourceOfRoute('some-other-gateway', 'deepseek-v4.1-flash'), 'none',
   'any unrecognised provider is treated as quota-less rather than guessed at');
 assert.equal(sourceOfRoute('opencode', 'big-pickle'), 'opencode-go');
@@ -242,6 +263,44 @@ assert.equal(sourceOfRoute('', 'OpenCode Go · 付费 · Qwen3.8-Max · 1M'), 'o
   'without a provider the OpenCode product name still classifies the model');
 assert.equal(sourceOfRoute('', 'deepseek-v4.1-flash'), null,
   'a bare DeepSeek model name names no vendor: it is served by several accounts');
+
+assert.equal(sourceOfRoute('workbuddy', 'kimi-k3'), 'workbuddy',
+  'the WorkBuddy gateway holds one account token in its shim, so its allowance is readable');
+assert.equal(sourceOfRoute('workbuddy-shim', 'hy4'), 'workbuddy');
+
+// ── WorkBuddy: vendor-named buckets, a real plan expiry, lump totals ────────
+const workbuddy = quotaSnapshotOf({
+  status: 'ready', source: 'workbuddy', kind: 'windows', at: 1_700_000_000_000,
+  windows: [
+    { key: 'plan_base', label: '套餐积分', percent: 0, status: 'ok', resetsAt: '2026-12-22T17:46:03Z', total: 4000, remain: 4000 },
+    { key: 'benefit', label: '奖励积分', percent: 93.9, status: 'ok', resetsAt: '2026-12-15T20:38:18Z', total: 3700, remain: 226.16 },
+  ],
+  plan: { name: '高级版', code: '', paid: true, expiresAt: '2026-12-22T17:46:03Z' },
+  totals: { total: 12700, remain: 9226.16, used: 3473.84, unit: 'credits' },
+});
+assert.equal(workbuddy.source, 'workbuddy');
+assert.equal(workbuddy.windows[1].label, '奖励积分');
+assert.equal(quotaFigure(workbuddy, t), '套餐积分 0% · 奖励积分 94%',
+  'the foot names the credit buckets the vendor actually has');
+assert.equal(quotaTileValue(workbuddy, t), '奖励积分 94%', 'the tightest bucket leads the tile');
+// The cycle comes from the declared plan expiry, not from "the longest window".
+const wbCycle = quotaCycleOf(workbuddy, now);
+assert.equal(wbCycle.kind, 'plan');
+assert.equal(wbCycle.at, Date.parse('2026-12-22T17:46:03Z'));
+const wbLines = quotaDetail(workbuddy, t, now).split('\n');
+assert.equal(wbLines[0], '订阅额度（WorkBuddy）');
+assert.equal(wbLines[1], '高级版', 'the paying plan is named');
+assert.match(wbLines[2], /^订阅周期 12-23 01:46 结束（剩 \d+ 天）$/u);
+assert.equal(wbLines[3], '套餐积分：已用 0%，12-23 01:46 重置（剩 33 天）', 'a declared expiry needs no inference hint');
+assert.equal(wbLines[4], '奖励积分：已用 94%，12-16 04:38 重置（剩 26 天）');
+assert.equal(wbLines[5], '积分剩 9226 / 12700', 'one lump credit figure, rounded: the hundredths never change a decision');
+assert.equal(credits(226.16), '226.16', 'small amounts keep their decimals');
+assert.equal(credits(4000), '4000', 'whole amounts drop the trailing zeros');
+assert.equal(credits('nope'), '', 'an unusable amount renders nothing');
+assert.equal(quotaSubOf(workbuddy, t, now).startsWith('剩 '), true,
+  'the KPI sub-line still answers "how long is left"');
+assert.equal(quotaSnapshotOf({ status: 'ready', source: 'workbuddy', kind: 'windows', windows: [{ key: 'a', percent: 1 }] }).plan, null,
+  'a body without a plan keeps plan null');
 
 // ── sourceOfSessions ────────────────────────────────────────────────────────
 assert.equal(QUOTA_DEFAULT_SOURCE, 'deepseek');
@@ -271,6 +330,132 @@ assert.equal(sourceOfSessions(mixed), 'none',
   'the newest request decides, and a gateway route answers "no quota"');
 assert.equal(sourceOfSessions({ ids: ['a'], projectionsBySession: { a: { values: {} } } }), null,
   'a session without a timeline names no vendor');
+
+// ── main-view focus: running vs idle decides which route answers ────────────
+// A conversation the user is looking at is a row retained by the main view; the
+// quota answers for it, not for whichever background session billed last.
+const focused = (id, values, extra = {}) => ({
+  ids: [id],
+  byId: { [id]: { id, retainedBy: { mainView: 1 }, running: extra.running === true } },
+  projectionsBySession: { [id]: { values } },
+});
+const selectionValues = (lastUsed, next) => ({ modelSelection: { lastUsed, next } });
+const workbuddyLast = { provider: 'workbuddy', model: 'wb-flash' };
+const opencodeNext = { provider: 'opencode-go', model: 'oc-flash' };
+const statusOf = (id, running, pending) => new Map([[id, {
+  running, pendingInteraction: pending,
+}]]);
+
+assert.equal(sourceOfSessions(focused('a', selectionValues(workbuddyLast, opencodeNext)), statusOf('a', true, undefined)),
+  'workbuddy', 'mid-turn the billed route pays, even though the composer points at OpenCode');
+assert.equal(sourceOfSessions(focused('a', selectionValues(workbuddyLast, opencodeNext)), statusOf('a', false, undefined)),
+  'opencode-go', 'once the turn ends the composer choice is what the next message bills');
+assert.equal(sourceOfSessions(focused('a', selectionValues(workbuddyLast, opencodeNext)), statusOf('a', true, { key: 'q', kind: 'ask', sessionId: 'a' })),
+  'workbuddy', 'a pending question is not the end of the turn: the same route keeps paying');
+assert.equal(sourceOfSessions(focused('a', selectionValues(workbuddyLast, opencodeNext)), statusOf('a', false, { key: 'q', kind: 'ask', sessionId: 'a' })),
+  'workbuddy', 'waiting on the user is still work in progress');
+assert.equal(sourceOfSessions(focused('a', selectionValues(workbuddyLast, opencodeNext)), undefined),
+  'opencode-go', 'without a status map the session counts as idle, which is the composer choice');
+
+// A switch that has not billed answers for an idle session, but never overrides
+// the route a running turn is paying for.
+const switched = { modelSelection: { lastUsed: null, next: opencodeNext } };
+assert.equal(sourceOfSessions(focused('b', switched), statusOf('b', false, undefined)), 'opencode-go',
+  'a never-billed switch still points an idle session at its new plan');
+// A gateway route carries its real platform only in the model's display name, so
+// a running turn backed by WorkBuddy through `ai-router` must read WorkBuddy's
+// credits — the case where a provider-id-only rule showed「无额度可查」.
+const gatewayRunning = focused('c', {
+  modelSelection: { lastUsed: { provider: 'ai-router', model: 'deepseek-v4.1-flash' }, next: null },
+});
+const catalogLabel = () => 'WorkBuddy · 付费 · DeepSeek-V4.1-Flash · 1M';
+assert.equal(sourceOfSessions(gatewayRunning, statusOf('c', true, undefined), null, catalogLabel),
+  'workbuddy', 'the catalog names the platform behind a gateway route');
+assert.equal(sourceOfSessions(gatewayRunning, statusOf('c', true, undefined), null, () => ''),
+  'none', 'with no label the gateway stays quota-less rather than borrowing another plan');
+assert.equal(sourceOfSessions(gatewayRunning, statusOf('c', true, undefined), null, () => 'OpenRouter · 付费 · x'),
+  'none', 'an unreadable platform behind the gateway is a settled answer');
+// Only the main-view session decides; a newer route elsewhere does not win.
+const twoSessions = {
+  ids: ['a', 'b'],
+  byId: { a: { id: 'a', retainedBy: { mainView: 1 } }, b: { id: 'b', retainedBy: { mainView: 0 } } },
+  projectionsBySession: {
+    a: { values: { tcTimeline: { requests: [{ time: 100, provider: 'workbuddy', model: 'wb-flash' }] } } },
+    b: { values: { tcTimeline: { requests: [{ time: 900, provider: 'opencode-go', model: 'oc-flash' }] } } },
+  },
+};
+assert.equal(sourceOfSessions(twoSessions, new Map()), 'workbuddy',
+  'a background session that billed later does not take over the foot');
+assert.equal(currentSessionIdOf(twoSessions), 'a', 'the retained row is the main-view conversation');
+assert.equal(currentSessionIdOf({ ids: [], byId: {} }), null, 'an empty catalog has no main view');
+assert.equal(currentSessionIdOf(undefined), null);
+
+// ── createSourceSettler: no halfway figure is ever painted ──────────────────
+// The derived source walks through intermediate values while the list hydrates,
+// so only a candidate that survives the settle window is committed.
+assert.equal(QUOTA_SOURCE_DEBOUNCE_MS, 1200, 'the settle window covers a hydration pass');
+const pendingTimers = [];
+const timer = (fn, ms) => {
+  const handle = pendingTimers.length + 1;
+  pendingTimers.push({ handle, fn, ms });
+  return handle;
+};
+const clearTimer = (handle) => {
+  const index = pendingTimers.findIndex(entry => entry.handle === handle);
+  if (index >= 0) pendingTimers.splice(index, 1);
+};
+const fireAll = () => {
+  const due = pendingTimers.splice(0, pendingTimers.length);
+  for (const entry of due) entry.fn();
+};
+
+let candidate = 'opencode-go';
+const settler = createSourceSettler(() => candidate, {
+  timer, clearTimer, materialize: value => value !== null,
+});
+// Nothing is painted until something settles: the remembered vendor seeds the
+// first paint, and a candidate that arrives with the list never does.
+assert.equal(settler.read(), null, 'a halfway candidate is not painted on the first render');
+
+const mixedSettler = createSourceSettler(() => candidate, {
+  timer, clearTimer, materialize: value => value !== null, initial: 'workbuddy',
+});
+assert.equal(mixedSettler.read(), 'workbuddy', 'the remembered vendor is what the first paint shows');
+mixedSettler.schedule();
+assert.equal(mixedSettler.read(), 'workbuddy', 'a new candidate waits out the settle window');
+assert.equal(pendingTimers.length, 1, 'exactly one commit is armed');
+// The armed timer resolves the *then-current* candidate, so a value that was
+// only true for two frames cannot win by scheduling first.
+candidate = 'workbuddy';
+fireAll();
+assert.equal(mixedSettler.read(), 'workbuddy', 'the settled answer is committed');
+
+// A source with nothing to show commits at once: there is no figure to keep on
+// screen, so there is no flash to avoid.
+let noneCandidate = 'deepseek';
+const clearing = createSourceSettler(() => noneCandidate, {
+  timer, clearTimer, materialize: value => value !== null, initial: 'deepseek',
+});
+assert.equal(clearing.read(), 'deepseek');
+noneCandidate = null;
+clearing.schedule();
+assert.equal(clearing.read(), null, 'no source is an answer, not a flash: it commits immediately');
+assert.equal(pendingTimers.length, 0, 'an unshowable candidate never arms a timer');
+// ...and coming back to a real source waits again.
+noneCandidate = 'opencode-go';
+const settleEvents = [];
+clearing.subscribe(() => settleEvents.push(clearing.read()));
+clearing.schedule();
+assert.equal(clearing.read(), null, 'the return still settles before it is painted');
+fireAll();
+assert.equal(clearing.read(), 'opencode-go');
+assert.deepEqual(settleEvents, ['opencode-go'], 'subscribers are told exactly once, on commit');
+// A schedule whose candidate did not actually change disarms the pending commit.
+candidate = 'opencode-go';
+const steady = createSourceSettler(() => candidate, { timer, clearTimer, materialize: v => v !== null, initial: 'opencode-go' });
+steady.schedule();
+assert.equal(pendingTimers.length, 0, 'an unchanged answer schedules nothing');
+assert.equal(steady.read(), 'opencode-go');
 
 // ── routeOfSession: a switch counts before it bills ─────────────────────────
 const projections = id => ({ [id]: { values: { tcTimeline: {
@@ -310,6 +495,14 @@ assert.equal(sourceOfSessions({ ids: [], projectionsBySession: {} }), 'opencode-
 assert.equal(storage.get(QUOTA_SOURCE_KEY), 'opencode-go');
 storeSource(null);
 assert.equal(readStoredSource(), 'opencode-go', 'an empty source is not remembered over a real one');
+storeSource(NO_SOURCE);
+assert.equal(readStoredSource(), 'opencode-go',
+  '"this route has no allowance" is a fact about one conversation, not a vendor to reopen on');
+storage.set(QUOTA_SOURCE_KEY, NO_SOURCE);
+assert.equal(readStoredSource(), null, 'a value an older build persisted is dropped on read');
+storage.set(QUOTA_SOURCE_KEY, 'deepseek');
+assert.equal(readStoredSource(), 'deepseek', 'a real remembered vendor still reads back');
+storage.delete(QUOTA_SOURCE_KEY);
 
 // ── readQuotaRoute ──────────────────────────────────────────────────────────
 assert.equal(QUOTA_URL, '/dsh-turn-cost/quota');

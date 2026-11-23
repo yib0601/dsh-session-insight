@@ -1,0 +1,306 @@
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import { TEXT_OUTPUT, rootParam } from './output.js'
+import path from 'node:path'
+import { assertIndexRoot, memoryDirName, memoryRootFor, nestedStoreRoots, resolveSafeIndexRoot } from '../util/fs.js'
+import { ProjectMemoryStore, storeOverview } from '../store.js'
+import { expandQuery } from '../llm.js'
+import { resolveRoute } from '../llm-route.js'
+import { GlobalStore, cfgInsight, defaultGlobalFile, recordHit } from '../insight-store.js'
+import { recallItems } from '../recall.js'
+import { cfgEngine } from '../auto-inject.js'
+import { createVectorRerank, vectorItemsFrom } from '../vector-index.js'
+import { resolveLinkedSymbols } from '../link.js'
+import { truncate } from '../util/text.js'
+import { stepContent, stepStatus } from '../util/task-view.js'
+import { cfgValue } from '../util/config.js'
+function toAbs(root, rel) {
+  return path.isAbsolute(rel) ? rel : path.join(root, rel)
+}
+
+/**
+ * 本根未命中记忆层时，把"这里有哪几个独立子索引"告诉模型。
+ *
+ * 父根不再重复保存子项目的内容（`walkDir()` 跳过自带 store 的嵌套根），所以"在父根下问子项目的
+ * 事"必然查不到；换 `root=` 再问一次是唯一正确的下一步。只在未命中时算，不在热路径上。
+ */
+function nestedIndexNote(root, config) {
+  const nested = nestedStoreRoots(root, memoryDirName(config))
+  if (!nested.length) return ''
+  return (
+    `\n\nNote: this root keeps no copy of ${nested.length} nested project(s) — each has its own index. ` +
+    'Re-run query_memory with `root: <path>` for the one you want:\n' +
+    nested.map((p) => `- ${p}`).join('\n')
+  )
+}
+
+/**
+ * 一段结果里最佳条目的跨层排序分（`rel × 层先验`，与 `recallItems` 返回的 `flat.hint`
+ * 同一口径）。只用于决定段落先后，不参与打分，也不改变任何条目自身的 score。
+ */
+function bestHint(hits) {
+  let best = 0
+  for (const h of hits || []) best = Math.max(best, (h.rel || 0) * (h.prior || 1))
+  return best
+}
+
+/** 被覆盖字段的上一版：只显示一行，方便模型判断是否写回；空槽不占位。 */
+function previousLine(item) {
+  if (!item || !item.prev || typeof item.prev !== 'object' || Array.isArray(item.prev)) return ''
+  const parts = []
+  for (const [key, value] of Object.entries(item.prev)) {
+    if (value === undefined || value === null || value === '') continue
+    const raw = typeof value === 'string' ? value : JSON.stringify(value)
+    const text = raw ? raw.replace(/\s+/g, ' ').trim() : ''
+    if (!text) continue
+    parts.push(`${key}=${text}`)
+  }
+  return parts.length ? parts.join('; ').slice(0, 300) : ''
+}
+
+export function queryMemoryTool(ctx, config) {
+  return defineTool({
+    name: 'query_memory',
+    description:
+      'Search project memory: docs, symbols, experience and insights. Returns cited sources or insight ids. '
+      + 'Use before grepping for orientation, a spec constraint, or a past decision. '
+      + 'After a query, update stale or wrong entries right away (save_lesson with that id).',
+    parameters: {
+      query: {
+        type: 'string',
+        required: true,
+        description: 'what to look for',
+      },
+      root: rootParam(),
+      type: {
+        type: 'string',
+        enum: ['all', 'doc', 'symbol', 'experience', 'insight', 'task'],
+        description: 'all|doc|symbol|experience|insight|task; default all',
+      },
+      limit: {
+        type: 'number',
+        description: 'max results per layer, default 8, capped at 20; `all` can return up to 3x (docs/symbols, insights, experience)',
+      },
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const root = resolveSafeIndexRoot(exec, args.root, config)
+      // 读路径也要验根存在。这条不是洁癖：可选的向量层（leanvec）在空 store 上会建
+      // `<root>/.dsh-project-memory/vectors.json`，于是传错一个 root（拼写错误/旧路径）就能
+      // 在任意可写位置造出目录和空 store，而回报是"No memory matches"——看起来像"这个项目
+      // 没有记忆"，用户不会意识到自己查错了地方。与 index_repo/watch_repo 同一道护栏。
+      assertIndexRoot(root, args.root || root)
+      // 空查询不是"全部"：recallItems 会过滤空串，rankEntriesStreaming 随即返回
+      // entries.slice(0, limit)（任意条目、分数 0），task 分支的 includes('') 更是命中所有任务。
+      if (!String(args.query ?? '').trim()) {
+        return 'query must not be empty. Use pm_stats to see what the store contains.'
+      }
+      const store = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+      const type = args.type || 'all'
+      const limit = Math.max(1, Math.min(Number(args.limit) || 8, 20))
+
+      const queries = cfgValue(config, 'llmQueryExpansion')
+        ? await expandQuery(ctx.llm, args.query, config.expansionCount, { route: resolveRoute(exec, config) })
+        : [args.query]
+
+      // 会话绑定决定 task 级 insight 的可见性；global 级始终可见。
+      const sessionId = exec?.agent?.session?.id
+      const boundTaskId = sessionId && typeof store.getBoundTaskId === 'function' ? store.getBoundTaskId(sessionId) : null
+      const globalStore = new GlobalStore(cfgInsight(config).globalFile || defaultGlobalFile()).load()
+      const wantMemory = type === 'all' || type === 'doc' || type === 'symbol'
+      /** 本根记忆层（doc/symbol）的命中数：0 且存在子索引时，末尾要指路。 */
+      let memHitCount = 0
+      const wantInsight = type === 'all' || type === 'insight'
+      // 可选向量层：**没装/没配就是 null**，此时 recallItems 拿到 rerank:null 与纯词法路径逐字段一致。
+      // 只影响 experience/insight 两层的排序（doc/symbol 与返回条数都不变）。
+      const cfg = cfgEngine(config)
+      const rerank = await createVectorRerank({
+        storeDir: memoryRootFor(root, config.memoryDir),
+        items: vectorItemsFrom(store, globalStore),
+        vectorDir: cfg.vectorDir,
+        alpha: cfg.vectorAlpha,
+      })
+      // 一次 recall 覆盖全部层：doc/symbol/experience/insight 共用同一个检索核心（src/recall.js）。
+      const recalled = recallItems({
+        store,
+        globalStore,
+        queries,
+        boundTaskId,
+        limit,
+        rerank,
+        layers: [
+          ...(wantMemory ? (type === 'symbol' ? ['symbol'] : type === 'doc' ? ['doc'] : ['doc', 'symbol']) : []),
+          ...(wantInsight ? ['insight'] : []),
+          ...(type === 'all' || type === 'experience' ? ['experience'] : []),
+        ],
+      })
+
+      const lines = []
+      // 结果段先按相关性排序，最后再拼进 lines（见下方 sections.sort）。
+      const sections = []
+      // 使用记账：检索命中也是"被用到"（活跃度/衰减用得上它，见 recordHit）。查询是热路径
+      // （p50 2.6ms），这里只改内存 + 标脏，**不**强制落盘——注入路径会立即落盘，这条路
+      // 靠下一次自然 save 带上。记账失败绝不影响查询结果。
+      // 经验层同源（kind:'experience' 的 insight），所以两桶都要记：`insightId` 是 insight
+      // 适配器带的键，经验桶给的是原始条目，用 `id` 兜底。
+      for (const layer of ['insight', 'experience']) {
+        if (layer === 'insight' && !wantInsight) continue
+        if (layer === 'experience' && !(type === 'all' || type === 'experience')) continue
+        try {
+          const bucket = recalled.layers.find((l) => l.layer === layer)
+          recordHit({ store, globalStore, ids: (bucket?.hits || []).map((h) => h.item?.insightId || h.item?.id) })
+        } catch {
+          /* ignore：记账是旁路 */
+        }
+      }
+      if (wantMemory) {
+        // doc/symbol 的原始 BM25 分不可直接比：符号正文短，同等相关时分会更高/更低，
+        // 用原始分排序会让一层把另一层整体挤掉。先按**层内相对分 rel** 排序，并在
+        // limit≥2 时各保留一条，剩余名额再按 rel 填。
+        const docHits = recalled.layers.find((l) => l.layer === 'doc')?.hits || []
+        const symbolHits = recalled.layers.find((l) => l.layer === 'symbol')?.hits || []
+        const byRel = (a, b) => (b.rel || 0) - (a.rel || 0) || (b.weightedScore || 0) - (a.weightedScore || 0)
+        const merged = [...docHits, ...symbolHits].sort(byRel)
+        const picked = []
+        const seenHits = new Set()
+        const take = (h) => {
+          if (!h || picked.length >= limit) return
+          const key = h.item?.id || `${h.item?.type}:${h.item?.title}`
+          if (seenHits.has(key)) return
+          seenHits.add(key)
+          picked.push(h)
+        }
+        if (limit >= 2) {
+          for (const h of [docHits[0], symbolHits[0]].filter(Boolean).sort(byRel)) take(h)
+        }
+        for (const h of merged) take(h)
+        const memHits = picked
+        memHitCount = memHits.length
+        if (memHits.length) {
+          const block = [`## Memory (${type === 'all' ? 'docs + symbols' : type})`]
+          for (const { item: e, rel } of memHits) {
+            const absSource = e.sourceLine ? `${toAbs(root, e.sourcePath)}:${e.sourceLine}` : toAbs(root, e.sourcePath)
+            const score = Math.round((rel || 0) * 100)
+            // 符号没有 summary：它的正文就是一行声明。缺正文时退到标题，绝不输出 `- undefined`。
+            const body = e.type === 'symbol' ? (e.text || e.title) : e.summary
+            const summaryLine = body ? `\n- ${body}` : ''
+            // 条目状态占位（可证伪状态机落地前恒为 exact）。
+            // 先立字段，后续状态机到位时只改值、不改输出契约。
+            block.push(`### ${e.title} (score: ${score})\n- source: ${absSource}\n- status: ${e.status || 'exact'}${summaryLine}`)
+            if (e.type === 'doc') {
+              // 读取期解算：链接不落盘，按当前符号表排序取前 5（见 src/link.js）
+              const refs = resolveLinkedSymbols(store, e, 5).map(
+                (s) => `${s.title} @ ${toAbs(root, s.sourcePath)}:${s.sourceLine}`,
+              )
+              if (refs.length) block.push(`- references: ${refs.join('; ')}`)
+            }
+          }
+          sections.push({ block, best: bestHint(memHits) })
+        }
+      }
+      if (wantInsight) {
+        const bucket = recalled.layers.find((l) => l.layer === 'insight')
+        if (bucket && bucket.hits.length) {
+          const block = ['## Insights (lessons / decisions / procedures)']
+          for (const { item: e, rel } of bucket.hits) {
+            const scope = e.scope ? `, scope: ${e.scope}` : ''
+            const files = e.files && e.files.length ? `\n- files: ${e.files.map((f) => toAbs(root, f)).join(', ')}` : ''
+            const conf = typeof e.confidence === 'number' ? `\n- confidence: ${e.confidence}` : ''
+            const previous = previousLine(e)
+            block.push(
+              `### ${e.title} (score: ${Math.round(rel * 100)}, kind: ${e.kind}${scope}, id: ${e.insightId})\n- ${e.summary}${files}${conf}${previous ? `\n- previous: ${previous}` : ''}`,
+            )
+          }
+          sections.push({ block, best: bestHint(bucket.hits) })
+        }
+      }
+      if (type === 'all' || type === 'experience') {
+        const expBucket = recalled.layers.find((l) => l.layer === 'experience')
+        if (expBucket && expBucket.hits.length) {
+          const block = ['## Experience (past problems -> solutions)']
+          for (const { item: e, rel } of expBucket.hits) {
+            // 统一存储后经验条目就是 insight：导入时 source_file 落在 files[0]，新写的也走同一处。
+            const src = e.sourceFile || (Array.isArray(e.files) ? e.files[0] : '')
+            const source = src ? ` (source: ${toAbs(root, src)})` : ''
+            // `problem`/`solution` 只是 v0.4 的字段形状：`save_lesson` 写 kind:'experience'
+            // 时没有这两个参数（正文在 fix/choice/body 里），直接用会渲染出 `undefined`。
+            const problem = e.problem || e.title || '(untitled)'
+            const solution = e.solution || e.fix || e.choice || e.body || '(no text)'
+            block.push(
+              `### Problem: ${problem} (score: ${Math.round(rel * 100)}, id: ${e.id})\n- solution: ${solution}${source}\n- updated: ${e.updatedAt}`,
+            )
+          }
+          sections.push({ block, best: bestHint(expBucket.hits) })
+        }
+      }
+
+      // 段落顺序按相关性，而不是写死的 docs 优先：检索已经给出跨层 hint（rel × 层先验），
+      // 排版照它来。否则查一条明确的记忆时，无关的长文档会排在最前、正确答案埋在几千字符
+      // 之后——模型很可能根本没读到。sort 稳定，同分保持 memory → insight → experience。
+      sections.sort((a, b) => b.best - a.best)
+      for (const s of sections) for (const line of s.block) lines.push(line)
+
+      // TaskBridge: type:'task' 专门查任务记录；type:'all' 尾部附一行任务计数提示
+      const tasks = store.tasks || []
+      if (type === 'task') {
+        const q = (queries[0] || '').toLowerCase()
+        const matched = tasks
+          .filter((t) => {
+            const title = String(t.title || '').toLowerCase()
+            const steps = Array.isArray(t.steps) ? t.steps : []
+            const files = Array.isArray(t.files) ? t.files : []
+            return !t.archived && (
+              title.includes(q)
+              || steps.some((s) => stepContent(s).toLowerCase().includes(q))
+              || files.some((f) => String(f).toLowerCase().includes(q))
+            )
+          })
+          .slice(0, limit)
+        if (!matched.length) {
+          return `任务记录: 0 套匹配 "${args.query}"（list_tasks 查看全部，select_task 续做）`
+        }
+        for (const t of matched) {
+          const steps = Array.isArray(t.steps) ? t.steps : []
+          const files = Array.isArray(t.files) ? t.files : []
+          const done = steps.filter((s) => stepStatus(s) === 'completed').length
+          const total = steps.length
+          const stepsText = steps.length
+            ? steps.map((s) => `- [${stepStatus(s) === 'completed' ? 'x' : stepStatus(s) === 'in_progress' ? '*' : ' '}] ${stepContent(s)}`).join('\n')
+            : '（无步骤）'
+          const filesText = files.slice(0, 8).join(', ')
+          lines.push(`### ${t.title} (${done}/${total} 完成)\n${stepsText}\n- 文件: ${filesText || '无'}`)
+        }
+        return truncate(lines.join('\n\n'), config.maxOutputChars)
+      }
+      if (type === 'all' && tasks.length) {
+        lines.push(`任务记录: ${tasks.length} 套（list_tasks 查看，select_task 续做）`)
+      }
+
+      if (!lines.length) {
+        const overview = storeOverview(store)
+        const hint =
+          type === 'experience'
+            ? 'Note a fix with remember so it can be recalled next time.'
+            : type === 'insight'
+              ? 'Save a lesson / decision / procedure with save_lesson so it can be recalled next time.'
+              : type === 'all'
+                ? 'Index it first with index_repo / index_doc, or note a fix with remember or save_lesson.'
+                : 'Index it first with index_repo / index_doc.'
+        const tail =
+          overview.files === 0
+            ? '. The store has never been indexed.'
+            : overview.latest
+              ? `, last indexed at ${overview.latest}. Use pm_stats to see what the store contains.`
+              : '. Use pm_stats to see what the store contains.'
+        const nestedNote = wantMemory && memHitCount === 0 ? nestedIndexNote(root, config) : ''
+        return (
+          `No memory matches for "${args.query}" in ${root}. ${hint}\n` +
+          `Store overview: ${overview.files} files indexed, ${overview.entries} entries, ${overview.experience} experience notes${tail}${nestedNote}`
+        )
+      }
+      // 提示放在**最前**：`truncate()` 截的是尾部，而 insight/procedure 类条目单条就能到 600+
+      // 字符，放末尾会被整段截掉（实测 8000 字符预算下必被截）。
+      const note = wantMemory && memHitCount === 0 ? nestedIndexNote(root, config).trimStart() + '\n\n' : ''
+      return truncate(note + lines.join('\n\n'), config.maxOutputChars)
+    },
+  })
+}

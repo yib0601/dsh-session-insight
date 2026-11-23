@@ -1,0 +1,197 @@
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import { TEXT_OUTPUT, rootParam } from './output.js'
+import { openProjectContext } from './context.js'
+import { truncate } from '../util/text.js'
+import { sessionIdOf, stepProgress, timeAgo } from '../util/task-view.js'
+import { genTaskId, hash8, adoptStepsToSession, shouldAdoptToHost } from '../setup/taskbridge.js'
+import { fireReflect } from '../reflection-pipeline.js'
+import { resolveRoute } from '../llm-route.js'
+import { createHash } from 'node:crypto'
+
+function summaryOf(task) {
+  const { done, total } = stepProgress(task)
+  const files = (task.files || []).length
+  const mark = task.archived ? ' [归档]' : ''
+  return `### ${task.title}${mark}\n- 进度: ${done}/${total} 完成\n- 文件: ${files} 个\n- 最后活动: ${timeAgo(task.lastActiveAt || task.updatedAt)}`
+}
+
+export function listTasksTool(config) {
+  return defineTool({
+    name: 'list_tasks',
+    description:
+      'List this project\'s task records (archived included). Look here first in a new or resumed session, then select_task to pick one.',
+    parameters: {
+      root: rootParam(),
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const { store } = openProjectContext(exec, args, config)
+      const tasks = store.getTasks()
+      if (!tasks.length) {
+        return '任务记录: 0 套（先做一步再建清单，或用 select_task 新建）'
+      }
+      const lines = ['## 任务记录']
+      for (const task of tasks) lines.push(summaryOf(task))
+      lines.push(`\n任务记录: ${tasks.length} 套（list_tasks 查看，select_task 续做/切换）`)
+      return truncate(lines.join('\n\n'), config.maxOutputChars)
+    },
+  })
+}
+
+export function selectTaskTool(config, host) {
+  return defineTool({
+    name: 'select_task',
+    description:
+      'Bind the session to a task (its todo list and files read afterwards sync into it). Exact taskId '
+      + '(optionally renames/unarchives via title), or an exact title match (creates one if absent); '
+      + 'returns the task card used to rebuild the checklist.',
+    parameters: {
+      taskId: { type: 'string', description: 'exact task id' },
+      title: { type: 'string', description: 'exact title; creates if absent' },
+      root: rootParam(),
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const { root, store } = openProjectContext(exec, args, config)
+      const sid = sessionIdOf(exec)
+      const now = new Date().toISOString()
+      const error = (msg) => truncate(JSON.stringify({ success: false, error: msg }), config.maxOutputChars)
+      const prevBound = sid ? store.getBoundTaskId(sid) : undefined
+
+      if (!args.taskId && !args.title) {
+        return error('需要 taskId 或 title（先 list_tasks；未绑定会话出现 todo 时会自动新建任务）')
+      }
+
+      let task = null
+      let hint = ''
+      if (args.taskId) {
+        task = store.getTask(args.taskId)
+        if (!task) return error(`Task not found: ${args.taskId}`)
+        if (task.archived) {
+          task.archived = false
+          hint = '已解归档'
+        }
+        if (args.title && args.title !== task.title) {
+          task.title = args.title // 改名（自动标题可能带指令前缀，续接时可顺手改干净）
+          hint = (hint ? hint + '；' : '') + `已改名「${args.title}」`
+        }
+      } else {
+        const matches = store.getTasks().filter((t) => t.title === args.title)
+        if (matches.length > 1) {
+          const candidates = matches.map((t) => ({ taskId: t.id, title: t.title, updatedAt: t.updatedAt, archived: t.archived }))
+          return truncate(JSON.stringify({ success: false, error: '多个同名任务', candidates }), config.maxOutputChars)
+        }
+        if (matches.length === 1) {
+          task = matches[0]
+          if (task.archived) {
+            task.archived = false
+            hint = '已解归档'
+          }
+        } else {
+          task = {
+            id: genTaskId(root, args.title),
+            projectHash: hash8(root),
+            projectRoot: root,
+            title: args.title,
+            steps: null,
+            files: [],
+            archived: false,
+            lastSessionId: sid,
+            createdAt: now,
+            updatedAt: now,
+            lastActiveAt: now,
+          }
+          store.addTask(task)
+          hint = '已新建任务'
+        }
+      }
+
+      if (sid) {
+        store.setBinding(sid, task.id)
+        hint = (hint ? hint + '；' : '') + '已绑定本会话'
+      } else {
+        hint = (hint ? hint + '；' : '') + '（拿不到会话 id，未能持久绑定）'
+      }
+      task.updatedAt = now
+      task.lastActiveAt = now
+      if (sid) task.lastSessionId = sid
+      // 解归档 / 改名 / 戳活动时间都是直接改 task：不标脏则 save() 早退，tasks.json 不落盘。
+      store.markTasksDirty()
+      store.save()
+
+      // 反向接管：绑定成功后，把任务步骤推成宿主 todo/write（dsh 清单跟随我们的任务）
+      if (shouldAdoptToHost(config)) {
+        adoptStepsToSession(exec?.agent?.session || exec?.ctx?.session, task, { force: true })
+      }
+
+      // 反思钩子：切走旧任务时异步收割（默认关，零成本；失败只记日志）
+      if (prevBound && prevBound !== task.id) {
+        fireReflect(config, host, root, prevBound, 'switch-away', resolveRoute(exec, config))
+      }
+
+      const card = {
+        taskId: task.id,
+        title: task.title,
+        steps: task.steps,
+        files: task.files,
+        insights: task.insights || [], // v0.5：任务级 lessons/decisions/procedures
+        hint: hint + '；请据此用 todo_write 重建本会话清单',
+        ...(store.lastSaveOk === false ? { persisted: false, warning: '内存已绑定，但 tasks.json 未落盘（权限/磁盘/锁）；退出前会重试。' } : {}),
+      }
+      return truncate(JSON.stringify(card), config.maxOutputChars)
+    },
+  })
+}
+
+export function showTaskPanelTool(config) {
+  return defineTool({
+    name: 'show_task_panel',
+    description: 'Open the task panel in the UI.',
+    parameters: {},
+    output: TEXT_OUTPUT,
+    async execute() {
+      // 开面板的动作在**客户端**：这个工具名被 src/client/ShowTaskPanelNode.tsx 认领，
+      // 结果节点一渲染就由浏览器侧调 `taskUIStore.open()`。
+      //
+      // 宿主进程没有触碰面板状态的通道 —— 面板的 closed/minimized 是浏览器侧 UI store，
+      // 而 `ToolRunContext` 只有 `deferContext()` / `concludeTurn()` 两个自有成员
+      // （packages/core/tools/src/index.ts:418），**没有 `ctx`**。旧实现读 `exec.ctx` 再
+      // `emit('dsh:task-panel:show')`，于是每次都返回「无法获取上下文」，面板从未打开过。
+      return '已请求打开任务面板。'
+    },
+  })
+}
+
+export function archiveTaskTool(config, host) {
+  return defineTool({
+    name: 'archive_task',
+    description: 'Archive a task (restore by selecting it again).',
+    parameters: {
+      taskId: { type: 'string', required: true, description: 'task id' },
+      root: rootParam(),
+    },
+    output: TEXT_OUTPUT,
+    async execute(args, exec) {
+      const { root, store } = openProjectContext(exec, args, config)
+      const task = store.getTask(args.taskId)
+      if (!task) return truncate(JSON.stringify({ success: false, error: 'Task not found' }), config.maxOutputChars)
+      if (task.archived) return truncate(JSON.stringify({ success: false, error: 'Already archived' }), config.maxOutputChars)
+      task.archived = true
+      task.updatedAt = new Date().toISOString()
+      // 归档 = 停止续做：绑定必须在同一事务里清掉，否则本会话（以及别的会话）下一次
+      // 注入仍会拿到这张归档任务卡，task 级 insights 也继续可见；下一次 load 的
+      // _pruneBindings() 会自愈，但用户已经在中间几步看到了错误状态。
+      store.removeBindingsForTask(task.id)
+      store.markTasksDirty()
+      store.save()
+      // 反思钩子：归档即收割最终教训（默认关）
+      fireReflect(config, host, root, args.taskId, 'archive', resolveRoute(exec, config))
+      return truncate(JSON.stringify({
+        success: true,
+        archived: true,
+        hint: '已归档，select_task 可恢复',
+        ...(store.lastSaveOk === false ? { persisted: false, warning: '内存已归档，但 tasks.json 未落盘（权限/磁盘/锁）；退出前会重试。' } : {}),
+      }), config.maxOutputChars)
+    },
+  })
+}
