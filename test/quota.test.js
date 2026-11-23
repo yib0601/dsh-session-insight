@@ -304,8 +304,12 @@ assert.equal(quotaSnapshotOf({ status: 'ready', source: 'workbuddy', kind: 'wind
 
 // ── sourceOfSessions ────────────────────────────────────────────────────────
 assert.equal(QUOTA_DEFAULT_SOURCE, 'deepseek');
+// A row the main view retains is the conversation the foot answers for, so the
+// classification cases below are stated on a focused session — the landing view
+// deliberately derives nothing (see the cross-session case further down).
 const session = (id, time, provider, model) => ({
   ids: [id],
+  byId: { [id]: { id, retainedBy: { mainView: 1 } } },
   projectionsBySession: { [id]: { values: { tcTimeline: { requests: [{ time, provider, model }] } } } },
 });
 assert.equal(sourceOfSessions(undefined), null,
@@ -318,18 +322,22 @@ assert.equal(sourceOfSessions(session('a', 100, 'ai-router', 'deepseek-v4.1-flas
   'a gateway route settles on no quota instead of borrowing the OpenCode windows');
 assert.equal(sourceOfSessions(session('a', 100, 'opencode', 'OpenCode Zen · 免费 · big-pickle · 200K')), 'opencode-go',
   'Zen shares the same account key, so it reads the Go windows');
-// The newest request across sessions wins.
+// With nothing retained in the main view the remembered vendor stands in, and no
+// other conversation is scanned: several sessions run at once on different plans,
+// so "the newest request anywhere" flips every few seconds and the foot used to
+// alternate between one subscription's windows and「此供应商无额度可查」.
 const mixed = {
   ids: ['a', 'b'],
+  byId: { a: { id: 'a', retainedBy: { mainView: 0 } }, b: { id: 'b', retainedBy: { mainView: 0 } } },
   projectionsBySession: {
     a: { values: { tcTimeline: { requests: [{ time: 100, provider: 'deepseek', model: 'deepseek-v4.1-flash' }] } } },
     b: { values: { tcTimeline: { requests: [{ time: 100, provider: 'x', model: 'y' }, { time: 200, provider: 'ai-router', model: 'deepseek-v4.1-flash' }] } } },
   },
 };
-assert.equal(sourceOfSessions(mixed), 'none',
-  'the newest request decides, and a gateway route answers "no quota"');
-assert.equal(sourceOfSessions({ ids: ['a'], projectionsBySession: { a: { values: {} } } }), null,
-  'a session without a timeline names no vendor');
+assert.equal(sourceOfSessions(mixed), null,
+  'the landing view names no vendor: another session\'s newer route does not decide');
+assert.equal(sourceOfSessions({ ids: ['a'], byId: { a: { id: 'a', retainedBy: { mainView: 1 } } }, projectionsBySession: { a: { values: {} } } }),
+  null, 'a focused session without a timeline names no vendor');
 
 // ── main-view focus: running vs idle decides which route answers ────────────
 // A conversation the user is looking at is a row retained by the main view; the
@@ -375,6 +383,30 @@ assert.equal(sourceOfSessions(gatewayRunning, statusOf('c', true, undefined), nu
   'none', 'with no label the gateway stays quota-less rather than borrowing another plan');
 assert.equal(sourceOfSessions(gatewayRunning, statusOf('c', true, undefined), null, () => 'OpenRouter · 付费 · x'),
   'none', 'an unreadable platform behind the gateway is a settled answer');
+
+// The gateway states the answer itself (`/v1/models` row `quota.source`, from
+// `ai-shim`'s `router/quota_source.py`), which outranks every local guess: it is
+// the party that bills, and it resolved the row's backends instead of rendering
+// them into a name. This is what makes the foot correct before the catalog loads.
+assert.equal(sourceOfRoute('ai-router', 'deepseek-v4.1-flash', '', 'workbuddy'), 'workbuddy',
+  'a gateway-stated source wins with no display name at all');
+assert.equal(sourceOfRoute('ai-router', 'deepseek-v4.1-flash', 'WorkBuddy · 付费 · DeepSeek-V4.1-Flash · 1M'),
+  'workbuddy', 'without a stated source the display name still classifies the route');
+assert.equal(sourceOfRoute('opencode-go', 'deepseek-v4.1-flash', 'DeepSeek V4.1 Flash', null), 'none',
+  'a stated "no readable allowance" is settled even for a provider that normally maps');
+assert.equal(sourceOfRoute('ai-router', 'x', 'OpenRouter · 付费 · x', 'deepseek'), 'deepseek',
+  'the stated source outranks a rendering that disagrees with it');
+assert.equal(sourceOfRoute('', '', '', 'workbuddy'), 'workbuddy',
+  'the stated source needs no provider id either');
+assert.equal(sourceOfSessions(gatewayRunning, statusOf('c', true, undefined), null,
+  () => '', (provider, model) => (provider === 'ai-router' && model === 'deepseek-v4.1-flash' ? 'workbuddy' : undefined)),
+  'workbuddy', 'the map answers a running gateway turn whose catalog has not loaded');
+assert.equal(sourceOfSessions(gatewayRunning, statusOf('c', true, undefined), null,
+  () => '', () => null),
+  'none', 'a map entry of null is the gateway saying there is nothing to read');
+assert.equal(sourceOfSessions(gatewayRunning, statusOf('c', true, undefined), null,
+  () => '', () => undefined),
+  'none', 'a route the map does not cover falls back to the display name, which is empty here');
 // Only the main-view session decides; a newer route elsewhere does not win.
 const twoSessions = {
   ids: ['a', 'b'],
@@ -483,7 +515,11 @@ assert.equal(
   undefined,
   'an empty current without requests names no route');
 assert.equal(
-  sourceOfSessions({ ids: ['a'], projectionsBySession: projections('a') }), 'opencode-go',
+  sourceOfSessions({
+    ids: ['a'],
+    byId: { a: { id: 'a', retainedBy: { mainView: 1 } } },
+    projectionsBySession: projections('a'),
+  }), 'opencode-go',
   'the quota follows a switch that has not been billed yet');
 
 // ── source memory ───────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import test from 'node:test';
 import { BILLING_LABELS, displayName, fmtWindow, nameOk, PLATFORM_LABELS } from '../host/model-sync/naming.js';
 import {
   GENERATED_COMPAT, MODALITIES, REASONING_LEVELS, buildCatalog, buildEntry, isGeneratedReasoning,
+  quotaSourceOf,
   modalitiesOf, reasoningLevelsOf,
 } from '../host/model-sync/catalog.js';
 import {
@@ -140,6 +141,23 @@ assert.deepEqual(invalid, [], 'the legacy marker is stripped before the gate run
 
 const refused = buildCatalog([{ id: 'c', row: { name: 'C' } }], new Map());
 assert.deepEqual(refused.invalid, []);
+
+// The gateway states which plan pays per row (`ai-shim`'s `quota.source`); a DSH
+// model entry cannot carry that field, so the sync lifts it out and the Host
+// serves it beside the catalog.
+const withQuota = buildCatalog([
+  { id: 'wb', row: { name: 'WB', quota: { source: 'workbuddy', basis: 'single' } } },
+  { id: 'mixed', row: { name: 'M', quota: { source: null, basis: 'mixed' } } },
+  { id: 'silent', row: { name: 'S' } },
+  { id: 'plain', row: { name: 'P', quota: 'nonsense' } },
+], new Map());
+assert.deepEqual(withQuota.quotaSources, { wb: 'workbuddy', mixed: null },
+  'a stated source and a stated "nothing readable" both survive; silence is not a verdict');
+assert.equal(withQuota.entries.some((entry) => 'quota' in entry), false,
+  'the entry itself stays inside the pi-ai schema');
+assert.deepEqual(quotaSourceOf({ quota: { source: 'oc', basis: 'single' } }), 'oc');
+assert.equal(quotaSourceOf({ quota: { source: null, basis: 'unreadable' } }), null);
+assert.equal(quotaSourceOf({ name: 'no quota field' }), undefined);
 
 // ── listing ─────────────────────────────────────────────────────────────────
 assert.equal(listingUrl('https://gw.example', 'anthropic-messages'), 'https://gw.example/v1/models?limit=1000');
@@ -356,8 +374,8 @@ assert.equal(resolveSyncOptions({ DSH_TURN_COST_SETTINGS_NS: 'llm-pi-ai-2' }).se
   const originalFetch = globalThis.fetch;
   const calls = [];
   const listing = { data: [
-    { id: 'kimi-k3', name: 'Kimi-K3', backends: ['workbuddy'], billing: 'paid', input: ['text', 'image'], context_window: 1_000_000, max_tokens: 32_000 },
-    { id: 'glm-5.3', name: 'GLM-5.3', backends: ['workbuddy'], billing: 'paid', input: ['text', 'image'], context_window: 1_000_000, max_tokens: 64_000 },
+    { id: 'kimi-k3', name: 'Kimi-K3', backends: ['workbuddy'], billing: 'paid', input: ['text', 'image'], context_window: 1_000_000, max_tokens: 32_000, quota: { source: 'workbuddy', basis: 'single', backends: { workbuddy: 'workbuddy' } } },
+    { id: 'glm-5.3', name: 'GLM-5.3', backends: ['workbuddy'], billing: 'paid', input: ['text', 'image'], context_window: 1_000_000, max_tokens: 64_000, quota: { source: 'workbuddy', basis: 'single', backends: { workbuddy: 'workbuddy' } } },
   ] };
   let release = () => {};
   let gate = null;
@@ -407,6 +425,11 @@ assert.equal(resolveSyncOptions({ DSH_TURN_COST_SETTINGS_NS: 'llm-pi-ai-2' }).se
     assert.equal(second.refreshing, false);
     assert.equal(second.last.reason, 'written');
     assert.equal(calls.length, before, 'a fresh read does not hit the gateway again');
+    // The route also carries the gateway's own「哪个模型在哪份订阅上」map: model
+    // entries cannot hold it, and the Client needs it before it can decide what
+    // the sidebar foot should display.
+    assert.deepEqual(second.quotaSources, { 'kimi-k3': 'workbuddy', 'glm-5.3': 'workbuddy' });
+    assert.equal(typeof second.quotaSourcesAt, 'number');
 
     // 3. `force=1` is the explicit path and does wait for the gateway.
     const forced = await (await registered.resource(new Request('http://127.0.0.1:3080/dsh-turn-cost/models?force=1'))).json();

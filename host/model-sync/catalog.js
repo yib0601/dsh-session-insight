@@ -162,19 +162,51 @@ export function buildEntry(id, row, existing) {
 }
 
 /**
+ * The billing source the gateway states for one row, or `undefined` when it says
+ * nothing.
+ *
+ * `/v1/models` rows carry `quota: {source, basis, backends}` (`ai-shim`'s
+ * `router/quota_source.py`), which is the machine-readable answer to "whose
+ * subscription pays for this model". A DSH model entry cannot carry it — the
+ * pi-ai schema owns that shape — so it is lifted out here and served beside the
+ * catalog on the Host's own route, keyed by model id.
+ *
+ * `null` is a settled answer, not a missing one: the gateway looked at the row's
+ * backends and no allowance can be read (`mixed` — two different plans could pay,
+ * or a backend with no quota API). The Client renders「此供应商无额度可查」from it
+ * instead of guessing from a display name.
+ *
+ * @param row - one listing row.
+ * @returns a source id, `null` (settled "no readable allowance"), or `undefined`
+ *   (the gateway did not say — an older build, or a plain OpenAI endpoint).
+ */
+export function quotaSourceOf(row) {
+  const quota = row?.quota;
+  if (quota === null || typeof quota !== 'object') return undefined;
+  const source = quota.source;
+  if (typeof source === 'string' && source !== '') return source;
+  return null;
+}
+
+/**
  * Build the whole `models` list, in the endpoint's own order.
  * @param rows - listing rows (`{id, row}`), already de-duplicated.
  * @param stored - stored entries keyed by id.
- * @returns `{ entries, invalid }` — `invalid` names the ids whose generated name
- *   left the naming contract, so the caller can refuse to write the listing.
+ * @returns `{ entries, invalid, quotaSources }` — `invalid` names the ids whose
+ *   generated name left the naming contract, so the caller can refuse to write
+ *   the listing; `quotaSources` maps model id → the source the gateway stated
+ *   (only ids the gateway actually classified appear).
  */
 export function buildCatalog(rows, stored = new Map()) {
   const entries = [];
   const invalid = [];
+  const quotaSources = {};
   for (const { id, row } of rows) {
     const entry = buildEntry(id, row, stored.get(id));
     if (!nameOk(entry.name)) invalid.push({ id, name: entry.name });
     entries.push(entry);
+    const source = quotaSourceOf(row);
+    if (source !== undefined) quotaSources[id] = source;
   }
-  return { entries, invalid };
+  return { entries, invalid, quotaSources };
 }

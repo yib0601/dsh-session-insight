@@ -21,7 +21,7 @@
  */
 import Schema from '@deepseek-ai/schemastery';
 import { contextProjections } from './host/projections.js';
-import { createQuotaReader, mountQuotaRoute } from './host/quota.js';
+import { createQuotaReader, mountQuotaRoute, resolveGateway } from './host/quota.js';
 import { mountModelSync, resolveSyncOptions } from './host/model-sync/mount.js';
 import { Config as memoryConfig, apply as applyMemory } from './src/memory/index.js';
 
@@ -77,7 +77,15 @@ export function apply(ctx, config) {
     const credentials = scoped.get ? scoped.get('credentials') : scoped.credentials;
     if (webServer === undefined || webServer === null || typeof webServer.register !== 'function') return;
     if (credentials === undefined || credentials === null || typeof credentials.resolve !== 'function') return;
-    const reader = createQuotaReader();
+    // The self-hosted gateway (`ai-shim`) answers first when `DSH_TURN_COST_GATEWAY_URL`
+    // is set: it owns both halves of the question — which backend a route bills
+    // (`/v1/models` rows carry `quota.source`) and what is left on it (`/v1/quota`).
+    // Unset keeps the three direct vendor reads; see host/quota.js.
+    const gateway = resolveGateway(process.env);
+    if (gateway !== null) {
+      ctx.logger?.info?.(`[dsh-turn-cost] quota via gateway ${gateway.baseURL}`);
+    }
+    const reader = createQuotaReader(gateway === null ? {} : { gateway });
     // The route names a credential reference per source; resolution happens on
     // every read so a rotated key reaches the next poll without a restart.
     const readKey = async (ref) => {

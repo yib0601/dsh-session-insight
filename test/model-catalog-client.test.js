@@ -200,3 +200,54 @@ test('catalog store paints the cache, follows the background refresh, keeps a fa
   models.writeCachedCatalog({ ...models.emptyCatalog(), models: [KIMI], count: 1, at: Date.now() - 2 * 86_400_000 });
   assert.equal(models.readCachedCatalog(Date.now()), null, 'a two-day-old paint is not shown');
 });
+
+test('the gateway billing-source map decides the foot, not the rendered name', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000 });
+  const storage = fakeStorage();
+  const { models } = loadChunk(storage);
+
+  // The Host states which plan pays per model, and the browser keeps that answer
+  // so the first frame after a reload does not have to guess from a display name.
+  const HOST_REPLY = {
+    route: 'ai-router',
+    quotaSources: { 'kimi-k3': 'workbuddy', 'glm-5.3': null, 'plain-id': 'opencode-go' },
+    quotaSourcesAt: 1_000,
+    models: [KIMI],
+  };
+  const read = await models.loadQuotaSources(async () => ({ ok: true, status: 200, json: async () => HOST_REPLY }), () => 1_000);
+  assert.deepEqual(read, {
+    route: 'ai-router',
+    sources: { 'kimi-k3': 'workbuddy', 'glm-5.3': null, 'plain-id': 'opencode-go' },
+    at: 1_000,
+  });
+  assert.equal(JSON.parse(storage.getItem(models.QUOTA_SOURCE_CACHE_KEY)).route, 'ai-router',
+    'the map is persisted for the next page load');
+
+  // A stored map is served without asking the Host again...
+  const cached = models.readCachedQuotaSources(1_000);
+  assert.deepEqual(cached.sources, read.sources);
+  // ...but it does expire, and an expired map must not outlive its truth.
+  assert.equal(models.readCachedQuotaSources(1_000 + models.QUOTA_SOURCE_TTL_MS + 1), null);
+
+  // Per-route lookup: the same model id on another route is a different plan.
+  assert.equal(models.quotaSourceIn(cached, 'ai-router', 'kimi-k3'), 'workbuddy');
+  assert.equal(models.quotaSourceIn(cached, 'ai-router', 'glm-5.3'), null,
+    'a null entry is the gateway saying nothing is readable');
+  assert.equal(models.quotaSourceIn(cached, 'opencode-go', 'kimi-k3'), undefined,
+    'another route is not this route: the caller keeps its own fallback');
+  assert.equal(models.quotaSourceIn(cached, 'ai-router', 'unknown-model'), undefined,
+    'a model the gateway did not classify has no opinion');
+  assert.equal(models.quotaSourceIn(null, 'ai-router', 'kimi-k3'), undefined);
+  assert.equal(models.quotaSourceIn({ route: 'ai-router', sources: null }, 'ai-router', 'kimi-k3'), undefined);
+
+  // A Host that has no map yet (older build) yields no opinion rather than null:
+  // "nobody said" must not be rendered as「无额度可查」.
+  const empty = await models.loadQuotaSources(async () => ({ ok: true, status: 200, json: async () => ({ route: 'ai-router' }) }), () => 1_000);
+  assert.equal(empty, null);
+  // A failed read rejects (the hook swallows it and keeps the stored map): an
+  // unreachable Host is not evidence that any plan changed.
+  await assert.rejects(
+    () => models.loadQuotaSources(async () => ({ ok: false, status: 503, json: async () => ({}) }), () => 1_000),
+    /http-503/u,
+  );
+});

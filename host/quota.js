@@ -14,6 +14,15 @@
  * `failed`, and only a parsed official body reports numbers. A failure is never
  * cached, so the next poll retries; a success is cached per source for
  * {@link CACHE_MS} so a page refresh does not hammer the vendor endpoint.
+ *
+ * When `DSH_TURN_COST_GATEWAY_URL` names the self-hosted gateway (`ai-shim`), a
+ * fourth reader answers **first**: `GET /v1/quota?backend=<id>` on that origin,
+ * authenticated with the same bearer the `ai-router` provider uses. The gateway
+ * already runs every probe (it is the only party holding the WorkBuddy account
+ * token and the only one that knows which backend a router row bills), so this
+ * path needs no vendor keys, no shim tunnel, and no per-source endpoint table.
+ * Every failure falls through to the vendor reads below — the gateway is an
+ * upgrade, never a new single point of failure.
  */
 import { randomUUID } from 'node:crypto';
 
@@ -35,6 +44,43 @@ export const KEY_REFS = Object.freeze({
    * ref below is a *bearer for that local route*, not a vendor key.
    */
   workbuddy: 'WORKBUDDY_SHIM_TOKEN',
+});
+
+/**
+ * The self-hosted gateway (`ai-shim`) as the **preferred** reader.
+ *
+ * The gateway is what this DSH instance actually talks to, so it is the only
+ * party that knows two things this plugin would otherwise have to guess:
+ *
+ *   - which backend a route bills (`/v1/models` rows carry `quota.source`,
+ *     derived from the row's `backends` — see `router/quota_source.py`), and
+ *   - how much is left on it (`/v1/quota` returns the gateway's own per-backend
+ *     probe: shim credit packages, OpenCode windows, wallets).
+ *
+ * Reading through it also removes two local failure modes: the WorkBuddy shim
+ * only listens on the *gateway's* loopback (this machine needs a tunnel to reach
+ * it), and each vendor wants its own key. With a gateway URL configured the Host
+ * asks one origin with one bearer instead.
+ *
+ * Unset = off: the three vendor reads below stay exactly as they were, so an
+ * installation without a gateway behaves identically.
+ */
+export const GATEWAY_URL_ENV = 'DSH_TURN_COST_GATEWAY_URL';
+/** Bearer ref for that gateway — the same key the `ai-router` provider uses. */
+export const GATEWAY_KEY_REF = 'AI_ROUTER_API_KEY';
+/** `source=backend` pairs overriding the default source → backend names. */
+export const GATEWAY_BACKENDS_ENV = 'DSH_TURN_COST_GATEWAY_BACKENDS';
+/** Path the gateway serves per-backend quota on (Bearer, same key as /v1/models). */
+export const GATEWAY_QUOTA_PATH = '/v1/quota';
+/**
+ * Which gateway backend answers for each source. Defaults match the deployment
+ * this plugin was written against; `DSH_TURN_COST_GATEWAY_BACKENDS` overrides
+ * any of them (`workbuddy=wb,opencode-go=ocgo`) without a code change.
+ */
+export const GATEWAY_BACKEND_OF_SOURCE = Object.freeze({
+  workbuddy: 'workbuddy',
+  'opencode-go': 'oc-go',
+  deepseek: 'deepseek-official',
 });
 
 /** DeepSeek wallet balance endpoint (Bearer provider key). */
@@ -210,6 +256,99 @@ export function normalizeWorkbuddyQuota(payload) {
 }
 
 
+// ── gateway (`ai-shim`) reader ──────────────────────────────────────────────
+
+/**
+ * Read the gateway configuration out of the environment.
+ *
+ * @param env - `process.env` (or a test double).
+ * @returns `{baseURL, keyRef, backends}` or `null` when no gateway is configured.
+ */
+export function resolveGateway(env) {
+  const source = env ?? (typeof process !== 'undefined' ? process.env : undefined);
+  if (source === undefined || source === null) return null;
+  const raw = source[GATEWAY_URL_ENV];
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  const baseURL = raw.trim().replace(/\/+$/u, '');
+  const backends = { ...GATEWAY_BACKEND_OF_SOURCE };
+  const pairs = source[GATEWAY_BACKENDS_ENV];
+  if (typeof pairs === 'string') {
+    for (const pair of pairs.split(',')) {
+      const [sourceId, backend] = pair.split('=').map((part) => part.trim());
+      if (sourceId === '' || sourceId === undefined) continue;
+      if (backend === undefined || backend === '') delete backends[sourceId];
+      else backends[sourceId] = backend;
+    }
+  }
+  return { baseURL, keyRef: source.DSH_TURN_COST_GATEWAY_KEY_REF ?? GATEWAY_KEY_REF, backends };
+}
+
+/** The gateway's per-backend quota URL, or `null` when that source has no backend. */
+export function gatewayQuotaUrl(gateway, sourceId, force) {
+  const backend = gateway?.backends?.[sourceId];
+  if (typeof backend !== 'string' || backend === '') return null;
+  const params = new URLSearchParams({ backend });
+  if (force === true) params.set('refresh', '1');
+  return `${gateway.baseURL}${GATEWAY_QUOTA_PATH}?${params.toString()}`;
+}
+
+/**
+ * The gateway's answer → the plugin's one envelope, or `null` to fall back.
+ *
+ * `null` is the important part: the gateway reports `supported:false` for a
+ * backend whose vendor exposes no allowance (a Trae shim, a Gemini key), and a
+ * source it does not route at all simply is not in the array. Both mean "this
+ * reader cannot answer here", so the vendor path still gets its turn instead of
+ * the card going blank.
+ *
+ * @param backendId - the gateway backend this source reads (`workbuddy`, `oc-go`).
+ * @param payload - the parsed `/v1/quota` body (`{data:{backends:[…]}}`).
+ * @returns `{kind:'windows', windows, plan, totals}` or `null`.
+ */
+export function normalizeGatewayQuota(backendId, payload) {
+  const backends = payload?.data?.backends;
+  if (!Array.isArray(backends) || typeof backendId !== 'string' || backendId === '') return null;
+  const rows = backends.filter((row) => row?.backend === backendId);
+  const entry = rows.length === 1 ? rows[0] : null;
+  if (entry === null || entry.supported !== true || entry.kind !== 'windows') return null;
+  const windows = [];
+  for (const window of Array.isArray(entry.windows) ? entry.windows : []) {
+    const percent = Number(window?.percent);
+    if (!Number.isFinite(percent)) continue;
+    const row = {
+      key: typeof window.name === 'string' && window.name !== '' ? window.name : `bucket-${String(windows.length)}`,
+      percent: Math.max(0, Math.min(100, percent)),
+      status: typeof window.status === 'string' && window.status !== '' ? window.status : 'ok',
+      resetsAt: typeof window.resets_at === 'string' ? window.resets_at : null,
+    };
+    if (typeof window.label === 'string' && window.label !== '') row.label = window.label;
+    const total = amountOf(window.total);
+    const remain = amountOf(window.remain);
+    if (total !== null) row.total = total;
+    if (remain !== null) row.remain = remain;
+    windows.push(row);
+  }
+  if (windows.length === 0) return null;
+  const rawPlan = entry.plan !== null && typeof entry.plan === 'object' ? entry.plan : null;
+  const plan = rawPlan === null ? null : {
+    name: typeof rawPlan.name === 'string' ? rawPlan.name : '',
+    code: typeof rawPlan.code === 'string' ? rawPlan.code : '',
+    paid: rawPlan.paid === true,
+    expiresAt: typeof rawPlan.expires_at === 'string' ? rawPlan.expires_at
+      : (typeof rawPlan.expiresAt === 'string' ? rawPlan.expiresAt : null),
+  };
+  const rawTotals = entry.totals !== null && typeof entry.totals === 'object' ? entry.totals : null;
+  const totals = rawTotals === null ? null : {
+    total: amountOf(rawTotals.total),
+    remain: amountOf(rawTotals.remain),
+    used: amountOf(rawTotals.used),
+    unit: typeof rawTotals.unit === 'string' && rawTotals.unit !== '' ? rawTotals.unit : 'credits',
+  };
+  const keeper = plan !== null && (plan.name !== '' || plan.code !== '' || plan.expiresAt !== null) ? plan : null;
+  return { kind: 'windows', windows, plan: keeper, totals };
+}
+
+
 /**
  * Wired sources. `headers` is called per request so a session identity is minted
  * fresh instead of being replayed.
@@ -258,6 +397,47 @@ export function createQuotaReader(options = {}) {
   /** Last *successful* body per source; failures never overwrite it. */
   const cached = new Map();
 
+  /**
+   * One read through the gateway, or `null` when it cannot answer.
+   *
+   * @param sourceId - the source being read.
+   * @param readKey - credential resolver, the same one the vendor path uses.
+   * @param force - bypass the Host cache on the gateway side too.
+   * @returns the ready body, or `null` (never throws, never caches a failure).
+   */
+  const readViaGateway = async (sourceId, readKey, force) => {
+    const gateway = options.gateway;
+    const url = gatewayQuotaUrl(gateway, sourceId, force);
+    if (url === null) return null;
+    let key;
+    try {
+      key = await readKey(gateway.keyRef);
+    } catch (error) {
+      return null;
+    }
+    if (typeof key !== 'string' || key === '') return null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => { controller.abort(); }, timeoutMs);
+    try {
+      const response = await fetchImpl(url, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${key}`, accept: 'application/json' },
+        signal: controller.signal,
+      });
+      if (!response.ok) return null;
+      const normalized = normalizeGatewayQuota(gateway.backends[sourceId], await response.json());
+      if (normalized === null) return null;
+      const at = now();
+      const body = { status: 'ready', source: sourceId, ...normalized, at, via: 'gateway' };
+      cached.set(sourceId, { at, body });
+      return body;
+    } catch (error) {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   const read = async (sourceId, readKey, force) => {
     const source = QUOTA_SOURCES[sourceId];
     if (source === undefined) return { status: 'failed', reason: 'unknown-source', at: now() };
@@ -265,6 +445,16 @@ export function createQuotaReader(options = {}) {
     const hit = cached.get(sourceId);
     if (force !== true && hit !== undefined && at - hit.at < cacheMs) {
       return { ...hit.body, cached: true };
+    }
+    // The gateway answers first: it is the party this client actually talks to,
+    // so it knows both which backend a route bills and how much is left. Any
+    // failure (no key, unreachable, `supported:false`, an unreadable platform)
+    // falls through to the vendor read below — a gateway that is down must not
+    // be able to blank a figure that a direct read can still produce.
+    const gateway = options.gateway ?? null;
+    if (gateway !== null) {
+      const viaGateway = await readViaGateway(sourceId, readKey, force);
+      if (viaGateway !== null) return viaGateway;
     }
     let key;
     try {

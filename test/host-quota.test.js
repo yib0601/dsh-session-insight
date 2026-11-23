@@ -12,6 +12,8 @@ import {
   USAGE_ENDPOINT, USAGE_WINDOWS, DEFAULT_SOURCE, WORKBUDDY_QUOTA_ENDPOINT,
   normalizeBalance, normalizeOpenCodeUsage, normalizeWorkbuddyQuota,
   createQuotaReader, mountQuotaRoute,
+  GATEWAY_URL_ENV, GATEWAY_KEY_REF, GATEWAY_BACKENDS_ENV, GATEWAY_QUOTA_PATH,
+  GATEWAY_BACKEND_OF_SOURCE, resolveGateway, gatewayQuotaUrl, normalizeGatewayQuota,
 } from '../host/quota.js';
 
 // ── constants ───────────────────────────────────────────────────────────────
@@ -256,5 +258,119 @@ assert.equal(okResponse.headers.get('cache-control'), 'no-store', 'the page must
 
 dispose();
 assert.equal(registered.length, 0, 'the disposer unregisters the route');
+
+// ── gateway (ai-shim): one origin answers, the vendor path stays as fallback ─
+// The self-hosted gateway owns both halves of the question — which backend a
+// route bills and what is left on it — so when it is configured it answers
+// first. Every failure must fall through to the direct vendor read: a gateway
+// outage may not be able to blank a figure a vendor read can still produce.
+assert.equal(GATEWAY_URL_ENV, 'DSH_TURN_COST_GATEWAY_URL');
+assert.equal(GATEWAY_KEY_REF, 'AI_ROUTER_API_KEY');
+assert.equal(GATEWAY_BACKENDS_ENV, 'DSH_TURN_COST_GATEWAY_BACKENDS');
+assert.equal(GATEWAY_QUOTA_PATH, '/v1/quota');
+assert.deepEqual({ ...GATEWAY_BACKEND_OF_SOURCE },
+  { workbuddy: 'workbuddy', 'opencode-go': 'oc-go', deepseek: 'deepseek-official' });
+assert.equal(resolveGateway({}), null, 'no URL means no gateway read at all');
+assert.equal(resolveGateway({ DSH_TURN_COST_GATEWAY_URL: '   ' }), null, 'a blank URL is unset');
+
+const gatewayEnv = {
+  DSH_TURN_COST_GATEWAY_URL: 'https://gw.example/',
+  DSH_TURN_COST_GATEWAY_BACKENDS: 'opencode-go=ocg,deepseek',
+};
+const gateway = resolveGateway(gatewayEnv);
+assert.equal(gateway.baseURL, 'https://gw.example', 'the trailing slash is dropped once, here');
+assert.equal(gateway.keyRef, GATEWAY_KEY_REF);
+assert.equal(gateway.backends['opencode-go'], 'ocg', 'a pair renames that backend');
+assert.equal(gateway.backends.deepseek, undefined, 'an empty right-hand side disables that source');
+assert.equal(gateway.backends.workbuddy, 'workbuddy', 'unmentioned sources keep the default');
+assert.equal(gatewayQuotaUrl(gateway, 'workbuddy', false), 'https://gw.example/v1/quota?backend=workbuddy');
+assert.equal(gatewayQuotaUrl(gateway, 'workbuddy', true), 'https://gw.example/v1/quota?backend=workbuddy&refresh=1');
+assert.equal(gatewayQuotaUrl(gateway, 'deepseek', false), null, 'a disabled source has no gateway URL');
+
+const gatewayBody = {
+  object: 'list',
+  data: {
+    backends: [{
+      backend: 'workbuddy', supported: true, kind: 'windows', adapter: 'shim',
+      windows: [
+        { name: 'plan_base', label: '套餐积分', percent: 17.4, status: 'ok',
+          resets_at: '2026-12-23T01:46:03Z', total: 4000, remain: 3303.2 },
+        { name: 'benefit', label: '奖励积分', percent: 97.3, status: 'ok',
+          resets_at: '2026-12-23T01:46:03Z', total: 3700, remain: 100 },
+      ],
+      plan: { name: '高级版', paid: true, expires_at: '2026-12-23T01:46:03Z' },
+      totals: { total: 12700, remain: 8403.2, used: 4296.8, unit: 'credits' },
+    }],
+  },
+};
+assert.deepEqual(normalizeGatewayQuota('workbuddy', gatewayBody), {
+  kind: 'windows',
+  windows: [
+    { key: 'plan_base', label: '套餐积分', percent: 17.4, status: 'ok', resetsAt: '2026-12-23T01:46:03Z', total: 4000, remain: 3303.2 },
+    { key: 'benefit', label: '奖励积分', percent: 97.3, status: 'ok', resetsAt: '2026-12-23T01:46:03Z', total: 3700, remain: 100 },
+  ],
+  plan: { name: '高级版', code: '', paid: true, expiresAt: '2026-12-23T01:46:03Z' },
+  totals: { total: 12700, remain: 8403.2, used: 4296.8, unit: 'credits' },
+});
+// Anything the gateway cannot answer for is a fallback signal, not a verdict.
+assert.equal(normalizeGatewayQuota('workbuddy', { data: { backends: [
+  { backend: 'workbuddy', supported: false, reason: '没有订阅额度接口' }] } }), null,
+  'an unsupported backend means the vendor read still gets its turn');
+assert.equal(normalizeGatewayQuota('workbuddy', { data: { backends: [
+  { backend: 'workbuddy', supported: true, kind: 'models', models: {} }] } }), null,
+  'per-model free buckets are not the subscription answer');
+assert.equal(normalizeGatewayQuota('oc-go', gatewayBody), null, 'a source the gateway does not route cannot answer');
+assert.equal(normalizeGatewayQuota('workbuddy', { status: 'failed' }), null, 'a malformed body is a fallback');
+
+/** A reader whose gateway answers, plus a vendor endpoint that must not be touched. */
+const gatewaySeen = [];
+const vendorSeen = [];
+const viaGateway = createQuotaReader({
+  gateway: resolveGateway({ DSH_TURN_COST_GATEWAY_URL: 'https://gw.example' }),
+  fetch: async (url, init) => {
+    if (String(url).startsWith('https://gw.example')) {
+      gatewaySeen.push({ url: String(url), auth: init.headers.authorization });
+      return { ok: true, status: 200, json: async () => gatewayBody };
+    }
+    vendorSeen.push(String(url));
+    return { ok: true, status: 200, json: async () => ({ usage: {} }) };
+  },
+  now: () => 1_000,
+});
+const gatewayRead = await viaGateway.read('workbuddy', async (ref) => (ref === GATEWAY_KEY_REF ? 'gw-key' : 'vendor-key'), false);
+assert.equal(gatewayRead.status, 'ready');
+assert.equal(gatewayRead.via, 'gateway', 'the body says where the number came from');
+assert.equal(gatewaySeen[0].url, 'https://gw.example/v1/quota?backend=workbuddy');
+assert.equal(gatewaySeen[0].auth, 'Bearer gw-key', 'the gateway bearer is the provider key, not a vendor key');
+assert.equal(vendorSeen.length, 0, 'a gateway answer costs no vendor call');
+assert.equal((await viaGateway.read('workbuddy', async () => 'gw-key', false)).cached, true,
+  'the gateway answer is cached per source like any other read');
+
+/** Same reader, gateway now broken: the vendor read must still answer. */
+const fallingBack = createQuotaReader({
+  gateway: resolveGateway({ DSH_TURN_COST_GATEWAY_URL: 'https://gw.example' }),
+  fetch: async (url) => {
+    if (String(url).startsWith('https://gw.example')) return { ok: false, status: 502, json: async () => ({}) };
+    return {
+      ok: true, status: 200,
+      json: async () => ({ usage: { rolling: { percent: 4 }, weekly: { percent: 12 }, monthly: { percent: 30 } } }),
+    };
+  },
+  now: () => 2_000,
+});
+const fallbackRead = await fallingBack.read('opencode-go', async (ref) => (ref === GATEWAY_KEY_REF ? 'gw-key' : 'vendor-key'), false);
+assert.equal(fallbackRead.status, 'ready');
+assert.equal(fallbackRead.via, undefined, 'the vendor body is unchanged — no gateway marker');
+assert.equal(fallbackRead.windows.length, 3);
+
+/** A gateway that is not configured at all: behaviour is exactly the vendor path. */
+const noGateway = createQuotaReader({
+  gateway: null,
+  fetch: async () => ({ ok: true, status: 200, json: async () => ({ usage: { rolling: { percent: 1 } } }) }),
+  now: () => 3_000,
+});
+const plain = await noGateway.read('opencode-go', async () => 'vendor-key', false);
+assert.equal(plain.status, 'ready');
+assert.equal(plain.via, undefined);
 
 console.log('host-quota.test.js: all assertions passed');

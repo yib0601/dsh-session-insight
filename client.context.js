@@ -1490,10 +1490,20 @@ window.__ModuleLoader__.load({
      * Classify one request route.
      * @param provider - provider id recorded on the request.
      * @param model - model id recorded on the request.
+     * @param label - the model's display name, when the catalog has it.
+     * @param known - the gateway's own answer for this route (`/v1/models` row
+     *   `quota.source`): a source id, or `null` for "settled, no readable
+     *   allowance". `undefined` means the gateway did not classify this route, so
+     *   the provider id and the display name below decide instead.
      * @returns the quota source, `NO_SOURCE` when the provider is known to have
      *   no quota to read, or `null` when the route names no vendor at all.
      */
-    function sourceOfRoute(provider, model, label) {
+    function sourceOfRoute(provider, model, label, known) {
+      // The gateway is the party that actually bills, so its structured answer
+      // wins: it already resolved `backends` for this row, which is the only
+      // place the real platform is stated as data rather than as a rendering.
+      if (known === null) return NO_SOURCE;
+      if (typeof known === 'string' && known !== '') return known;
       const id = String(provider || '').trim().toLowerCase();
       if (id !== '' && SOURCE_OF_PROVIDER[id] !== undefined) return SOURCE_OF_PROVIDER[id];
       // A gateway route still names which account pays — in the model's display
@@ -1869,25 +1879,39 @@ window.__ModuleLoader__.load({
      *   - **Idle**: the route the composer is *set to*, because that is the plan
      *     the next message will bill.
      *
-     * With no main-view session (a fresh app, or nothing retained yet) the
-     * remembered vendor stands in. Two deliberate non-answers survive from
-     * before: `NO_SOURCE` for a provider with no quota to read, and `null` while
-     * nothing has named a vendor — better blank than another plan's numbers.
+     * With no main-view session (a fresh app, the landing view, or nothing
+     * retained yet) the remembered vendor stands in, and *only* it. Scanning
+     * every other conversation for the newest route was the one thing this
+     * function must not do: several sessions can run at once, on different
+     * plans, so the "newest request anywhere" flips every few seconds — the foot
+     * then alternates between one subscription's windows and「此供应商无额度可查」
+     * (a gateway route read without its display name settles on `NO_SOURCE`).
+     * The foot belongs to the app, but a *number* here always belongs to one
+     * conversation; without one on screen there is no honest figure but the last
+     * one the user actually saw.
+     *
+     * Two deliberate non-answers survive from before: `NO_SOURCE` for a provider
+     * with no quota to read, and `null` while nothing has named a vendor — better
+     * blank than another plan's numbers.
      *
      * @param sessions - the session list snapshot, or `undefined` before it arrives.
      * @param status - the Session UI status map (`running` / `pendingInteraction`).
      * @param composer - the composer's own selection for the main-view session
      *   (`{ provider, model }`), used when nothing has been recorded yet.
      * @param describe - `(provider, model) => display name` from the composer's
-     *   catalog; the only place a gateway route's real platform is written down.
+     *   catalog; the fallback way to name a gateway route's real platform.
+     * @param quotaOf - `(provider, model) => source | null | undefined` from the
+     *   gateway's own map (`quotaSourceIn`); preferred over the display name.
      * @returns a source id, `NO_SOURCE`, or `null` while nothing is known.
      */
-    function sourceOfSessions(sessions, status, composer, describe) {
+    function sourceOfSessions(sessions, status, composer, describe, quotaOf) {
       const projections = sessions === undefined || sessions === null ? undefined : sessions.projectionsBySession;
       if (projections === undefined || projections === null) return readStoredSource();
       const current = currentSessionIdOf(sessions);
-      // A retained conversation answers for itself; without one, the newest
-      // route anywhere is the best evidence of what is paying.
+      // A retained conversation answers for itself. Without one, no number is
+      // derived at all: other sessions' routes say nothing about what the user is
+      // reading, and picking the newest of them is what made the foot oscillate
+      // between plans (see the doc comment above).
       if (current !== null) {
         // Running work answers with what is actually billing; an idle session
         // answers with what its composer is set to. Recorded history outranks the
@@ -1902,21 +1926,10 @@ window.__ModuleLoader__.load({
           // and model id, which is not enough to tell WorkBuddy from OpenRouter
           // behind the same gateway.
           const label = route.label ?? describe?.(route.provider, route.model) ?? '';
-          const known = sourceOfRoute(route.provider, route.model, label);
+          const stated = quotaOf?.(route.provider, route.model);
+          const known = sourceOfRoute(route.provider, route.model, label, stated);
           if (known !== null) return known;
         }
-        return readStoredSource();
-      }
-      let best = null;
-      for (const id of Array.isArray(sessions.ids) ? sessions.ids : Object.keys(projections)) {
-        const route = routeOfSession(projections, id);
-        if (route === undefined) continue;
-        const time = safeCount(route.time);
-        if (best === null || time > best.time) best = { time, provider: route.provider, model: route.model };
-      }
-      if (best !== null) {
-        const known = sourceOfRoute(best.provider, best.model);
-        if (known !== null) return known;
       }
       return readStoredSource();
     }
@@ -2231,6 +2244,7 @@ window.__ModuleLoader__.load({
         phase: 'idle', route: null, settingsNs: null, baseURL: null,
         models: [], count: 0, syncedAt: null, stale: true, refreshing: false,
         last: null, error: null, addedIds: [], paintedFromCache: false, at: 0,
+        quotaSources: null, quotaSourcesAt: null,
       };
     }
 
@@ -2247,6 +2261,7 @@ window.__ModuleLoader__.load({
           phase: 'cache', route: parsed.route ?? null, settingsNs: parsed.settingsNs ?? null,
           baseURL: parsed.baseURL ?? null, models: parsed.models, count: parsed.models.length,
           syncedAt: parsed.syncedAt ?? null, at: Number(parsed.at) || 0, paintedFromCache: true,
+          quotaSources: parsed.quotaSources ?? null, quotaSourcesAt: parsed.quotaSourcesAt ?? null,
         };
       } catch { return null; }
     }
@@ -2258,6 +2273,7 @@ window.__ModuleLoader__.load({
         window.localStorage.setItem(MODELS_CACHE_KEY, JSON.stringify({
           route: snapshot.route, settingsNs: snapshot.settingsNs, baseURL: snapshot.baseURL,
           models: snapshot.models, syncedAt: snapshot.syncedAt, at: snapshot.at,
+          quotaSources: snapshot.quotaSources ?? null, quotaSourcesAt: snapshot.quotaSourcesAt ?? null,
         }));
       } catch { /* quota or privacy mode: the live read still works */ }
     }
@@ -2284,6 +2300,11 @@ window.__ModuleLoader__.load({
         error: null,
         addedIds: hadAny ? models.map(model => model?.id).filter(id => id !== undefined && !before.has(id)) : [],
         paintedFromCache: false,
+        // Model id → the billing source the gateway stated (`quota.source` on one
+        // `/v1/models` row). Absent on an older Host; `null` values are settled
+        // "no readable allowance", distinct from absent "nobody said".
+        quotaSources: body?.quotaSources !== null && typeof body?.quotaSources === 'object' ? body.quotaSources : null,
+        quotaSourcesAt: Number.isFinite(body?.quotaSourcesAt) ? body.quotaSourcesAt : null,
         at,
       };
     }
@@ -2296,6 +2317,115 @@ window.__ModuleLoader__.load({
           if (!response || response.ok !== true) throw new Error('http-' + String(response && response.status));
           return response.json();
         });
+    }
+
+    // ── the gateway's own billing-source map ────────────────────────────────
+    /**
+     * Which plan pays for which model, as **stated by the gateway**.
+     *
+     * The Host syncs a self-hosted gateway's `/v1/models` into the profile, and
+     * `ai-shim` puts `quota: {source, basis}` on every row (its
+     * `router/quota_source.py` derives it from the row's `backends`). That is the
+     * authoritative answer to "whose subscription is this model on" — far better
+     * than the display name, which is a rendering (`<平台> · <计费> · <名字>`) that
+     * says nothing when the catalog has not loaded or the model id is new.
+     *
+     * The map is per **provider route**: the same model id (`deepseek-v4.1-flash`)
+     * is served by OpenCode and by the gateway on different plans, so a map from
+     * one route must never be applied to another.
+     */
+    const QUOTA_SOURCE_CACHE_KEY = 'dsh-turn-cost:quota-sources';
+    /** Persisted paints older than this are not worth trusting for a route decision. */
+    const QUOTA_SOURCE_TTL_MS = 24 * 60 * 60 * 1000;
+    /** Within this window a page load reuses the stored map without asking again. */
+    const QUOTA_SOURCE_FRESH_MS = 5 * 60 * 1000;
+
+    /** The last stored map, or `null` when absent/expired/unusable. */
+    function readCachedQuotaSources(now) {
+      try {
+        const raw = window.localStorage.getItem(QUOTA_SOURCE_CACHE_KEY);
+        if (raw === null) return null;
+        const parsed = JSON.parse(raw);
+        if (parsed === null || typeof parsed !== 'object') return null;
+        if (typeof parsed.route !== 'string' || parsed.route === '') return null;
+        if (parsed.sources === null || typeof parsed.sources !== 'object') return null;
+        if (!(now - Number(parsed.at) < QUOTA_SOURCE_TTL_MS)) return null;
+        return { route: parsed.route, sources: parsed.sources, at: Number(parsed.at) || 0 };
+      } catch { return null; }
+    }
+
+    /** Persist one map so a reload decides with the gateway's answer, not a name. */
+    function writeCachedQuotaSources(next) {
+      try {
+        window.localStorage.setItem(QUOTA_SOURCE_CACHE_KEY, JSON.stringify({
+          route: next.route, sources: next.sources, at: next.at,
+        }));
+      } catch { /* storage disabled: the live read still answers */ }
+    }
+
+    /**
+     * Read the gateway's source map, cache first.
+     *
+     * `readModelsRoute` is the Host's own route, answered from memory (the stored
+     * catalog plus the last classified listing), so this is one cheap same-origin
+     * GET per mount at worst — never a gateway round trip on the render path.
+     *
+     * @param fetchImpl - `fetch` seam.
+     * @param now - clock seam.
+     * @returns `{route, sources, at}`, or `null` when the Host has no map yet.
+     */
+    function loadQuotaSources(fetchImpl, now) {
+      return readModelsRoute(false, fetchImpl).then((body) => {
+        const route = typeof body?.route === 'string' ? body.route : null;
+        const sources = body?.quotaSources !== null && typeof body?.quotaSources === 'object'
+          ? body.quotaSources : null;
+        if (route === null || sources === null) return null;
+        const next = { route, sources, at: now() };
+        writeCachedQuotaSources(next);
+        return next;
+      });
+    }
+
+    /**
+     * The map as React state: a stored paint first (so the first frame already
+     * decides with the gateway's answer), then one read when that paint is old.
+     *
+     * @param now - clock seam.
+     * @returns `{route, sources, at} | null`.
+     */
+    function useQuotaSources(now = () => Date.now()) {
+      const [state, setState] = React.useState(() => readCachedQuotaSources(now()));
+      React.useEffect(() => {
+        let live = true;
+        const cached = readCachedQuotaSources(now());
+        if (cached !== null) setState(cached);
+        if (cached !== null && now() - cached.at < QUOTA_SOURCE_FRESH_MS) return () => { live = false; };
+        loadQuotaSources((url, init) => fetch(url, init), now)
+          .then((next) => { if (live && next !== null) setState(next); })
+          .catch(() => { /* an unreachable Host leaves the stored map in place */ });
+        return () => { live = false; };
+      }, []);
+      return state;
+    }
+
+    /**
+     * Look up one route's billing source in the map.
+     *
+     * @param map - {@link useQuotaSources} result.
+     * @param provider - the route's provider id.
+     * @param model - the route's model id.
+     * @returns a source id, `null` (the gateway settled "no readable allowance"),
+     *   or `undefined` (this route is not the one the gateway classified — the
+     *   caller keeps its own display-name fallback).
+     */
+    function quotaSourceIn(map, provider, model) {
+      if (map === null || map === undefined) return undefined;
+      if (map.route !== provider) return undefined;
+      const sources = map.sources;
+      if (sources === null || typeof sources !== 'object') return undefined;
+      if (!Object.prototype.hasOwnProperty.call(sources, model)) return undefined;
+      const value = sources[model];
+      return typeof value === 'string' && value !== '' ? value : null;
     }
 
     /**
@@ -4353,6 +4483,14 @@ window.__ModuleLoader__.load({
       // this face reads that picker's store instead.
       const composerFace = composerFaceOf(modelDirectories);
       const mainSessionId = currentSessionIdOf(sessions);
+      // The gateway's own model → plan map. Read before the route is resolved so
+      // the first frame classifies a gateway row by data instead of by its
+      // rendered name (which is empty until the catalog loads).
+      const quotaSources = useQuotaSources();
+      const quotaOf = React.useMemo(
+        () => (provider, model) => quotaSourceIn(quotaSources, provider, model),
+        [quotaSources],
+      );
       const composerKey = React.useSyncExternalStore(
         React.useMemo(() => (mainSessionId === null ? () => () => {} : composerFace(mainSessionId).subscribe),
           [composerFace, mainSessionId]),
@@ -4404,7 +4542,7 @@ window.__ModuleLoader__.load({
       // is what makes the debounce work: intermediate snapshots are seen, but
       // only a source that outlives the settle window is ever read and painted.
       const resolveRef = React.useRef(() => sourceOfSessions(sessions, status, null, undefined));
-      resolveRef.current = () => sourceOfSessions(sessions, status, composerRoute, composerDescribe);
+      resolveRef.current = () => sourceOfSessions(sessions, status, composerRoute, composerDescribe, quotaOf);
       const settlerRef = React.useRef(null);
       if (settlerRef.current === null) {
         settlerRef.current = createSourceSettler(() => resolveRef.current(), {
@@ -4420,7 +4558,7 @@ window.__ModuleLoader__.load({
         // A source that was already showable commits synchronously inside
         // `schedule` (notifying subscribers); a deferred one lands on the settle
         // timer and notifies from there, so no extra render is scheduled here.
-      }, [settler, sessions, status, composerKey, composerDescribe]);
+      }, [settler, sessions, status, composerKey, composerDescribe, quotaOf]);
       React.useEffect(() => () => settler.cancel(), [settler]);
       React.useEffect(() => {
         quota.setSource(source);
@@ -4646,6 +4784,11 @@ window.__ModuleLoader__.load({
         emptyCatalog, readCachedCatalog, writeCachedCatalog, catalogSnapshotOf, readModelsRoute,
         createModelsStore, catalogCaps, compactCapacity, syncAgeLabel,
         ModelsSection, ModelsChip, modelRow,
+        // The gateway's billing-source map (its `/v1/models` rows carry
+        // `quota.source`). Exported so the resolver's inputs can be tested without
+        // a browser: the foot's source choice depends on it.
+        readCachedQuotaSources, writeCachedQuotaSources, loadQuotaSources, quotaSourceIn,
+        QUOTA_SOURCE_CACHE_KEY, QUOTA_SOURCE_TTL_MS, QUOTA_SOURCE_FRESH_MS,
       },
     };
   },

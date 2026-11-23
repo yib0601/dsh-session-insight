@@ -81,7 +81,7 @@ export function createModelSync(options) {
     const storedRaw = await readStored(target);
     const stored = Array.isArray(storedRaw) ? storedRaw : [];
     const storedById = new Map(stored.filter((entry) => typeof entry?.id === 'string').map((entry) => [entry.id, entry]));
-    const { entries, invalid } = buildCatalog(rows, storedById);
+    const { entries, invalid, quotaSources } = buildCatalog(rows, storedById);
     if (invalid.length > 0) {
       logger?.warn?.(`[dsh-turn-cost] model names left the naming contract (${invalid.slice(0, 3).map((row) => row.name).join(', ')}); keeping the stored models`);
       return { at, ok: false, reason: 'name-contract', count: entries.length, added: 0, removed: 0 };
@@ -91,7 +91,7 @@ export function createModelSync(options) {
     const added = entries.filter((entry) => !storedIds.has(entry.id)).length;
     const removed = stored.filter((entry) => !nextIds.has(entry?.id)).length;
     if (stable(entries) === stable(stored)) {
-      return { at, ok: true, reason: 'unchanged', count: entries.length, added: 0, removed: 0 };
+      return { at, ok: true, reason: 'unchanged', count: entries.length, added: 0, removed: 0, quotaSources };
     }
     try {
       await writeModels(target, entries);
@@ -101,7 +101,7 @@ export function createModelSync(options) {
       return { at, ok: false, reason: 'write-failed', detail, count: entries.length, added, removed };
     }
     logger?.info?.(`[dsh-turn-cost] model catalog for ${target.route}: ${String(entries.length)} models (added ${String(added)}, removed ${String(removed)})`);
-    return { at, ok: true, reason: 'written', count: entries.length, added, removed };
+    return { at, ok: true, reason: 'written', count: entries.length, added, removed, quotaSources };
   };
 
   return {

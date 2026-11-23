@@ -171,9 +171,26 @@ export function mountModelSync(scoped, options) {
   const isStale = (at) => syncedAt === null || at - syncedAt > options.staleMs;
 
   /** Run one cycle for its side effect; the outcome is what the next read reports. */
+  /**
+   * Model id → the billing source the gateway stated, from the last healthy read.
+   *
+   * The stored catalog cannot carry this (pi-ai owns the entry shape), so the Host
+   * remembers it and serves it beside the catalog: the Client needs it the moment
+   * it decides which subscription the foot should display, and asking the gateway
+   * again per render is not an option.
+   */
+  let quotaSources = null;
+  let quotaSourcesAt = null;
+
   const cycle = async () => {
     const outcome = await sync.run();
-    if (outcome.ok && (outcome.reason === 'written' || outcome.reason === 'unchanged')) syncedAt = outcome.at;
+    if (outcome.ok && (outcome.reason === 'written' || outcome.reason === 'unchanged')) {
+      syncedAt = outcome.at;
+      if (outcome.quotaSources !== null && typeof outcome.quotaSources === 'object') {
+        quotaSources = { ...outcome.quotaSources };
+        quotaSourcesAt = outcome.at;
+      }
+    }
     return outcome;
   };
 
@@ -200,7 +217,8 @@ export function mountModelSync(scoped, options) {
     if (target === null) {
       return {
         enabled: options.enabled, route: null, routes: [...options.routes], settingsNs: options.settingsNs,
-        baseURL: null, models: [], count: 0, syncedAt, stale: isStale(at), refreshing: revalidating,
+        baseURL: null, models: [], count: 0, syncedAt, quotaSources, quotaSourcesAt,
+        stale: isStale(at), refreshing: revalidating,
       };
     }
     const models = storedModels(target.descriptor, target.route);
@@ -213,6 +231,8 @@ export function mountModelSync(scoped, options) {
       models,
       count: models.length,
       syncedAt,
+      quotaSources,
+      quotaSourcesAt,
       stale: isStale(at),
       refreshing: revalidating,
     };
