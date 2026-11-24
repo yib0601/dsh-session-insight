@@ -23,9 +23,10 @@ import Schema from '@deepseek-ai/schemastery';
 import { contextProjections } from './host/projections.js';
 import { createQuotaReader, mountQuotaRoute, resolveGateway } from './host/quota.js';
 import { createModelsSurface, mountModelSync, resolveSyncOptions } from './host/model-sync/mount.js';
-import { NotesBridge, notesSettings } from './host/notes/provider.js';
-import { searchNotesTool } from './host/notes/tool.js';
+import { NotesBridge, bridgeKey, notesSettings } from './host/notes/provider.js';
+import { NOT_CONFIGURED_MESSAGE, searchNotesTool } from './host/notes/tool.js';
 import { Config as memoryConfig, apply as applyMemory } from './src/memory/index.js';
+import { changedConfigKeys } from './src/memory/util/config.js';
 
 /**
  * The bundle's own config = memory engine config. Everything the memory engine
@@ -60,17 +61,60 @@ export function apply(ctx, config) {
   //   · `notes.repo` 为空 = 完全不启用，连进程都不拉；
   //   · 进程惰性启动 —— 第一次真正调用 search_notes 才 spawn；
   //   · 卸载时 dispose，emb_server 是其子进程会随之退出。
+  //
+  // 工具**恒注册**，不再"配置了才出现"：没配置就没有工具的时代，界面和模型两边都看不见
+  // 这回事（用户的原话是"纯看界面都不知道有笔记检索"）。现在它始终在工具表里，调用时给出
+  // 一句可执行的话（去哪个设置页填哪个格子），而不是让能力静默失踪。
+  //
+  // 目录/开关是 volatile 字段：设置页保存后 `loader/volatile-update` 一到就换桥（旧进程
+  // dispose、新进程按需拉起），不用重启会话。
   let notesBridge = null;
   try {
-    const settings = notesSettings(config);
-    if (settings.enabled) {
-      notesBridge = new NotesBridge(settings);
-      const tool = searchNotesTool(notesBridge, config);
-      if (typeof ctx.tools?.register === 'function') {
-        ctx.tools.register(tool);
-      }
-      ctx.effect(() => () => { void notesBridge?.dispose(); }, 'dsh-turn-cost: notes bridge');
+    const holder = {
+      get configured() {
+        return notesBridge !== null;
+      },
+      async search(args) {
+        if (notesBridge === null) throw new Error(NOT_CONFIGURED_MESSAGE);
+        return notesBridge.search(args);
+      },
+    };
+    if (typeof ctx.tools?.register === 'function') {
+      ctx.tools.register(searchNotesTool(holder, config));
     }
+    const mountNotes = (settings) => {
+      notesBridge = settings.enabled ? new NotesBridge(settings) : null;
+      if (notesBridge !== null) {
+        ctx.logger?.info?.(`[dsh-turn-cost] notes search enabled: ${settings.repo}`);
+        // 预热只是 ping 进程（不加载模型），失败留给第一次真正的检索如实回报。
+        notesBridge.ensureStarted().catch(() => {});
+      }
+    };
+    mountNotes(notesSettings(config));
+
+    const reconfigureNotes = () => {
+      let next;
+      try {
+        next = notesSettings(config);
+      } catch (error) {
+        ctx.logger?.error?.(`[dsh-turn-cost] notes settings unreadable: ${error instanceof Error ? error.message : String(error)}`);
+        return;
+      }
+      const before = notesBridge === null ? null : notesBridge.settings;
+      if (before !== null && bridgeKey(before) === bridgeKey(next)) return;
+      const previous = notesBridge;
+      notesBridge = null;
+      void previous?.dispose();
+      mountNotes(next);
+    };
+
+    // 同一个 bundle 上还有 watchInterval 等 volatile 字段，只有 `notes` 那条路径才关这里的事。
+    ctx.on?.('loader/volatile-update', (paths) => {
+      const changed = changedConfigKeys(paths);
+      if (changed === null || changed.has('notes')) reconfigureNotes();
+    });
+
+    ctx.effect(() => () => { void notesBridge?.dispose(); }, 'dsh-turn-cost: notes bridge');
   } catch (error) {
     ctx.logger?.error?.(
       `[dsh-turn-cost] notes bridge not mounted: ${error instanceof Error ? error.message : String(error)}`,

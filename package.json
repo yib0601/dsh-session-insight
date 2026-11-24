@@ -3,7 +3,7 @@
   "version": "1.16.0",
   "private": true,
   "type": "module",
-  "description": "Per-turn and session cost in CNY/USD at official list prices, plus context-insight dashboard, Context tab with a four-level item breakdown (window summary, tab with counts, per-bucket scale, labelled rows with per tool schema, per system-prompt section, per message kind), model-catalog auto-sync for gateway routes (cache-first: a 模型目录 settings page and a header chip paint the stored list, then revalidate the provider's /v1/models behind the panel and write drift through the settings service), /context-style command and the live subscription quota at the sidebar foot (DeepSeek balance, OpenCode Go rolling/weekly/monthly usage, or WorkBuddy credit packages read through the user's gateway shim).",
+  "description": "Per-turn and session cost in CNY/USD at official list prices; sessions own a Context tab (breakdown, commands, files) and a cross-session usage overview with subscription quota. Settings hold every preference: cost (badge/pill, currency, billing tier, budget), model catalog sync, and project memory plus notes retrieval.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -37,7 +37,9 @@
     "client-memory-src",
     "src/memory",
     "skills",
-    "client.memory.js"
+    "client.memory.js",
+    "host/notes",
+    "scripts"
   ],
   "dsh": {
     "bundle": {

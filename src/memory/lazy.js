@@ -14,7 +14,7 @@ import {
   rootRejection,
   storeKey,
 } from './util/fs.js'
-import { DROP, OVERSIZE, UNCHANGED, commitFileUpdates, fileKind, planFileIndex, toFileUpdate } from './index-pipeline.js'
+import { DROP, OVERSIZE, UNCHANGED, commitFileUpdates, fileKind, fileKindWith, planFileIndex, toFileUpdate } from './index-pipeline.js'
 import { ProjectMemoryStore } from './store.js'
 import { onFileObserved } from './enhancer.js'
 import { sessionWorkingDir } from './util/session-dir.js'
@@ -95,7 +95,7 @@ export async function indexObservedBatch(config, items, watchManager = null) {
         continue
       }
       const filePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(sessionRoot || process.cwd(), rawPath)
-      const kind = fileKind(path.extname(filePath).toLowerCase())
+      const kind = fileKindWith(config, path.extname(filePath).toLowerCase())
       if (!kind) {
         results.set(key, false)
         continue

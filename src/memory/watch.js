@@ -2,7 +2,7 @@ import { existsSync, statSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { excludedEntryForPath, listProjectFiles, memoryDirName, memoryRootFor, relativePath, rootRejection, scanLimits, storeKey } from './util/fs.js'
-import { OVERSIZE, UNCHANGED, commitFileUpdates, fileKind, planFileIndex, toFileUpdate } from './index-pipeline.js'
+import { OVERSIZE, UNCHANGED, commitFileUpdates, fileKindWith, planFileIndex, toFileUpdate } from './index-pipeline.js'
 import { ProjectMemoryStore } from './store.js'
 import { onFileChanged, isTypeScriptFile } from './enhancer.js'
 import { cfgValue } from './util/config.js'
@@ -350,7 +350,7 @@ export class WatchManager {
       const filePath = files[fileIndex]
       const rel = storeKey(relativePath(root, filePath))
       seen.add(rel)
-      const kind = fileKind(path.extname(filePath).toLowerCase())
+      const kind = fileKindWith(this.config, path.extname(filePath).toLowerCase())
       if (!kind) continue
 
       const stats = statsByIndex[fileIndex]

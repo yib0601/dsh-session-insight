@@ -2,10 +2,10 @@
  * dsh-turn-cost — Memory client half（项目记忆 UI）。
  *
  * 与 `client.js`（成本）+ `client.context.js`（上下文洞察）并列的第三个 client bundle：
- * 任务是面板/记忆列表/设置卡三种视图，与成本 UI 无交集，物理上独立更容易维护。
+ * 任务是面板/记忆列表/设置页「记忆与笔记」三种视图，与成本 UI 无交集，物理上独立更容易维护。
  * 同一 `__ModuleLoader__` 注册不同 id 是合法且并存的（宿主按 id 各自 apply）。
  *
- * 源码在 `client-memory-src/`（23 个模块，手写 createElement，无 JSX、无构建链）。
+ * 源码在 `client-memory-src/`（26 个模块，手写 createElement，无 JSX、无构建链）。
  * 这里只做一件事：把 ESM 模块图按 __ModuleLoader__ 的 factory/require 协议装配起来。
  *
  * HMR：宿主只 watch 声明的入口文件；改 `client-memory-src/` 内部后需 touch 本文件。
@@ -37,7 +37,19 @@ window.__ModuleLoader__.load({
  *
  * 每个条目是一个 factory(__exports, __req)，import 已转成 __req、export 已转成赋值。
  */
+/**
+ * 自动生成的模块表 —— 由 /tmp/build-memory-bundle.mjs 从 client-memory-src/ 转换而来。
+ * 不要手改：改源码后重跑生成脚本。
+ *
+ * 每个条目是一个 factory(__exports, __req)，import 已转成 __req、export 已转成赋值。
+ */
 function __registerMemoryModules(__modules) {
+    /**
+     * 自动生成的模块表 —— 由 scripts/build-memory-bundle.mjs 从 client-memory-src/ 转换而来。
+     * 不要手改：改源码后重跑 `node scripts/build-memory-bundle.mjs`。
+     *
+     * 每个条目是一个 factory(__exports, __req)，import 已转成 __req、export 已转成赋值。
+     */
     __modules["client-memory-src/MemoryView.js"] = function (__exports, __req) {
 /**
  * Memory View — 记忆三作用域列表（Task 草稿 / Project / Global）
@@ -547,6 +559,199 @@ function MemoryView({ ctx, sessionId, scope, root, boundTaskId, showHints, t }) 
     h('div', { className: css.memList }, rowNodes, footer))
 }
     __exports.MemoryView = MemoryView;
+    };
+
+    __modules["client-memory-src/NotesDirectoryDialog.js"] = function (__exports, __req) {
+/**
+ * 「选择笔记目录」弹层：一层目录一个列表，点进去，底部确认。
+ *
+ * 为什么自己渲染而不是调宿主的现成弹窗
+ * ─────────────────────────────────
+ * 宿主那套「选择工作区」的弹窗组件没有对外导出（`client.ts` 只导出 `apply`/`inject`），
+ * 而它的数据通道（`uiWorkspace.listDirectory`）是公开的 Client 服务。所以这里只复用
+ * **通道**、自己画一层薄 UI：视觉沿用设置页的 `dshpm-` 前缀与别名 token，
+ * 行为与工作区选择器一致（面包屑下钻、只列目录、确认即选中当前层）。
+ *
+ * 三种状态必须分得开：加载中 / 失败（把宿主文案原样呈现）/ 空目录。把失败画成
+ * "空文件夹"会让用户以为"这台机器上一个目录都没有"。
+ */
+const { createElement: h, useCallback, useEffect, useRef, useState } = __req("react");
+const { crumbLabel, initialDirectory } = __req("./notes-directory.js");
+const { settingsCss: css } = __req("./styles.js");
+/**
+ * 目录选择弹层。
+ *
+ * @param props.open - 是否显示（关闭时不渲染任何 DOM）。
+ * @param props.value - 当前配置值，决定首次打开的起始层。
+ * @param props.directory - {@link directoryAccess} 的结果（`list` 必须存在）。
+ * @param props.t - 翻译函数（命名空间 `dsh-project-memory.settings`）。
+ * @param props.onPick - 用户确认后回调，参数是绝对路径。
+ * @param props.onClose - 取消 / 遮罩 / Escape。
+ */
+function NotesDirectoryDialog(props) {
+  const open = props.open === true
+  const directory = props.directory
+  const t = props.t ?? ((key) => key)
+  const onPick = props.onPick
+  const onClose = props.onClose
+
+  // `undefined` = 宿主 home（宿主的 listDirectory 约定：不给 path 就列 home）。
+  const [path, setPath] = useState(undefined)
+  const [listing, setListing] = useState(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  // 旧请求的迟到结果绝不能覆盖新的一层：序号对不上就整包丢掉。
+  const seq = useRef(0)
+  // 值只在打开那一刻读一次；打开期间父组件重渲染不该把用户踢回起始目录。
+  const valueRef = useRef(props.value)
+  valueRef.current = props.value
+
+  const load = useCallback((next) => {
+    const mine = ++seq.current
+    setLoading(true)
+    setError('')
+    let pending
+    try {
+      pending = Promise.resolve(directory.list(next))
+    } catch (err) {
+      pending = Promise.reject(err)
+    }
+    pending.then((data) => {
+      if (mine !== seq.current) return
+      setListing(data === undefined ? null : data)
+      setLoading(false)
+    }, (err) => {
+      if (mine !== seq.current) return
+      setLoading(false)
+      setError(err && err.message ? String(err.message) : String(err))
+    })
+  }, [directory])
+
+  useEffect(() => {
+    if (!open) {
+      // 关掉即作废在飞的请求，并清干净下一次打开要用的状态。
+      seq.current += 1
+      setListing(null)
+      setError('')
+      setLoading(false)
+      setPath(undefined)
+      return
+    }
+    const start = initialDirectory(valueRef.current)
+    setPath(start)
+    load(start)
+  }, [open, load])
+
+  // Escape 关闭：与宿主弹层一致，也避免用户只能去点那个小叉。
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return undefined
+    const onKey = (event) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        onClose?.()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('keydown', onKey) }
+  }, [open, onClose])
+
+  if (!open) return null
+
+  const crumbs = Array.isArray(listing?.crumbs) ? listing.crumbs : []
+  const entries = Array.isArray(listing?.entries) ? listing.entries : []
+  const home = typeof listing?.home === 'string' ? listing.home : ''
+  const current = typeof listing?.path === 'string' && listing.path !== '' ? listing.path : path
+  const go = (next) => {
+    setPath(next)
+    load(next)
+  }
+
+  const head = h('div', { className: css.dialogHead, key: 'head' },
+    h('span', { className: css.dialogTitle }, t('settings.notes.picker.title')),
+    h('button', {
+      type: 'button',
+      className: css.dialogClose,
+      onClick: () => { onClose?.() },
+      'aria-label': t('settings.notes.picker.close'),
+    }, '×'))
+
+  const crumbRow = h('div', { className: css.crumbs, key: 'crumbs' },
+    home !== '' && home !== current
+      ? h('button', {
+        type: 'button',
+        className: css.crumb,
+        key: 'home',
+        title: home,
+        onClick: () => { go(home) },
+      }, t('settings.notes.picker.home'))
+      : null,
+    ...crumbs.map((crumb, index) => h('button', {
+      type: 'button',
+      className: index === crumbs.length - 1 ? css.crumbCurrent : css.crumb,
+      key: String(crumb?.path ?? index),
+      title: String(crumb?.path ?? ''),
+      disabled: index === crumbs.length - 1,
+      onClick: () => { if (crumb?.path) go(String(crumb.path)) },
+    }, crumbLabel(crumb))))
+
+  let body
+  if (loading) {
+    body = h('p', { className: css.dialogNote, key: 'loading' }, t('settings.notes.picker.loading'))
+  } else if (error !== '') {
+    body = h('p', { className: css.dialogError, key: 'error', role: 'status' }, error)
+  } else if (entries.length === 0) {
+    body = h('p', { className: css.dialogNote, key: 'empty' }, t('settings.notes.picker.empty'))
+  } else {
+    body = [
+      ...entries.map((entry) => h('button', {
+        type: 'button',
+        className: entry?.hidden === true ? css.directoryRowHidden : css.directoryRow,
+        key: String(entry?.path ?? entry?.name ?? Math.random()),
+        title: String(entry?.path ?? ''),
+        onClick: () => { if (entry?.path) go(String(entry.path)) },
+      },
+      h('span', { className: css.directoryIcon, key: 'icon', 'aria-hidden': 'true' }, '📁'),
+      h('span', { className: css.directoryName, key: 'name' }, String(entry?.name ?? '')))),
+      listing?.truncated === true
+        ? h('p', { className: css.dialogNote, key: 'truncated' }, t('settings.notes.picker.truncated'))
+        : null,
+    ]
+  }
+
+  const foot = h('div', { className: css.dialogFoot, key: 'foot' },
+    h('span', {
+      className: css.dialogPath,
+      title: current || '',
+    }, current || t('settings.notes.picker.home')),
+    h('button', {
+      type: 'button',
+      className: css.dialogBtn,
+      onClick: () => { onClose?.() },
+    }, t('settings.notes.picker.cancel')),
+    h('button', {
+      type: 'button',
+      className: css.dialogBtnPrimary,
+      disabled: loading || error !== '' || typeof current !== 'string' || current === '',
+      onClick: () => {
+        if (typeof current !== 'string' || current === '') return
+        onPick?.(current)
+        onClose?.()
+      },
+    }, t('settings.notes.picker.use')))
+
+  return h('div', {
+    className: css.dialogMask,
+    onMouseDown: (event) => { if (event.target === event.currentTarget) onClose?.() },
+  },
+  h('div', {
+    className: css.dialog,
+    role: 'dialog',
+    'aria-modal': 'true',
+    'aria-label': t('settings.notes.picker.title'),
+    onMouseDown: (event) => { event.stopPropagation() },
+  }, head, crumbRow, h('div', { className: css.directoryList, key: 'list' }, body), foot))
+}
+    __exports.NotesDirectoryDialog = NotesDirectoryDialog;
     };
 
     __modules["client-memory-src/ShowTaskPanelNode.js"] = function (__exports, __req) {
@@ -1549,7 +1754,8 @@ const { registerShowTaskPanelView } = __req("./ShowTaskPanelNode.js");
 const { taskUIStore } = __req("./task-ui-store.js");
 const { createSlashSource } = __req("./slash.js");
 const { DEGRADED_GRACE_MS, later, missingServices, service } = __req("./services.js");
-const { registerSettingsCard } = __req("./settings-card.js");
+const { registerSettingsSection } = __req("./settings-section.js");
+const { ensureMemoryStyles } = __req("./styles.js");
 const NS = 'dsh-project-memory';
 const name = NS;
 /**
@@ -1686,10 +1892,20 @@ function reportDegradedLater(ctx) {
 }
 function apply(ctx) {
     // 顶层不再有任何硬依赖：这里的几步都在缺服务时降级，绝不早退（早退就是静默消失）。
+    //
+    // CSS 必须在这里注入一次（幂等）：三份样式是构建期 hashed 的类名映射，组件用它们做
+    // className，但没有任何模块负责把 <style> 挂进 document —— 漏了这步的表现是
+    // 「面板挂在 DOM 里、却完全没样式」，而且不报错（2026-11-23 实测踩到）。
+    try {
+        ensureMemoryStyles();
+    }
+    catch (err) {
+        console.warn(`[${NS}] style injection failed:`, err);
+    }
     registerTaskPanel(ctx);
     registerSlashSource(ctx);
-    // 插件详情页上的可视化设置：宿主没有 settings / configForms 时整段不跑（见 settings-card.tsx）。
-    registerSettingsCard(ctx);
+    // 设置面板里的「记忆与笔记」页：宿主没有 settings / configForms 时整段不跑（见 settings-section.js）。
+    registerSettingsSection(ctx);
     reportDegradedLater(ctx);
 }
     __exports.apply = apply;
@@ -1990,17 +2206,41 @@ const zh = {
     'slash.tasks-desc': '任务清单：步骤进度、涉及文件、当前会话绑定',
     'slash.project-desc': '项目记忆：本项目的教训 / 决策 / 流程',
     'slash.global-desc': '全局记忆：跨项目的经验条目',
-    // 插件页上的可视化设置卡片（src/client/settings-card.tsx）。
-    'settings.title': '常用设置',
-    'settings.subtitle': '保存后立即生效（启动时全量索引除外）；其余配置在 profile 的 cordis.patch.yml 里。',
+    // 设置面板里的「记忆与笔记」页（settings.section，id = project-memory）。
+    'settings.nav': '记忆与笔记',
+    'settings.intro': '笔记检索的仓库入口、启用开关与单次超时；保存后立即生效。项目记忆在这里只保留决策与任务记录 —— 代码结构由 codegraph 提供，笔记语料由 search_notes 提供，插件不再自建索引。',
     'settings.unsaved': '未保存',
-    'settings.autoIndexOnFirstUse.title': '启动时全量索引',
-    'settings.autoIndexOnFirstUse.hint': '插件加载后扫描当前工作目录；打开后从下次启动开始生效。',
-    'settings.watchInterval.title': '刷新间隔',
-    'settings.watchInterval.hint': '后台自动刷新索引的频率（秒）。回合进行中降频，空闲时最多退避到 2 分钟。',
-    'settings.llmQueryExpansion.title': '检索时扩展查询',
-    'settings.llmQueryExpansion.hint': '让模型先改写几条变体查询再检索，命中更准，但会消耗 token。',
-    'settings.unit.seconds': '秒',
+    // 笔记检索（search_notes 工具 / 常驻 python 桥）的三个可写字段。
+    // 这段文案本身就是"功能发现"：卡片没展开时它也在标题区之外的界面上留了痕迹。
+    'settings.notes.section': '笔记检索',
+    'settings.notes.status.on': '已启用：{path} —— 模型调用 `search_notes` 时查这个仓库。',
+    'settings.notes.status.off': '未配置：填了目录，模型才有 `search_notes` 这个工具可用。',
+    'settings.notes.status.disabled': '已关闭：路径保留 {path}，打开开关即恢复。',
+    'settings.notes.unavailable': '笔记检索设置不可用：宿主没有提供 notes 命名空间。',
+    'settings.notes.repo.title': '笔记目录',
+    'settings.notes.repo.hint': '含 .notes/ 的笔记仓库根（如 ~/note）；留空 = 不启用，宿主不会拉起常驻进程。',
+    'settings.notes.repo.placeholder': '~/note',
+    'settings.notes.repo.choose': '选择目录…',
+    'settings.notes.repo.choosing': '打开选择器…',
+    'settings.notes.repo.clear': '清除',
+    'settings.notes.repo.manual': '手动输入',
+    'settings.notes.repo.picker': '改用选择器',
+    'settings.notes.repo.empty': '未选择',
+    'settings.notes.picker.title': '选择笔记目录',
+    'settings.notes.picker.close': '关闭',
+    'settings.notes.picker.home': '主目录',
+    'settings.notes.picker.loading': '正在读取目录…',
+    'settings.notes.picker.empty': '这个目录下没有子目录',
+    'settings.notes.picker.truncated': '子目录太多，列表已截断',
+    'settings.notes.picker.cancel': '取消',
+    'settings.notes.picker.use': '使用此目录',
+    'settings.notes.picker.failed': '打开目录选择器失败：{message}',
+    'settings.notes.picker.unavailable': '这个宿主没有可用的目录选择器（既没有内嵌浏览器也没有原生对话框），请手动输入路径。',
+    'settings.notes.enabled.title': '启用笔记检索',
+    'settings.notes.enabled.hint': '关掉后模型侧不再有可用入口；仓库路径保留，改回来即恢复。',
+    'settings.notes.timeout.title': '单次检索超时',
+    'settings.notes.timeout.hint': '首查要加载语义模型（实测 1–6 秒），之后 200–400ms；留空 = 默认 30000。',
+    'settings.notes.unit.ms': '毫秒',
     'settings.form.unavailable': '设置不可用：宿主没有提供本插件的配置命名空间。',
     'settings.form.readOnly': '当前部署只读，改动无法保存。',
     'settings.form.saveFailed': '宿主没有接受这次保存，请检查取值。',
@@ -2091,16 +2331,38 @@ const en = {
     'slash.tasks-desc': 'Task list: progress, involved files, current session binding',
     'slash.project-desc': 'Project memory: this project’s lessons / decisions / procedures',
     'slash.global-desc': 'Global memory: experience entries shared across projects',
-    'settings.title': 'Common settings',
-    'settings.subtitle': 'Saved changes apply immediately, except the startup full index; the rest stays in the profile’s cordis.patch.yml.',
+    'settings.nav': 'Memory & notes',
+    'settings.intro': 'The notes repository the search tool reads, its enable switch and per-search timeout; saved changes apply immediately. Project memory keeps decisions and task records — code structure comes from codegraph, note corpus from search_notes, so the plugin keeps no index of its own.',
     'settings.unsaved': 'Unsaved',
-    'settings.autoIndexOnFirstUse.title': 'Full index on startup',
-    'settings.autoIndexOnFirstUse.hint': 'Scan the current working directory after the plugin loads; takes effect from the next start.',
-    'settings.watchInterval.title': 'Refresh interval',
-    'settings.watchInterval.hint': 'How often the index refreshes in the background, in seconds. Slower during a turn, up to two minutes when idle.',
-    'settings.llmQueryExpansion.title': 'Expand queries',
-    'settings.llmQueryExpansion.hint': 'Ask the model for a few query variants before search: better recall, spends tokens.',
-    'settings.unit.seconds': 's',
+    'settings.notes.section': 'Notes retrieval',
+    'settings.notes.status.on': 'Enabled: {path} — `search_notes` reads this repository.',
+    'settings.notes.status.off': 'Not configured: the model gets `search_notes` only once a directory is set.',
+    'settings.notes.status.disabled': 'Disabled: the path {path} is kept; switch it back on to restore.',
+    'settings.notes.unavailable': 'Notes settings unavailable: the host serves no notes namespace.',
+    'settings.notes.repo.title': 'Notes directory',
+    'settings.notes.repo.hint': 'Root of a repository containing .notes/ (e.g. ~/note); empty = disabled, no resident process is spawned.',
+    'settings.notes.repo.placeholder': '~/note',
+    'settings.notes.repo.choose': 'Choose directory…',
+    'settings.notes.repo.choosing': 'Opening the picker…',
+    'settings.notes.repo.clear': 'Clear',
+    'settings.notes.repo.manual': 'Type a path',
+    'settings.notes.repo.picker': 'Use the picker',
+    'settings.notes.repo.empty': 'None',
+    'settings.notes.picker.title': 'Choose the notes directory',
+    'settings.notes.picker.close': 'Close',
+    'settings.notes.picker.home': 'Home',
+    'settings.notes.picker.loading': 'Reading the directory…',
+    'settings.notes.picker.empty': 'This directory has no subdirectories',
+    'settings.notes.picker.truncated': 'Too many subdirectories; the list is truncated',
+    'settings.notes.picker.cancel': 'Cancel',
+    'settings.notes.picker.use': 'Use this directory',
+    'settings.notes.picker.failed': 'Opening the directory picker failed: {message}',
+    'settings.notes.picker.unavailable': 'This host serves no directory picker (neither an in-app browser nor a native dialog); type the path instead.',
+    'settings.notes.enabled.title': 'Enable notes retrieval',
+    'settings.notes.enabled.hint': 'Turning it off removes the model-side entry; the path is kept, so turning it back on restores it.',
+    'settings.notes.timeout.title': 'Search timeout',
+    'settings.notes.timeout.hint': 'The first query loads the semantic model (1–6 s), later ones 200–400 ms; empty = default 30000.',
+    'settings.notes.unit.ms': 'ms',
     'settings.form.unavailable': 'Settings unavailable: the host serves no configuration namespace for this plugin.',
     'settings.form.readOnly': 'This deployment is read-only; changes cannot be saved.',
     'settings.form.saveFailed': 'The host rejected this save; check the values.',
@@ -2199,6 +2461,424 @@ function parseInsightPayloadText(text) {
     __exports.invalidateInsightCache = invalidateInsightCache;
     __exports.writeInsightCache = writeInsightCache;
     __exports.parseInsightPayloadText = parseInsightPayloadText;
+    };
+
+    __modules["client-memory-src/notes-directory.js"] = function (__exports, __req) {
+/**
+ * 笔记目录的「选择」通道：把宿主的目录浏览能力包成两个问题 —— 能不能选、怎么列一层。
+ *
+ * 为什么不再让用户手打路径
+ * ─────────────────────
+ * `notes.repo` 是这套插件里唯一"填错就等于功能不存在"的配置：写错一个字符、
+ * 忘了展开 `~`、选了上层目录（缺 `.notes/`），表现都是"模型没有 search_notes 工具"
+ * 或"检索总是 degraded"，而错误现场在设置面板里完全看不出来。手打路径把这些失败
+ * 形态全部留给用户自己排。
+ *
+ * 复用宿主已有的目录选择能力，而不是自己写一个文件系统 API
+ * ──────────────────────────────────────────────────
+ * 宿主本来就为「选择工作区」做了一整套：Client 服务 `uiWorkspace`（`listDirectory`
+ * / `createDirectory`），底层是 Host 的 `remote.directoryPicker` 远程命名空间。
+ * 走这一条的好处是零新增 Host 代码、零新增权限面：用户能选工作区，就一定能选这里，
+ * 而且沙箱/审批语义完全一致。
+ *
+ * 两个服务名都软探测：`uiWorkspace` 由 ui-workspace 提供，`remote.directoryPicker`
+ * 是 API 远程命名空间。任意一个可用即可；两个都没有时 {@link directoryAccess} 的
+ * `available()` 返回 false，设置页回退成手写输入框（**不是**报错，也不是空面板）。
+ */
+
+/** 读一个服务，永不抛出（`ctx.get` 是 cordis 官方无 inject 入口）。 */
+function readService(ctx, name) {
+  if (ctx === null || ctx === undefined) return undefined
+  try {
+    if (typeof ctx.get === 'function') {
+      const found = ctx.get(name)
+      if (found !== undefined) return found
+    }
+  } catch {
+    // 服务未装配或读取被拒：继续走属性回退。
+  }
+  try {
+    return ctx[name]
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 解析出「列一层目录」的实现。
+ *
+ * 返回的 `list` 只有一种失败形态：`Promise` reject（文案直接展示给用户）。
+ * `remote.directoryPicker` 那条路要先解 `{ ok, value }` 信封 —— 不在这里统一，
+ * 上层就会拿到一个"成功但 value 为 undefined"的谜。
+ */
+function resolveList(ctx) {
+  const ui = readService(ctx, 'uiWorkspace')
+  if (ui !== null && ui !== undefined && typeof ui.listDirectory === 'function') {
+    return (path, signal) => ui.listDirectory(path, signal)
+  }
+  const remote = readService(ctx, 'remote')
+  const picker = remote === null || remote === undefined ? undefined : remote.directoryPicker
+  if (picker !== null && picker !== undefined && typeof picker.list === 'function') {
+    return async (path, signal) => {
+      const result = await picker.list(path, signal)
+      if (result !== null && result !== undefined && result.ok === false) {
+        const error = result.error
+        throw new Error(error && error.message ? error.message : 'directory listing failed')
+      }
+      return result !== null && result !== undefined && result.ok === true ? result.value : result
+    }
+  }
+  return null
+}
+
+/**
+ * 解析出「原生选择框」的实现。
+ *
+ * 宿主两种装配都只暴露同一个远程命名空间：
+ *   · `native`：`pick()` 打开操作系统自己的文件夹对话框（macOS AppKit / Linux zenity / Win32 IFileDialog）；
+ *   · `browse`：`list()`/`createDirectory()` 给内嵌浏览器用，`pick()` 反过来会被拒。
+ * 所以按钮的第一次点击要先问一句"到底装配了哪种"，见 {@link directoryAccess} 的 `mode()`。
+ */
+function resolvePick(ctx) {
+  const ui = readService(ctx, 'uiWorkspace')
+  if (ui !== null && ui !== undefined && typeof ui.pickDirectory === 'function') {
+    return () => ui.pickDirectory()
+  }
+  const remote = readService(ctx, 'remote')
+  const picker = remote === null || remote === undefined ? undefined : remote.directoryPicker
+  if (picker !== null && picker !== undefined && typeof picker.pick === 'function') {
+    return async () => {
+      const result = await picker.pick()
+      if (result !== null && result !== undefined && result.ok === false) {
+        const error = result.error
+        throw new Error(error && error.message ? error.message : 'directory pick failed')
+      }
+      return result !== null && result !== undefined && result.ok === true ? result.value : result
+    }
+  }
+  return null
+}
+
+/** 宿主"这项能力没装配"的固定措辞（`directory-picker/unavailable` 系列）。 */
+const CAPABILITY_REFUSAL = /directory-picker\/unavailable|needs the \w+ capability/i
+
+/** 判断一个拒绝是不是"另一种装配才有这个动词"。 */
+function capabilityRefused(error) {
+  const message = error && error.message ? String(error.message) : String(error ?? '')
+  return CAPABILITY_REFUSAL.test(message)
+}
+
+/**
+ * 目录浏览 / 原生选择的能力通道。
+ *
+ * `available()` 每次调用都重新探测：设置页是在宿主装配之后才渲染的，而装配顺序
+ * 不由本插件决定（`uiWorkspace` 可能晚几百毫秒到位）。把结果缓存在构造时，
+ * 就是"面板先渲染、选择器永远不出现"的那类 bug。
+ *
+ * `mode()` 才是**点击时**该问的问题，并且结果按会话缓存一次：
+ *   - `'browse'` → 打开内嵌目录浏览器（远端部署的形态，宿主提供 list 动词）；
+ *   - `'native'` → 直接调原生选择框（本机桌面的形态，宿主只提供 pick 动词）；
+ *   - `'none'`   → 两个动词都没有，回退成手写输入框。
+ * 两个动词在两种装配里**都存在签名**，只靠同步检查分不出来，所以探测只能靠一次真实调用；
+ * 一次失败 RPC（几毫秒）比"按钮点了没反应"便宜得多。
+ *
+ * @param ctx - client 根上下文（没有时返回一个恒不可用的通道）。
+ * @returns {{ available: () => boolean, mode: () => Promise<'browse'|'native'|'none'>,
+ *   list: (path?: string, signal?: AbortSignal) => Promise<any>, pick: () => Promise<string|null> }}
+ */
+function directoryAccess(ctx) {
+  let cached
+  return {
+    available() {
+      return resolveList(ctx) !== null || resolvePick(ctx) !== null
+    },
+    async mode() {
+      if (cached !== undefined) return cached
+      const list = resolveList(ctx)
+      const pick = resolvePick(ctx)
+      if (list === null) {
+        cached = pick === null ? 'none' : 'native'
+        return cached
+      }
+      try {
+        await list(undefined)
+        cached = 'browse'
+      } catch (error) {
+        cached = pick !== null && capabilityRefused(error) ? 'native' : 'browse'
+      }
+      return cached
+    },
+    list(path, signal) {
+      const list = resolveList(ctx)
+      return list === null
+        ? Promise.reject(new Error('no directory service'))
+        : list(path, signal)
+    },
+    pick() {
+      const pick = resolvePick(ctx)
+      return pick === null
+        ? Promise.reject(new Error('no directory service'))
+        : pick()
+    },
+  }
+}
+
+/**
+ * 选择器首次打开时列哪个目录。
+ *
+ * 只有**绝对路径**值得直接试：配置里写 `~/note` 是自然的，但 Host 的目录列举
+ * 只认绝对路径（波浪号在 `host/notes/provider.js` 里才展开）。`~/…` 直接丢给
+ * 宿主 home，用户自己点两下就到；比"列出一个不存在的目录 + 一行报错"友好得多。
+ *
+ * @param value - 当前配置值（可能为空、可能带 `~`）。
+ * @returns 绝对路径，或 `undefined`（= 让宿主列 home）。
+ */
+function initialDirectory(value) {
+  const text = typeof value === 'string' ? value.trim() : ''
+  return text.startsWith('/') ? text : undefined
+}
+
+/**
+ * 面包屑第一项的文案：根路径本身没有"名字"，显示成全路径才看得出在哪儿。
+ *
+ * @param crumb - Host 给的 `{ name, path }`。
+ * @returns 可点击的标签文案。
+ */
+function crumbLabel(crumb) {
+  if (crumb === null || crumb === undefined) return ''
+  const name = typeof crumb.name === 'string' ? crumb.name : ''
+  const path = typeof crumb.path === 'string' ? crumb.path : ''
+  return name === '' ? path : name
+}
+    __exports.capabilityRefused = capabilityRefused;
+    __exports.directoryAccess = directoryAccess;
+    __exports.initialDirectory = initialDirectory;
+    __exports.crumbLabel = crumbLabel;
+    };
+
+    __modules["client-memory-src/notes-settings.js"] = function (__exports, __req) {
+/**
+ * 「笔记检索」三个可写字段（目录 / 启用 / 超时）。
+ *
+ * 为什么不用宿主导出的 `SettingsFormModel`
+ * ─────────────────────────────────────
+ * 它把每个字段当**顶层键**：读的是 `value[field]`、写的是 `{op:'set', path:[field]}`。
+ * 而笔记配置在 Config 里是 `notes` 的子键，宿主校验写路径时看的是"最近 volatile 祖先"
+ * （`isVolatilePath`），`['notes.repo']` 这种单段字符串既匹配不到 schema，写进去还会被
+ * 设置接口拒掉。宿主真正的写口是 `configForm.mutate(ops, revision)`，ops 的 path 是
+ * **数组**，所以这里直接按 `['notes','repo']` 读写。
+ *
+ * 为什么值得为它单写一份
+ * ─────────────────────
+ * 笔记目录是这套插件里唯一"不填就等于整个世界看不见"的配置：不填 → 常驻桥不拉 →
+ * `search_notes` 报未配置。把它藏进 profile 的 yml，等于要求用户先知道它存在。
+ * 这份表单的全部目的就是让它在插件详情页上可见、可改、改完立即生效（volatile）。
+ *
+ * 形状与宿主表单保持一致（`shell()` / `field()` / `actions()`），`settings-section.js`
+ * 才能把两份表单的状态合成一个保存按钮；刻意不依赖任何宿主模块，纯函数 + 订阅。
+ */
+
+/** 三个字段的配置路径。数组形状由宿主设置接口的 ops 协议决定。 */
+const PATHS = {
+  repo: ['notes', 'repo'],
+  enabled: ['notes', 'enabled'],
+  timeoutMs: ['notes', 'timeoutMs'],
+}
+
+/**
+ * 用户没动过时显示什么。
+ *
+ * 取值走宿主 settings 快照的 `value`（= 当前生效值），不是自己再复制一份默认值；
+ * `DEFAULTS` 只在快照不可用（宿主没提供这个命名空间）时兜住渲染。
+ */
+const DEFAULTS = { repo: '', enabled: true, timeoutMs: 30000 }
+
+/**
+ * 宿主设置快照给的是 `plainConfig` 之后的普通值；ref 形状仍兜一层。
+ *
+ * 不兜的话，一旦某个字段以 `{get()}` 形态到达，渲染出来就是 `[object Object]`，
+ * 而那种"看得见但没用"的输入框比报错更难查。
+ */
+function unwrap(value) {
+  return value && typeof value.get === 'function' ? value.get() : value
+}
+
+/** 超时下限：低于 1 秒连冷启动的进程 ready 都等不到。 */
+const MIN_TIMEOUT_MS = 1000
+
+const SPECS = {
+  repo: {
+    read: (value) => (typeof value === 'string' ? value : ''),
+    // 空文本 = 清掉 profile 里的覆盖值（回到默认空 = 不启用），而不是写一个空字符串。
+    parse: (text) => {
+      const trimmed = text.trim()
+      return trimmed === ''
+        ? { op: 'unset', path: PATHS.repo }
+        : { op: 'set', path: PATHS.repo, value: trimmed }
+    },
+  },
+  enabled: {
+    read: (value) => (value === false ? 'false' : 'true'),
+    parse: (text) => text === 'true'
+      ? { op: 'set', path: PATHS.enabled, value: true }
+      : text === 'false'
+        ? { op: 'set', path: PATHS.enabled, value: false }
+        : undefined,
+  },
+  timeoutMs: {
+    read: (value) => (Number.isFinite(value) ? String(value) : ''),
+    parse: (text) => {
+      const trimmed = text.trim()
+      if (trimmed === '') return { op: 'unset', path: PATHS.timeoutMs }
+      const value = Number(trimmed)
+      return Number.isFinite(value) && value >= MIN_TIMEOUT_MS
+        ? { op: 'set', path: PATHS.timeoutMs, value }
+        : undefined
+    },
+  },
+}
+
+/** 表单里出现的字段名，顺序即渲染顺序。 */
+const NOTES_FIELDS = ['repo', 'enabled', 'timeoutMs']
+
+class NotesSettingsForm {
+  constructor(scope) {
+    this.scope = scope
+    this.staged = new Map()
+    this.listeners = new Set()
+    this.baseline = undefined
+    this.saving = false
+    this.failed = false
+    this.unsubscribe = typeof scope?.subscribe === 'function'
+      ? scope.subscribe(() => { this.publish() })
+      : undefined
+  }
+
+  /** 宿主快照：`value` 是生效值，`base` 是继承层（profile 与默认），`user` 是本条覆盖。 */
+  snapshot() {
+    try {
+      return this.scope?.getSnapshot?.() ?? {}
+    } catch {
+      return {}
+    }
+  }
+
+  sectionValue(key, layer = 'value') {
+    const notes = this.snapshot()[layer]?.notes
+    if (notes === undefined || notes === null) return key === 'repo' ? '' : DEFAULTS[key]
+    const value = unwrap(notes[key])
+    return value === undefined ? (key === 'repo' ? '' : DEFAULTS[key]) : value
+  }
+
+  /** 本条目是否在 profile 里被显式覆盖过（决定要不要显示"已覆盖"）。 */
+  stored(key) {
+    const notes = this.snapshot().user?.notes
+    return notes !== undefined && notes !== null && Object.hasOwn(notes, key)
+  }
+
+  field(key) {
+    const spec = SPECS[key]
+    const draft = this.staged.get(key)
+    if (draft === undefined) {
+      return { text: spec.read(this.sectionValue(key)), overridden: this.stored(key), invalid: false }
+    }
+    const op = spec.parse(draft)
+    return { text: draft, overridden: op !== undefined && op.op === 'set', invalid: op === undefined }
+  }
+
+  /** 待写入的 ops：只包含"与当前生效值不同且解析得出"的字段。 */
+  plan() {
+    const ops = []
+    for (const [key, draft] of this.staged) {
+      const spec = SPECS[key]
+      if (draft === spec.read(this.sectionValue(key))) continue
+      const op = spec.parse(draft)
+      if (op !== undefined) ops.push(op)
+    }
+    return ops
+  }
+
+  shell() {
+    const snapshot = this.snapshot()
+    const ops = this.plan()
+    let invalid = false
+    for (const [key, draft] of this.staged) {
+      if (SPECS[key].parse(draft) === undefined) invalid = true
+    }
+    return {
+      available: snapshot.status === 'ready',
+      writable: snapshot.writable === true,
+      dirty: ops.length > 0,
+      invalid,
+      saving: this.saving,
+      failed: this.failed,
+    }
+  }
+
+  stage(key, text) {
+    this.baseline ??= this.snapshot()
+    this.staged.set(key, text)
+    this.failed = false
+    this.publish()
+  }
+
+  discard() {
+    if (this.staged.size === 0 && !this.failed) return
+    this.staged.clear()
+    this.baseline = undefined
+    this.failed = false
+    this.publish()
+  }
+
+  async save() {
+    const ops = this.plan()
+    if (this.saving || ops.length === 0 || this.shell().invalid) return
+    if (typeof this.scope?.mutate !== 'function') return
+    this.saving = true
+    this.failed = false
+    this.publish()
+    let ok = false
+    try {
+      ok = await this.scope.mutate(ops, this.baseline?.revision)
+    } catch {
+      ok = false
+    }
+    this.saving = false
+    if (ok) {
+      this.staged.clear()
+      this.baseline = undefined
+    } else {
+      // 保留草稿：宿主拒了（比如改完别人又动了配置），值不该被吞掉。
+      this.failed = true
+    }
+    this.publish()
+  }
+
+  actions() {
+    return {
+      editNotes: (key, text) => { this.stage(key, text) },
+      saveNotes: () => this.save(),
+      discardNotes: () => { this.discard() },
+    }
+  }
+
+  subscribe(listener) {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+
+  publish() {
+    for (const listener of this.listeners) listener()
+  }
+
+  dispose() {
+    this.listeners.clear()
+    if (typeof this.unsubscribe === 'function') this.unsubscribe()
+    this.unsubscribe = undefined
+  }
+}
+    __exports.NotesSettingsForm = NotesSettingsForm;
+    __exports.NOTES_FIELDS = NOTES_FIELDS;
     };
 
     __modules["client-memory-src/paging.js"] = function (__exports, __req) {
@@ -2588,101 +3268,115 @@ function pickSessionId(snap) {
     __exports.pickSessionId = pickSessionId;
     };
 
-    __modules["client-memory-src/settings-card.js"] = function (__exports, __req) {
+    __modules["client-memory-src/settings-section.js"] = function (__exports, __req) {
 /**
- * 插件详情页上的「常用设置」卡片。
+ * 「设置 → 记忆与笔记」页。
  *
- * 座位是 `plugins.bundle.config`（key = 包名），外形照宿主自己的插件卡片长：
- * 一行标题 + 说明 + 折叠箭头，**默认收起**；展开后是一列开关，底部右对齐一个保存。
+ * 座位是 `settings.section`（id = `project-memory`，nav 图标走同 id 的
+ * `settings.section.icon`），和费用偏好（`turn-cost`）、模型目录（`tc-models`）
+ * 并列在宿主的设置面板里 —— 配置项属于设置，插件页只留一句说明。
  *
  * 数据面**完全走宿主设置**，不自建第二份配置：
  *   Config 里标了 `.volatile()` 的字段 → 宿主 settings 文档的一个命名空间（ns = 条目 id）
  *   → 客户端 `ctx.configForms.get(...)` 读写 → 宿主校验 + revision fence + volatile 原地更新。
- *   这里既不写 profile 的 yml，也不缓存值：卡片永远是宿主那份配置的投影。
+ *   这里既不写 profile 的 yml，也不缓存值：这一页永远是宿主那份配置的投影。
  *
- * 由 .tsx 手写改写为 createElement（原 355 行 / 38 处 JSX）。
+ * 页面上只有一组控件：笔记检索三项（`notes.repo` 这类嵌套路径），走 notes-settings.js
+ * 自己的 mutate 表单。记忆那三个顶层旋钮随语料索引层下线后，宿主 `SettingsFormModel`
+ * 只用来提供 SnapshotStore 与 scope 订阅，字段表是空的。
  */
-const { Button, SettingsFormModel, Switch, settingsNumberField } = __req("@deepseek-ai/dsh-client-ui-primitives");
-const { createElement: h, useEffect } = __req("react");
+const { Button, SettingsFormModel, Switch } = __req("@deepseek-ai/dsh-client-ui-primitives");
+const { createElement: h, useEffect, useState } = __req("react");
 const { service } = __req("./services.js");
-const { IconChevronDownOutline14 } = __req("./icons.js");
+const { NOTES_FIELDS, NotesSettingsForm } = __req("./notes-settings.js");
+const { NotesDirectoryDialog } = __req("./NotesDirectoryDialog.js");
+const { directoryAccess } = __req("./notes-directory.js");
 const { createTranslate, en, zh } = __req("./locales.js");
 const { settingsCss: css } = __req("./styles.js");
-/** 合并后的包名：`plugins.bundle.config` 的 key 必须与 profile 里安装的包名一致。 */
-const SETTINGS_PACKAGE_NAME = '@local/dsh-turn-cost'
 /** 本 bundle 在 profile 的 loader 条目 id（cordis.patch.yml 定死的那个），也是 settings 命名空间。 */
 const SETTINGS_ENTRY_ID = 'dsh-turn-cost'
-/** 卡片文案的 locale 命名空间。与面板共用一份词典，但独立注册，互不影响。 */
+/** 设置面板里的分区 id；图标注册必须用同一个 id 才会被渲染。 */
+const SETTINGS_SECTION_ID = 'project-memory'
+/** 分区在设置导航里的位置（费用 30 / 模型目录 31 之后）。 */
+const SETTINGS_SECTION_ORDER = 32
+/** 本页文案的 locale 命名空间。与面板共用一份词典，但独立注册，互不影响。 */
 const SETTINGS_NS = 'dsh-project-memory.settings'
 
 /**
- * 卡片编辑的字段；顺序即渲染顺序。
+ * 本页只有笔记检索一组控件。
  *
- * 入选标准只有两条：**用户会主动想调**，且**调坏了不会让记忆失真**。
- *   - `autoIndexOnFirstUse`：换项目时最常见的诉求（"启动就把这里索引好"），默认关。
- *   - `watchInterval`：后台刷新唯一值得调的成本旋钮（频率）。监视本身**不提供关闭**——
- *     关掉之后记忆只会越来越旧，那不是一个选项，是一个坑。
- *   - `llmQueryExpansion`：唯一直接花 token 的开关，该由用户自己决定。
- * 刻意**没有**的：lazyIndexing、enableTypeScript、watch、memoryDir / roots / 扫描上限
- * （改的是数据落在哪，不属于"用户偏好"）。
+ * 记忆那三个顶层旋钮（启动全量索引 / 刷新间隔 / 检索时扩展查询）随语料索引层一起下线：
+ * 代码结构归 codegraph、笔记语料归 `search_notes`，这页再暴露"索什么、多久刷、要不要扩写"
+ * 只会让人以为项目的记忆是靠扫盘建立的。项目记忆的实质入口是 insight（`save_lesson` 的
+ * decision / lesson / procedure）与任务，它们不经过索引，也没有可调频率。
  */
-const SETTINGS_FIELDS = [
-  'autoIndexOnFirstUse',
-  'watchInterval',
-  'llmQueryExpansion',
-]
 
-/** 布尔字段：草稿是 `'true'` / `'false'`，其它文本判为非法（挡住保存，而不是吞掉）。 */
-function settingsBooleanField(field) {
-  return {
-    field,
-    format: (value) => typeof value === 'boolean' ? String(value) : '',
-    parse: (text) => text === 'true'
-      ? { kind: 'set', value: true }
-      : text === 'false'
-        ? { kind: 'set', value: false }
-        : undefined,
-  }
-}
-
-/** 把 settings 命名空间桥到卡片的状态上。 */
-class SettingsCardController {
-  constructor(scope) {
-    this.expanded = false
-    this.form = new SettingsFormModel(scope, [
-      settingsBooleanField('autoIndexOnFirstUse'),
-      settingsNumberField('watchInterval'),
-      settingsBooleanField('llmQueryExpansion'),
-    ])
+/** 把 settings 命名空间桥到本页的状态上。 */
+class SettingsSectionController {
+  /**
+   * @param scope - 本条目在 `configForms` 里的 scope（读写宿主设置）。
+   * @param directory - 目录浏览通道（`uiWorkspace.listDirectory` 的软包装）；
+   *   宿主没有这项能力时传 `null`，设置页回退成手写输入框。
+   */
+  constructor(scope, directory = null) {
+    // 记忆那三个顶层旋钮（启动全量索引 / 刷新间隔 / 检索时扩展查询）随语料索引层一起下线，
+    // 所以这张表单**故意空着**：它仍然负责给本页提供 SnapshotStore 与 scope 订阅
+    // （`bind()` 是宿主唯一现成的那个实现），但不再持有任何可编辑字段。
+    this.form = new SettingsFormModel(scope, [])
+    // 笔记三项走自己的表单：宿主的 SettingsFormModel 只能寻址顶层键，而它们是
+    // `notes.repo` 这类嵌套路径（见 notes-settings.js 的头注释）。
+    this.notes = new NotesSettingsForm(scope)
+    this.directory = directory
     this.store = this.form.bind(() => this.projection())
+    this.unsubscribeNotes = this.notes.subscribe(() => { this.store.set(this.projection()) })
   }
 
   /** 构造槽位注入面。 */
   inject() {
     return {
       hooks: { settingsCard: this.store },
-      toggleExpanded: () => {
-        this.expanded = !this.expanded
-        // 展开状态不进表单模型；投影自己推一次，别等 scope 变化。
-        this.store.set(this.projection())
+      directory: this.directory,
+      ...this.notes.actions(),
+      save: () => { void this.saveAll() },
+      discard: () => {
+        this.form.actions().discard()
+        this.notes.discard()
       },
-      ...this.form.actions(),
     }
+  }
+
+  /** 一次保存点同时落两份草稿；记忆那份失败就不动笔记那份。 */
+  async saveAll() {
+    await this.form.save()
+    if (this.form.shell().failed) return
+    await this.notes.save()
   }
 
   /** 释放对宿主命名空间的订阅。 */
   dispose() {
+    this.unsubscribeNotes?.()
+    this.notes.dispose()
     this.form.dispose()
   }
 
   projection() {
-    const fields = {}
-    for (const field of SETTINGS_FIELDS) fields[field] = this.form.field(field)
-    return { ...this.form.shell(), expanded: this.expanded, fields }
+    const notesFields = {}
+    for (const field of NOTES_FIELDS) notesFields[field] = this.notes.field(field)
+    const base = this.form.shell()
+    const notes = this.notes.shell()
+    return {
+      available: base.available,
+      writable: base.writable && (!notes.available || notes.writable),
+      dirty: base.dirty || notes.dirty,
+      invalid: base.invalid || notes.invalid,
+      saving: base.saving || notes.saving,
+      failed: base.failed || notes.failed,
+      notes: { ...notes, fields: notesFields },
+    }
   }
 }
 
-/** 一行：左侧标题 + 说明，右侧控件（与宿主插件卡片的行同构）。 */
+/** 一行：左侧标题 + 说明，右侧控件。 */
 function SettingRow(props) {
   return h('div', { className: css.row },
     h('div', { className: css.labelBox },
@@ -2696,7 +3390,7 @@ function isComponent(value) {
   return typeof value === 'function' || (typeof value === 'object' && value !== null)
 }
 
-/** 渲染器缺钩子时的占位状态：卡片只显示标题，不读任何宿主值。 */
+/** 渲染器缺钩子时的占位状态：本页只显示说明，不读任何宿主值。 */
 const UNAVAILABLE_STATE = {
   available: false,
   writable: false,
@@ -2704,150 +3398,275 @@ const UNAVAILABLE_STATE = {
   invalid: false,
   saving: false,
   failed: false,
-  expanded: false,
-  fields: Object.fromEntries(
-    SETTINGS_FIELDS.map((field) => [field, { text: '', overridden: false, invalid: false }]),
-  ),
+  notes: {
+    available: false,
+    writable: false,
+    dirty: false,
+    invalid: false,
+    saving: false,
+    failed: false,
+    fields: Object.fromEntries(
+      NOTES_FIELDS.map((field) => [field, { text: '', overridden: false, invalid: false }]),
+    ),
+  },
 }
 
 /** 非 Hook 的稳定回退：hook 数量在两次渲染之间不变，避免条件调用 Hooks。 */
 const fallbackHook = (selector) => selector(UNAVAILABLE_STATE)
 
-/** 渲染本 bundle 的常用设置。`summary` 视图不渲染。 */
-function SettingsCard(props) {
+/** 渲染设置页。 */
+function MemorySettingsSection(props) {
   const t = props.t ?? createTranslate(zh)
   const useSettingsCard = props.useSettingsCard ?? fallbackHook
-  // Hook 必须无条件调用：`summary` 只影响后面的返回，不影响 hook 顺序。
   const state = useSettingsCard((snapshot) => snapshot)
   const discard = props.discard
-  // 离开页面时丢掉未保存的草稿（与宿主设置表单的约定一致；收起卡片不算离开）。
+  // 离开这一页时丢掉未保存的草稿（与宿主设置表单的约定一致）。
   useEffect(() => () => { discard?.() }, [discard])
-  if (props.view === 'summary') return null
-  const edit = props.edit
+  const editNotes = props.editNotes
   const save = props.save
-  if (edit === undefined || save === undefined) return null
   const disabled = !state.writable || state.saving
-  const on = (field) => state.fields[field]?.text === 'true'
-  const toggle = (field, next) => { edit(field, next ? 'true' : 'false') }
-  const expanded = state.expanded === true
+  // 笔记那段的状态活在独立表单里（嵌套路径），缺宿主命名空间时回退到占位形状。
+  const notes = state.notes ?? UNAVAILABLE_STATE.notes
+  const notesDisabled = disabled || !notes.available || !notes.writable
+  const notesOn = (field) => notes.fields[field]?.text === 'true'
+  const editNote = (field, text) => { editNotes?.(field, text) }
+  const notesPath = notes.fields.repo.text.trim()
+  // 三种状态必须分开说：没配、配了但关掉、开着。只按"路径是否为空"判断会让关掉之后
+  // 页面继续写「已启用」——那种自相矛盾的提示比不显示更糟。
+  const notesStatus = !notes.available
+    ? t('settings.notes.unavailable')
+    : notesPath === ''
+      ? t('settings.notes.status.off')
+      : notesOn('enabled')
+        ? t('settings.notes.status.on', { path: notesPath })
+        : t('settings.notes.status.disabled', { path: notesPath })
   const saveBlocked = !state.dirty || state.invalid || state.saving || !state.writable
 
-  const header = h('button', {
-    type: 'button',
-    className: css.header,
-    'aria-expanded': expanded,
-    onClick: props.toggleExpanded,
-  },
-    h('span', { className: css.headText },
-      h('span', { className: css.name }, t('settings.title')),
-      h('span', { className: css.desc }, t('settings.subtitle'))),
-    state.dirty ? h('span', { className: css.unsaved }, t('settings.unsaved')) : null,
-    h('span', { className: expanded ? `${css.chevron} ${css.chevronOpen}` : css.chevron },
-      h(IconChevronDownOutline14, null)))
+  // 目录默认让用户「点」，而不是「敲」：`notes.repo` 填错的三种形态（模型没有
+  // search_notes、检索永远 degraded、选了缺 .notes/ 的上层目录）在面板里都看不出来。
+  // `available()` 每次渲染重新探测 —— uiWorkspace 可能比本插件晚到位。
+  const canPick = typeof props.directory?.available === 'function' && props.directory.available() === true
+  const [manualInput, setManualInput] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [choosing, setChoosing] = useState(false)
+  const [chooseError, setChooseError] = useState('')
 
-  const body = expanded
-    ? h('div', { className: css.body },
-        state.available
-          ? h('div', null,
-              !state.writable ? h('p', { className: css.notice }, t('settings.form.readOnly')) : null,
-              h(SettingRow, {
-                title: t('settings.autoIndexOnFirstUse.title'),
-                hint: t('settings.autoIndexOnFirstUse.hint'),
-              }, h(Switch, {
-                checked: on('autoIndexOnFirstUse'),
-                disabled,
-                label: t('settings.autoIndexOnFirstUse.title'),
-                onChange: (next) => { toggle('autoIndexOnFirstUse', next) },
-              })),
-              h(SettingRow, {
-                title: t('settings.watchInterval.title'),
-                hint: t('settings.watchInterval.hint'),
-              },
-                h('input', {
-                  className: css.number,
-                  type: 'number',
-                  min: 5,
-                  max: 600,
-                  step: 1,
-                  inputMode: 'numeric',
-                  'aria-label': t('settings.watchInterval.title'),
-                  value: state.fields.watchInterval.text,
-                  disabled,
-                  'aria-invalid': state.fields.watchInterval.invalid || undefined,
-                  onChange: (event) => { edit('watchInterval', event.target.value) },
-                }),
-                h('span', { className: css.unit }, t('settings.unit.seconds'))),
-              h(SettingRow, {
-                title: t('settings.llmQueryExpansion.title'),
-                hint: t('settings.llmQueryExpansion.hint'),
-              }, h(Switch, {
-                checked: on('llmQueryExpansion'),
-                disabled,
-                label: t('settings.llmQueryExpansion.title'),
-                onChange: (next) => { toggle('llmQueryExpansion', next) },
-              })),
-              h('div', { className: css.actions },
-                state.failed ? h('p', { className: css.failed, role: 'status' }, t('settings.form.saveFailed')) : null,
-                h(Button, {
-                  variant: 'primary',
-                  size: 'sm',
-                  disabled: saveBlocked,
-                  onClick: save,
-                }, state.saving ? t('settings.form.saving') : t('settings.form.save'))))
-          : h('p', { className: css.notice }, t('settings.form.unavailable')))
-    : null
+  /**
+   * 点「选择目录」：先问宿主装配了哪种选择器，再把用户送到对应的那个。
+   *
+   * `browse` → 内嵌目录浏览器（远端部署）；`native` → 操作系统自己的文件夹对话框
+   * （本机桌面）。两条路的终点都是"用户点出来的绝对路径"，没有一条要用户敲字符。
+   */
+  const chooseDirectory = async () => {
+    const api = props.directory
+    if (!api || choosing) return
+    setChooseError('')
+    setChoosing(true)
+    try {
+      const mode = typeof api.mode === 'function' ? await api.mode() : 'browse'
+      if (mode === 'browse') {
+        setPickerOpen(true)
+        return
+      }
+      if (mode === 'native') {
+        const picked = await api.pick()
+        if (typeof picked === 'string' && picked.trim() !== '') editNote('repo', picked.trim())
+        return
+      }
+      setChooseError(t('settings.notes.picker.unavailable'))
+    } catch (err) {
+      // 宿主文案（zenity 失败、无显示环境、被中断）原样带上，前面加一句"这是选择器没打开"，
+      // 否则用户看到一行英文命令行输出完全不知道跟自己点的按钮有什么关系。
+      const message = err && err.message ? String(err.message) : String(err)
+      setChooseError(t('settings.notes.picker.failed', { message }))
+    } finally {
+      setChoosing(false)
+    }
+  }
+  const repoControl = canPick && !manualInput
+    ? [
+        h('span', {
+          key: 'value',
+          className: css.repoValue,
+          'data-empty': notesPath === '' ? 'true' : undefined,
+          title: notesPath,
+        }, notesPath === '' ? t('settings.notes.repo.empty') : notesPath),
+        h('button', {
+          key: 'choose',
+          type: 'button',
+          className: css.dialogBtn,
+          disabled: notesDisabled || choosing,
+          onClick: () => { void chooseDirectory() },
+        }, choosing ? t('settings.notes.repo.choosing') : t('settings.notes.repo.choose')),
+        notesPath === ''
+          ? null
+          : h('button', {
+            key: 'clear',
+            type: 'button',
+            className: css.linkBtn,
+            disabled: notesDisabled,
+            onClick: () => { editNote('repo', '') },
+          }, t('settings.notes.repo.clear')),
+        h('button', {
+          key: 'manual',
+          type: 'button',
+          className: css.linkBtn,
+          disabled: notesDisabled,
+          onClick: () => { setManualInput(true) },
+        }, t('settings.notes.repo.manual')),
+      ]
+    : [
+        h('input', {
+          key: 'input',
+          className: css.text,
+          type: 'text',
+          spellCheck: false,
+          autoComplete: 'off',
+          placeholder: t('settings.notes.repo.placeholder'),
+          'aria-label': t('settings.notes.repo.title'),
+          value: notes.fields.repo.text,
+          disabled: notesDisabled,
+          'aria-invalid': notes.fields.repo.invalid || undefined,
+          onChange: (event) => { editNote('repo', event.target.value) },
+        }),
+        canPick
+          ? h('button', {
+            key: 'picker',
+            type: 'button',
+            className: css.linkBtn,
+            disabled: notesDisabled,
+            onClick: () => { setManualInput(false) },
+          }, t('settings.notes.repo.picker'))
+          : null,
+      ]
 
-  return h('div', {
-    className: expanded ? `${css.card} ${css.cardOpen}` : css.card,
+  const body = state.available
+    ? h('div', null,
+        !state.writable ? h('p', { className: css.notice }, t('settings.form.readOnly')) : null,
+        // ---- 笔记检索 ------------------------------------------------------
+        h('h4', { className: css.group }, t('settings.notes.section')),
+        h('p', { className: notes.available ? css.status : css.notice }, notesStatus),
+        h(SettingRow, {
+          title: t('settings.notes.repo.title'),
+          hint: t('settings.notes.repo.hint'),
+        }, repoControl),
+        chooseError === ''
+          ? null
+          : h('p', { className: css.failed, role: 'status', key: 'choose-error' }, chooseError),
+        h(SettingRow, {
+          title: t('settings.notes.enabled.title'),
+          hint: t('settings.notes.enabled.hint'),
+        }, h(Switch, {
+          checked: notesOn('enabled'),
+          disabled: notesDisabled,
+          label: t('settings.notes.enabled.title'),
+          onChange: (next) => { editNote('enabled', next ? 'true' : 'false') },
+        })),
+        h(SettingRow, {
+          title: t('settings.notes.timeout.title'),
+          hint: t('settings.notes.timeout.hint'),
+        },
+          h('input', {
+            className: css.number,
+            type: 'number',
+            min: 1000,
+            max: 120000,
+            step: 500,
+            inputMode: 'numeric',
+            'aria-label': t('settings.notes.timeout.title'),
+            value: notes.fields.timeoutMs.text,
+            disabled: notesDisabled,
+            'aria-invalid': notes.fields.timeoutMs.invalid || undefined,
+            onChange: (event) => { editNote('timeoutMs', event.target.value) },
+          }),
+          h('span', { className: css.unit }, t('settings.notes.unit.ms'))),
+        h('div', { className: css.actions },
+          state.failed ? h('p', { className: css.failed, role: 'status' }, t('settings.form.saveFailed')) : null,
+          state.dirty ? h('span', { className: css.unsaved }, t('settings.unsaved')) : null,
+          h(Button, {
+            variant: 'primary',
+            size: 'sm',
+            disabled: saveBlocked,
+            onClick: save,
+          }, state.saving ? t('settings.form.saving') : t('settings.form.save'))))
+    : h('p', { className: css.notice }, t('settings.form.unavailable'))
+
+  return h('section', {
+    className: css.page,
     'data-project-memory-settings': true,
-  }, header, body)
+  },
+  h('h2', { className: css.title }, t('settings.nav')),
+  h('p', { className: css.intro }, t('settings.intro')),
+  body,
+  // 弹层跟着分区一起渲染：关闭时组件返回 null，不在 DOM 里留任何残影。
+  canPick
+    ? h(NotesDirectoryDialog, {
+      open: pickerOpen,
+      value: notes.fields.repo.text,
+      directory: props.directory,
+      t,
+      onPick: (picked) => { editNote('repo', picked) },
+      onClose: () => { setPickerOpen(false) },
+    })
+    : null)
+}
+
+/** 设置导航里的图标：一本带书签的笔记本。 */
+function settingsSectionIcon(size) {
+  const px = Number.isFinite(size) && size > 0 ? size : 16
+  const path = (d, key) => h('path', {
+    key, d, fill: 'none', stroke: 'currentColor', strokeWidth: 1, strokeLinecap: 'round', strokeLinejoin: 'round',
+  })
+  return h('svg', { width: px, height: px, viewBox: '0 0 16 16', 'aria-hidden': 'true' },
+    path('M3.5 3.2h6.2a2.8 2.8 0 0 1 2.8 2.8v6.8H6.3A2.8 2.8 0 0 1 3.5 10V3.2Z', 'cover'),
+    path('M3.5 10.2a2.8 2.8 0 0 1 2.8-2.8h6.2', 'spine'),
+    path('M7.8 3.4v4.1l1.5-1 1.5 1V3.4', 'ribbon'))
 }
 
 /**
- * 注册卡片（软依赖，永不抛出）。
+ * 注册设置分区（软依赖，永不抛出）。
  *
  * 两层门控：
- *   1. 嵌套 `inject(['slots','configForms','locale'])` —— 宿主没有设置服务时这里根本不跑；
- *   2. `configForms.whileServed([id])` + `slots.inject('plugins.bundle.config')`
- *      —— 命名空间没被宿主提供、或该版本没有这个槽时，不留下任何注册痕迹。
+ *   1. 嵌套 `inject(['slots','configForms','locale'])` —— 宿主没有这项服务时这里根本不跑；
+ *   2. `slots.inject('settings.section')` —— 该版本没有这个槽时，不留下任何注册痕迹。
  */
-function registerSettingsCard(ctx) {
+function registerSettingsSection(ctx) {
   if (typeof ctx?.inject !== 'function') return
-  // 没有 configForms = 这个宿主根本没有设置卡片能力（老宿主），静默跳过是正确降级。
+  // 没有 configForms = 这个宿主没有设置页能力（老宿主），静默跳过是正确降级。
   // 但它存在、slots/locale 却缺一个时，嵌套 inject 会永远不回调且不报错——这时必须点名。
   if (service(ctx, 'configForms')) {
     const missing = ['slots', 'configForms', 'locale'].filter((name) => !service(ctx, name))
     if (missing.length) {
-      console.warn(`[${SETTINGS_NS}] settings card unavailable: missing client service(s) ${missing.join(', ')}`)
+      console.warn(`[${SETTINGS_NS}] settings section unavailable: missing client service(s) ${missing.join(', ')}`)
     }
   }
   try {
     ctx.inject(['slots', 'configForms', 'locale'], (scope) => {
       try {
-        mountSettingsCard(scope)
+        mountSettingsSection(scope, ctx)
       } catch (err) {
-        console.warn(`[${SETTINGS_NS}] settings card registration failed:`, err)
+        console.warn(`[${SETTINGS_NS}] settings section registration failed:`, err)
       }
     })
   } catch (err) {
-    console.warn(`[${SETTINGS_NS}] settings card injection failed:`, err)
+    console.warn(`[${SETTINGS_NS}] settings section injection failed:`, err)
   }
 }
 
-/** 在已就绪的 scope 上挂载卡片。 */
-function mountSettingsCard(scope) {
+/** 在已就绪的 scope 上挂载设置分区。 */
+function mountSettingsSection(scope, root) {
   const slots = scope?.slots
   const configForms = scope?.configForms
   const locale = scope?.locale
   if (typeof slots?.inject !== 'function' || typeof configForms?.get !== 'function'
-    || typeof configForms?.whileServed !== 'function' || typeof locale?.register !== 'function') return
-  // 卡片的保存按钮 / 开关来自宿主 ui-primitives：缺任何一个都别注册，避免渲染时才炸。
+    || typeof locale?.register !== 'function' || typeof locale?.bind !== 'function') return
+  // 保存按钮 / 开关来自宿主 ui-primitives：缺任何一个都别注册，避免渲染时才炸。
   //
   // ⚠ 组件不等于函数：宿主用 `forwardRef` 包了 Button（导出是对象 `{ $$typeof, render }`），
-  // 用 `typeof x === 'function'` 判定会把它当成"不存在"，卡片在真实宿主上整块消失。
+  // 用 `typeof x === 'function'` 判定会把它当成"不存在"，分区在真实宿主上整块消失。
   // 判定必须接受函数与对象两种导出形状。
   if (typeof SettingsFormModel !== 'function' || !isComponent(Switch) || !isComponent(Button)) {
-    console.warn(`[${SETTINGS_NS}] host ui-primitives has no settings controls — visual settings disabled`)
+    console.warn(`[${SETTINGS_NS}] host ui-primitives has no settings controls — settings section disabled`)
     return
   }
   const effect = typeof scope.effect === 'function' ? scope.effect.bind(scope) : null
@@ -2864,25 +3683,44 @@ function mountSettingsCard(scope) {
   try {
     keep(locale.register(SETTINGS_NS, { zh, en }))
   } catch (err) {
-    // 同 namespace 已注册（HMR 没等到 disposer）：沿用既有词典，卡片照常挂。
+    // 同 namespace 已注册（HMR 没等到 disposer）：沿用既有词典，分区照常挂。
     console.warn(`[${SETTINGS_NS}] locale dictionary already registered:`, err)
   }
-  const controller = new SettingsCardController(configForms.get(SETTINGS_ENTRY_ID))
+  const t = locale.bind(SETTINGS_NS)
+  // 目录浏览通道用**根上下文**探测：`uiWorkspace` 是别的插件 provide 的扁平服务，
+  // 只有根 ctx 的 `get()` 才稳定读得到（本 scope 是 configForms/locale 的子集）。
+  const controller = new SettingsSectionController(
+    configForms.get(SETTINGS_ENTRY_ID),
+    directoryAccess(root),
+  )
   keep(() => controller.dispose())
-  keep(configForms.whileServed([SETTINGS_ENTRY_ID], () => slots.inject('plugins.bundle.config', () => slots.register({
-    name: 'plugins.bundle.config',
-    key: SETTINGS_PACKAGE_NAME,
+  keep(slots.inject('settings.section', () => slots.register({
+    name: 'settings.section',
+    id: SETTINGS_SECTION_ID,
+    order: SETTINGS_SECTION_ORDER,
+    label: () => t('settings.nav'),
     locale: SETTINGS_NS,
     inject: () => controller.inject(),
-  }, SettingsCard))))
+  }, MemorySettingsSection)))
+  keep(slots.inject('settings.section.icon', () => slots.register({
+    name: 'settings.section.icon',
+    id: SETTINGS_SECTION_ID,
+    order: SETTINGS_SECTION_ORDER,
+    label: () => t('settings.nav'),
+    locale: SETTINGS_NS,
+  }, (props) => settingsSectionIcon(props === undefined || props === null ? SIZE : props.size))))
 }
-    __exports.SettingsCard = SettingsCard;
-    __exports.registerSettingsCard = registerSettingsCard;
-    __exports.SettingsCardController = SettingsCardController;
-    __exports.SETTINGS_PACKAGE_NAME = SETTINGS_PACKAGE_NAME;
+
+/** 图标兜底尺寸。 */
+const SIZE = 16
+    __exports.MemorySettingsSection = MemorySettingsSection;
+    __exports.settingsSectionIcon = settingsSectionIcon;
+    __exports.registerSettingsSection = registerSettingsSection;
+    __exports.SettingsSectionController = SettingsSectionController;
     __exports.SETTINGS_ENTRY_ID = SETTINGS_ENTRY_ID;
+    __exports.SETTINGS_SECTION_ID = SETTINGS_SECTION_ID;
+    __exports.SETTINGS_SECTION_ORDER = SETTINGS_SECTION_ORDER;
     __exports.SETTINGS_NS = SETTINGS_NS;
-    __exports.SETTINGS_FIELDS = SETTINGS_FIELDS;
     };
 
     __modules["client-memory-src/slash.js"] = function (__exports, __req) {
@@ -3019,19 +3857,19 @@ function createSlashSource(ctx, deps) {
 
     __modules["client-memory-src/styles.js"] = function (__exports, __req) {
 /**
- * CSS 层：从原 rolldown bundle 中提取的压缩 CSS 与 hashed 类名映射。
+ * CSS 层：三份 <style> 注入（幂等，同 id 复用同一个标签）。
  *
- * 为什么保留原样：CSS Modules 的类名是构建期 hashed 的（i54Wjq_ 前缀），
- * 手写组件不可能重新生成同一套 hash。直接复用同一份字符串与映射表，
- * 保证视觉与原来逐像素一致，也避免重写 1019 行 CSS 引入回归。
+ * 任务面板与命令节点这两份**沿用原 rolldown bundle 里提取的压缩 CSS**：CSS Modules 的
+ * 类名是构建期 hashed 的（i54Wjq_ / _9r5h7a_ 前缀），手写组件不可能重新生成同一套
+ * hash，直接复用同一份字符串与映射表才不会引入回归。
  *
- * 三份样式分别对应 TaskPanel.module.css / TaskCommandNode.module.css /
- * SettingsCard.module.css，与原包一一对应。
+ * 设置页那份（SettingsSection.module.css）是**手写的页面级样式**（`dshpm-` 前缀）：
+ * 它长在宿主设置面板的内容列里，用的是面板自己的排版与 token，不需要 hash。
  */
 
 const PANEL_CSS = ".i54Wjq_panel{pointer-events:auto;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,#fff));border:1px solid var(--dsw-alias-border-l2,#7f7f7f4d);border-radius:14px;flex-direction:column;width:380px;max-width:calc(100vw - 24px);max-height:min(70vh,640px);font-family:inherit;animation:.18s ease-out i54Wjq_panelIn;display:flex;position:fixed;overflow:hidden;box-shadow:0 12px 32px #00000029,0 2px 8px #00000014}@keyframes i54Wjq_panelIn{0%{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}.i54Wjq_dragHandle{cursor:grab;z-index:1;justify-content:center;align-items:center;height:12px;display:flex;position:absolute;top:0;left:0;right:0}.i54Wjq_dragHandle:active{cursor:grabbing}.i54Wjq_handleGrip{background:var(--dsw-alias-separator-primary,#7f7f7f59);opacity:.8;border-radius:2px;width:32px;height:3px}.i54Wjq_header{border-bottom:1px solid var(--dsw-alias-border-l1,#7f7f7f2e);-webkit-user-select:none;user-select:none;justify-content:space-between;align-items:center;gap:8px;padding:10px 10px 8px 14px;display:flex}.i54Wjq_headerLeft{align-items:center;gap:6px;min-width:0;display:flex}.i54Wjq_headerIcon{color:var(--dsw-alias-label-secondary);flex:none}.i54Wjq_headerTitle{color:var(--dsw-alias-label-primary);white-space:nowrap;margin:0;font-size:13px;font-weight:600;line-height:20px}.i54Wjq_headerRight{align-items:center;gap:2px;margin-left:auto;display:flex}.i54Wjq_hintsOff{opacity:.45}.i54Wjq_hintsOff:hover{opacity:.75}.i54Wjq_counts{color:var(--dsw-alias-label-tertiary);white-space:nowrap;margin-right:4px;font-size:11px;line-height:16px}.i54Wjq_boundBadge{color:var(--dsw-alias-label-primary-foreground,#fff);background:var(--dsw-alias-button-primary-fill,#3a6ef5);white-space:nowrap;border-radius:7px;flex:none;padding:0 6px;font-size:10px;line-height:14px}.i54Wjq_notice{color:var(--dsw-alias-state-warn-label,#b7791f);background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1a);word-break:break-all;border-radius:8px;margin:8px 12px 0;padding:6px 10px;font-size:12px;line-height:18px}.i54Wjq_taskList{scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2,transparent) transparent;flex-direction:column;gap:6px;padding:8px;display:flex;overflow-y:auto}.i54Wjq_emptyState{text-align:center;color:var(--dsw-alias-label-secondary);padding:36px 24px 30px}.i54Wjq_emptyTitle{color:var(--dsw-alias-label-primary);margin:0 0 6px;font-size:13px;font-weight:600}.i54Wjq_emptyDesc{color:var(--dsw-alias-label-tertiary);margin:0;font-size:12px;line-height:20px}.i54Wjq_syncHint{color:var(--dsw-alias-label-dimmed);justify-content:center;align-items:center;gap:6px;margin:10px 0 0;font-size:11px;display:flex}.i54Wjq_card{border:1px solid var(--dsw-alias-border-l1,#7f7f7f29);background:var(--dsw-alias-bg-base,transparent);content-visibility:auto;contain-intrinsic-size:auto 140px;border-radius:10px;transition:border-color .15s;overflow:hidden}.i54Wjq_cardBound{border-color:var(--dsw-alias-border-l3,#7f7f7f59);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3,transparent)}.i54Wjq_cardHead{cursor:pointer;text-align:left;background:0 0;border:none;justify-content:space-between;align-items:center;gap:8px;width:100%;padding:8px 10px 7px;display:flex}.i54Wjq_cardHead:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.i54Wjq_cardTitleRow{align-items:center;gap:6px;min-width:0;display:flex}.i54Wjq_cardTitle{color:var(--dsw-alias-label-primary);white-space:nowrap;text-overflow:ellipsis;font-size:13px;font-weight:500;line-height:20px;overflow:hidden}.i54Wjq_cardMeta{color:var(--dsw-alias-label-tertiary);flex:none;align-items:center;gap:8px;display:flex}.i54Wjq_progressText{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px}.i54Wjq_updated{color:var(--dsw-alias-label-dimmed);font-size:10px;line-height:14px}.i54Wjq_chevron{color:var(--dsw-alias-label-tertiary);display:inline-flex}.i54Wjq_track{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1f);border-radius:1px;height:2px;margin:0 10px 6px;overflow:hidden}.i54Wjq_trackFill{background:var(--dsw-alias-label-primary-bluish,var(--dsw-alias-button-primary-fill,#3a6ef5));border-radius:1px;height:100%;transition:width .2s}.i54Wjq_cardBody{border-top:1px solid var(--dsw-alias-border-l1,#7f7f7f24);overscroll-behavior:contain;max-height:300px;padding:8px 10px 10px;overflow-y:auto}.i54Wjq_section{margin-bottom:8px}.i54Wjq_section:last-child{margin-bottom:0}.i54Wjq_sectionLabel{color:var(--dsw-alias-label-secondary);align-items:center;gap:6px;margin-bottom:4px;font-size:11px;line-height:16px;display:flex}.i54Wjq_sectionCount{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1a);color:var(--dsw-alias-label-tertiary);border-radius:6px;padding:0 5px;font-size:10px;line-height:14px}.i54Wjq_stepsList{flex-direction:column;gap:1px;margin:0;padding:0;list-style:none;display:flex}.i54Wjq_stepRow{align-items:flex-start;gap:7px;padding:3px 2px;display:flex}.i54Wjq_stepRow>svg{flex:none;margin-top:2px}.i54Wjq_stepDone{color:var(--dsw-alias-label-dimmed)}.i54Wjq_stepRun{color:var(--dsw-alias-label-primary-bluish,#3a6ef5)}.i54Wjq_stepPending{background:var(--dsw-alias-border-l3,#7f7f7f80);border-radius:50%;flex:none;width:8px;height:8px;margin:5px 3px}.i54Wjq_stepContent{color:var(--dsw-alias-label-secondary);word-break:break-word;white-space:pre-wrap;font-size:12px;line-height:20px}.i54Wjq_stepContentDone{color:var(--dsw-alias-label-dimmed);text-decoration:line-through}.i54Wjq_stepContentRun{color:var(--dsw-alias-label-primary)}.i54Wjq_muted{color:var(--dsw-alias-label-dimmed);font-size:11px;line-height:18px}.i54Wjq_filesList{flex-direction:column;margin:0;padding:0;list-style:none;display:flex}.i54Wjq_fileRow{cursor:pointer;text-align:left;background:0 0;border:none;border-radius:6px;align-items:center;gap:6px;width:100%;padding:3px 4px;display:flex}.i54Wjq_fileRow:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.i54Wjq_fileDot{background:var(--dsw-alias-border-l3,#7f7f7f80);border-radius:50%;flex:none;width:5px;height:5px}.i54Wjq_filePath{color:var(--dsw-alias-label-secondary);white-space:nowrap;text-overflow:ellipsis;text-align:left;direction:rtl;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:11px;line-height:18px;overflow:hidden}.i54Wjq_fileLine{color:var(--dsw-alias-label-dimmed);flex:none;font-size:10px;line-height:18px}.i54Wjq_cardFooter{gap:6px;margin-top:8px;display:flex}@media (prefers-reduced-motion:reduce){.i54Wjq_panel{animation:none}.i54Wjq_trackFill,.i54Wjq_card{transition:none}}.i54Wjq_miniBar{border:1px solid var(--dsw-alias-border-l3,#7f7f7f4d);background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,#fff));max-width:min(46vw,340px);height:34px;color:var(--dsw-alias-label-primary);cursor:grab;-webkit-user-select:none;user-select:none;pointer-events:auto;border-radius:999px;align-items:center;gap:7px;padding:0 12px;font-size:12px;line-height:18px;transition:background .15s,border-color .15s;display:inline-flex;position:fixed;box-shadow:0 6px 20px #00000024,0 1px 4px #00000014}.i54Wjq_miniBar:active{cursor:grabbing}.i54Wjq_miniBar:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.i54Wjq_miniIcon{color:var(--dsw-alias-label-secondary);flex:none}.i54Wjq_miniText{white-space:nowrap;text-overflow:ellipsis;overflow:hidden}.i54Wjq_miniChevron{color:var(--dsw-alias-label-tertiary);flex:none}.i54Wjq_taskList{flex:auto;min-height:0}.i54Wjq_card{flex-direction:column;display:flex}.i54Wjq_boundaryFallback{border:1px solid var(--dsw-alias-border-l3,#7f7f7f4d);background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-secondary);cursor:pointer;pointer-events:auto;border-radius:999px;padding:4px 10px;font-size:12px;line-height:18px;position:fixed;top:64px;right:16px}.i54Wjq_stepToggle{cursor:pointer;background:0 0;border:none;border-radius:4px;flex:none;align-items:center;margin-top:2px;padding:0;display:inline-flex}.i54Wjq_stepToggle:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1f)}.i54Wjq_stepToggle:disabled{cursor:default;opacity:.5}.i54Wjq_stepEditable{cursor:text;border-radius:3px}.i54Wjq_stepEditable:hover{outline:1px dashed var(--dsw-alias-border-l3,#7f7f7f66);outline-offset:1px}.i54Wjq_stepInput{box-sizing:border-box;width:auto;min-width:0;font:inherit;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base,transparent);border:1px solid var(--dsw-alias-border-l3,#7f7f7f73);border-radius:5px;flex:auto;padding:0 5px;font-size:12px;line-height:20px}.i54Wjq_editorArea{box-sizing:border-box;min-width:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base,transparent);border:1px solid var(--dsw-alias-border-l3,#7f7f7f73);resize:none;vertical-align:middle;cursor:text;white-space:pre-wrap;word-break:break-word;border-radius:5px;flex:1;margin:0;padding:2px 5px;font-family:inherit;font-size:12px;line-height:20px;overflow:hidden}.i54Wjq_editorArea:focus{border-color:var(--dsw-alias-border-l3,#7f7f7f99);outline:none}.i54Wjq_stepDragging{opacity:.3;background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.i54Wjq_cardTitleEditable{cursor:text;border-radius:3px}.i54Wjq_cardTitleEditable:hover{outline:1px dashed var(--dsw-alias-border-l3,#7f7f7f66);outline-offset:1px}.i54Wjq_panel[data-theme=glass],.i54Wjq_miniBar[data-theme=glass]{background:color-mix(in srgb, var(--dsw-alias-bg-layer-2,#fff) 90%, transparent);-webkit-backdrop-filter:blur(18px)saturate(1.2);border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#7f7f7f4d) 80%, transparent)}.i54Wjq_panel[data-theme=glass] .i54Wjq_card{background:color-mix(in srgb, var(--dsw-alias-bg-base,transparent) 84%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-border-l1,#7f7f7f29) 60%, transparent)}.i54Wjq_panel[data-theme=glass] .i54Wjq_cardBody{border-top-color:color-mix(in srgb, var(--dsw-alias-border-l1,#7f7f7f24) 60%, transparent)}@media (prefers-reduced-transparency:reduce){.i54Wjq_panel[data-theme=glass],.i54Wjq_miniBar[data-theme=glass]{background:var(--dsw-alias-bg-layer-2,#fff);-webkit-backdrop-filter:none;backdrop-filter:none}.i54Wjq_panel[data-theme=glass] .i54Wjq_card{background:var(--dsw-alias-bg-base,transparent)}}@supports not ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){.i54Wjq_panel[data-theme=glass],.i54Wjq_miniBar[data-theme=glass]{background:var(--dsw-alias-bg-layer-2,#fff)}}.i54Wjq_panel[data-theme=brutal]{box-shadow:none;border-width:1px;border-radius:6px}.i54Wjq_panel[data-theme=brutal] .i54Wjq_card{border:1px solid var(--dsw-alias-border-l3,#7f7f7f6b);background:var(--dsw-alias-bg-base,transparent);box-shadow:none;border-radius:3px}.i54Wjq_panel[data-theme=brutal] .i54Wjq_cardHead{padding:7px 10px 6px}.i54Wjq_panel[data-theme=brutal] .i54Wjq_cardTitle{letter-spacing:.01em;font-weight:650}.i54Wjq_panel[data-theme=brutal] .i54Wjq_headerTitle{letter-spacing:.03em}.i54Wjq_panel[data-theme=brutal] .i54Wjq_boundBadge{border-radius:2px}.i54Wjq_panel[data-theme=brutal] .i54Wjq_track{border-radius:0;height:3px}.i54Wjq_panel[data-theme=brutal] .i54Wjq_trackFill{border-radius:0}.i54Wjq_panel[data-theme=brutal] .i54Wjq_cardBody{border-top:1px solid var(--dsw-alias-border-l2,#7f7f7f3d)}.i54Wjq_panel[data-theme=mono] .i54Wjq_headerTitle,.i54Wjq_panel[data-theme=mono] .i54Wjq_counts,.i54Wjq_panel[data-theme=mono] .i54Wjq_cardTitle,.i54Wjq_panel[data-theme=mono] .i54Wjq_progressText,.i54Wjq_panel[data-theme=mono] .i54Wjq_stepContent,.i54Wjq_panel[data-theme=mono] .i54Wjq_filePath{font-family:ui-monospace,SF Mono,Menlo,Consolas,Liberation Mono,monospace}.i54Wjq_panel[data-theme=mono] .i54Wjq_cardTitle{font-size:12px}.i54Wjq_panel[data-theme=mono] .i54Wjq_stepContent{font-size:11.5px}.i54Wjq_panel[data-theme=mono] .i54Wjq_card{border-radius:5px}.i54Wjq_panel[data-theme=mono] .i54Wjq_trackFill{border-radius:0}.i54Wjq_panel[data-theme=mono] .i54Wjq_stepPending{border-radius:1px}.i54Wjq_panel[data-theme=mono] .i54Wjq_updated{letter-spacing:.02em}.i54Wjq_headerIconBtn{color:inherit;cursor:pointer;background:0 0;border:none;border-radius:0;flex:none;justify-content:center;align-items:center;margin:0;padding:0;display:inline-flex}.i54Wjq_headerIcon{color:var(--dsw-alias-label-secondary);flex:none;display:block}.i54Wjq_headerLeft{min-width:0}.i54Wjq_headerTitle{text-overflow:ellipsis;flex:0 auto;min-width:0;overflow:hidden}.i54Wjq_headerRight{min-width:0}.i54Wjq_counts{text-overflow:ellipsis;flex:none;max-width:45%;margin-left:auto;overflow:hidden}.i54Wjq_dragGhost{pointer-events:none;z-index:9999;transition:left 50ms,top 50ms;position:fixed;transform:translate(-50%,-50%)}.i54Wjq_dragGhostCard{background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,#fff));border:1px solid var(--dsw-alias-border-l3,#7f7f7f59);color:var(--dsw-alias-label-primary);white-space:nowrap;border-radius:8px;align-items:center;gap:8px;max-width:280px;padding:8px 12px;font-size:12px;line-height:20px;display:inline-flex;transform:scale(.9);box-shadow:0 8px 24px #0000002e,0 2px 8px #0000001a}.i54Wjq_dragGhostContent{text-overflow:ellipsis;word-break:break-word;flex:1;min-width:0;overflow:hidden}.i54Wjq_dragGhostClose{width:20px;height:20px;color:var(--dsw-alias-label-tertiary);cursor:pointer;opacity:.6;background:0 0;border:none;border-radius:4px;flex:none;justify-content:center;align-items:center;margin-left:8px;font-size:16px;line-height:1;transition:opacity .15s,background .15s,color .15s;display:inline-flex}.i54Wjq_dragGhostClose:hover{opacity:1;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1f)}.i54Wjq_dropTargetBefore{position:relative}.i54Wjq_dropTargetBefore:before{content:\"\";background:var(--dsw-alias-button-primary-fill,#3a6ef5);height:2px;box-shadow:0 0 4px var(--dsw-alias-button-primary-fill,#3a6ef5);border-radius:1px;animation:.8s ease-in-out infinite i54Wjq_dropPulse;position:absolute;top:-1px;left:0;right:0}.i54Wjq_dropTargetAfter{position:relative}.i54Wjq_dropTargetAfter:after{content:\"\";background:var(--dsw-alias-button-primary-fill,#3a6ef5);height:2px;box-shadow:0 0 4px var(--dsw-alias-button-primary-fill,#3a6ef5);border-radius:1px;animation:.8s ease-in-out infinite i54Wjq_dropPulse;position:absolute;bottom:-1px;left:0;right:0}@keyframes i54Wjq_dropPulse{0%,to{opacity:.6}50%{opacity:1}}.i54Wjq_memoryPane{flex-direction:column;gap:6px;max-height:480px;padding:8px 10px 10px;display:flex;overflow:auto}.i54Wjq_memToolbar{justify-content:space-between;align-items:center;gap:8px;display:flex}.i54Wjq_memCount{opacity:.75;font-size:12px;font-weight:600}.i54Wjq_memList{flex-direction:column;gap:6px;display:flex}.i54Wjq_memSentinel{flex:none;height:1px}.i54Wjq_memFooter{flex-direction:column;align-items:center;gap:4px;padding:6px 0 2px;font-size:12px;display:flex}.i54Wjq_memRow{border:1px solid var(--dsw-border-weak,#80808040);background:color-mix(in srgb, var(--dsw-bg-secondary,#f5f5f5) 45%, transparent);content-visibility:auto;contain-intrinsic-size:auto 76px;border-radius:6px;flex-direction:column;gap:4px;padding:6px 8px;display:flex}.i54Wjq_memRowArchived{opacity:.55}.i54Wjq_memRowMain{flex-direction:column;gap:2px;display:flex}.i54Wjq_memTitle{word-break:break-word;align-items:flex-start;gap:6px;font-size:13px;line-height:1.35;display:flex}.i54Wjq_kindBadge{background:var(--dsw-accent-soft,#5078ff26);color:var(--dsw-accent,#4d6bfe);border-radius:4px;flex:none;padding:0 5px;font-size:11px;line-height:1.5}.i54Wjq_memMeta{flex-wrap:wrap;align-items:center;gap:4px;display:flex}.i54Wjq_badge{background:color-mix(in srgb, var(--dsw-fg,#222) 8%, transparent);border-radius:4px;padding:0 5px;font-size:11px;line-height:1.5}.i54Wjq_badgeDraft{color:#b26a00;background:#ffb40029}.i54Wjq_badgeArchived{opacity:.8}.i54Wjq_memBody{opacity:.8;word-break:break-word;font-size:12px}.i54Wjq_memActs{flex-wrap:wrap;gap:4px;display:flex}.i54Wjq_memToolbarActs{align-items:center;gap:6px;display:flex}.i54Wjq_memNew{border:1px solid var(--dsw-border-weak,#80808040);border-radius:6px;flex-direction:column;gap:6px;padding:8px;display:flex}.i54Wjq_memNewRow{align-items:center;gap:8px;display:flex}.i54Wjq_memLabel{opacity:.8;align-items:center;gap:6px;font-size:12px;display:inline-flex}.i54Wjq_memNew select,.i54Wjq_memNew textarea{box-sizing:border-box;width:100%}";
 const CMD_CSS = "._9r5h7a_row{max-width:100%;color:var(--dsw-alias-label-tertiary);white-space:nowrap;text-overflow:ellipsis;align-items:center;gap:6px;padding:2px 0;font-size:12px;line-height:20px;display:inline-flex;overflow:hidden}._9r5h7a_row[data-variant=ok]{color:var(--dsw-alias-label-secondary)}._9r5h7a_row[data-variant=error]{color:var(--dsw-alias-state-warn-label,#b7791f)}._9r5h7a_row[data-variant=running]{color:var(--dsw-alias-label-dimmed)}._9r5h7a_icon{color:var(--dsw-alias-label-tertiary);flex:none}";
-const SETTINGS_CSS = ".CSjuLW_card{box-sizing:border-box;border:.5px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l4,#00000029));border-radius:var(--dsw-radius-lg,16px);background:var(--dsw-alias-bg-layer-3,#fff);transition:border-color .16s,background .16s}.CSjuLW_card:hover{border-color:var(--dsw-alias-label-dimmed,#c8ccd4)}.CSjuLW_cardOpen{background:var(--dsw-alias-bg-layer-2,#f7f8fa);border-color:var(--dsw-alias-label-dimmed,#c8ccd4)}.CSjuLW_header{-webkit-appearance:none;appearance:none;border-radius:inherit;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;align-items:center;gap:12px;padding:14px 16px;display:flex}.CSjuLW_header:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4f6ef7);outline-offset:-2px}.CSjuLW_headText{flex-direction:column;flex:1;gap:4px;min-width:0;display:flex}.CSjuLW_name{color:var(--dsw-alias-label-primary,#1f2328);font-size:15px;font-weight:600;line-height:1.4}.CSjuLW_desc{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:13px;line-height:1.5}.CSjuLW_unsaved{color:var(--dsw-alias-label-secondary,#6b7280);background:var(--dsw-alias-bg-module-platform,#eef0f4);border-radius:9px;flex:none;padding:0 6px;font-size:11px;font-weight:600;line-height:17px}.CSjuLW_chevron{color:var(--dsw-alias-label-tertiary,#8b93a1);flex:none;transition:transform .16s;display:inline-flex}.CSjuLW_chevronOpen{transform:rotate(180deg)}.CSjuLW_body{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);margin:0 16px;padding-bottom:8px}.CSjuLW_row{align-items:center;gap:12px;padding:12px 0;display:flex}.CSjuLW_row+.CSjuLW_row{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb)}.CSjuLW_labelBox{flex-direction:column;flex:1;gap:3px;min-width:0;display:flex}.CSjuLW_label{color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;line-height:20px}.CSjuLW_hint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}.CSjuLW_control{flex:none;align-items:center;gap:6px;display:flex}.CSjuLW_number{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);width:84px;font:inherit;color:var(--dsw-alias-label-primary,#1f2328);text-align:right;border-radius:7px;padding:6px 8px;font-size:12px;line-height:18px}.CSjuLW_number:disabled{opacity:.5;cursor:default}.CSjuLW_number:focus{border-color:var(--dsw-alias-brand-primary,#4f6ef7);outline:2px solid color-mix(in srgb, var(--dsw-alias-brand-primary,#4f6ef7) 18%, transparent)}.CSjuLW_number[aria-invalid=true]{border-color:var(--dsw-alias-state-error-primary,#dc2626)}.CSjuLW_unit{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}.CSjuLW_actions{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);justify-content:flex-end;align-items:center;gap:8px;padding:12px 0 4px;display:flex}.CSjuLW_failed{min-width:0;color:var(--dsw-alias-label-error,#dc2626);flex:1;margin:0;font-size:12px;line-height:18px}.CSjuLW_notice{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0;padding:12px 0;font-size:12px;line-height:18px}";
+const SETTINGS_CSS = ".dshpm-page{display:flex;flex-direction:column;max-width:720px;color:var(--dsw-alias-label-primary,#1f2328)}.dshpm-title{margin:0;font-size:18px;font-weight:600;line-height:26px}.dshpm-intro{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:2px 0 4px;font-size:13px;line-height:20px}.dshpm-group{color:var(--dsw-alias-label-secondary,#6b7280);margin:16px 0 2px;font-size:12px;font-weight:600;line-height:18px}.dshpm-row{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:center;gap:12px;padding:10px 0;display:flex}.dshpm-group+.dshpm-row,.dshpm-status+.dshpm-row{border-top:0}.dshpm-labelBox{flex-direction:column;flex:1;gap:3px;min-width:0;display:flex}.dshpm-label{font-size:13px;line-height:20px}.dshpm-hint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}.dshpm-control{flex:none;align-items:center;gap:6px;display:flex}.dshpm-number{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);width:84px;font:inherit;color:var(--dsw-alias-label-primary,#1f2328);text-align:right;border-radius:7px;padding:6px 8px;font-size:12px;line-height:18px}.dshpm-number:disabled{opacity:.5;cursor:default}.dshpm-number:focus{border-color:var(--dsw-alias-brand-primary,#4f6ef7);outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 18%,transparent)}.dshpm-number[aria-invalid=true]{border-color:var(--dsw-alias-state-error-primary,#dc2626)}.dshpm-text{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);width:220px;font:inherit;color:var(--dsw-alias-label-primary,#1f2328);border-radius:7px;padding:6px 8px;font-size:12px;line-height:18px}.dshpm-text::placeholder{color:var(--dsw-alias-label-tertiary,#8b93a1)}.dshpm-text:disabled{opacity:.5;cursor:default}.dshpm-text:focus{border-color:var(--dsw-alias-brand-primary,#4f6ef7);outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 18%,transparent)}.dshpm-text[aria-invalid=true]{border-color:var(--dsw-alias-state-error-primary,#dc2626)}.dshpm-unit{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}.dshpm-repoValue{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-module-platform,#f5f6f8);max-width:260px;color:var(--dsw-alias-label-primary,#1f2328);white-space:nowrap;text-overflow:ellipsis;border-radius:7px;padding:6px 8px;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:12px;line-height:18px;overflow:hidden}.dshpm-repoValue[data-empty=true]{color:var(--dsw-alias-label-tertiary,#8b93a1);font-family:inherit}.dshpm-linkBtn{cursor:pointer;border:0;background:0 0;color:var(--dsw-alias-brand-primary,#4f6ef7);white-space:nowrap;border-radius:6px;padding:4px 2px;font:inherit;font-size:12px;line-height:18px}.dshpm-linkBtn:hover{text-decoration:underline}.dshpm-linkBtn:disabled{cursor:default;opacity:.5;text-decoration:none}.dshpm-dialogMask{background:#00000052;z-index:9000;justify-content:center;align-items:center;padding:24px;display:flex;position:fixed;inset:0}.dshpm-dialog{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-2,#fff);border-radius:14px;flex-direction:column;width:min(560px,100%);max-height:min(72vh,600px);display:flex;overflow:hidden;box-shadow:0 18px 48px #00000033,0 2px 10px #0000001a}.dshpm-dialogHead{border-bottom:1px solid var(--dsw-alias-border-l1,#eceef2);flex:none;justify-content:space-between;align-items:center;gap:8px;padding:12px 14px;display:flex}.dshpm-dialogTitle{color:var(--dsw-alias-label-primary,#1f2328);font-size:14px;font-weight:600;line-height:20px}.dshpm-dialogClose{cursor:pointer;border:0;background:0 0;color:var(--dsw-alias-label-tertiary,#8b93a1);border-radius:6px;justify-content:center;align-items:center;width:24px;height:24px;font-size:18px;line-height:1;display:inline-flex}.dshpm-dialogClose:hover{color:var(--dsw-alias-label-primary,#1f2328);background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-crumbs{overscroll-behavior:contain;flex-wrap:wrap;flex:none;align-items:center;gap:2px;padding:8px 12px;display:flex;overflow-x:auto}.dshpm-crumb{cursor:pointer;border:0;background:0 0;color:var(--dsw-alias-brand-primary,#4f6ef7);white-space:nowrap;border-radius:6px;padding:2px 5px;font:inherit;font-size:12px;line-height:18px}.dshpm-crumb:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-crumbCurrent{cursor:default;border:0;background:0 0;color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;border-radius:6px;padding:2px 5px;font:inherit;font-size:12px;font-weight:600;line-height:18px}.dshpm-directoryList{overscroll-behavior:contain;border-top:1px solid var(--dsw-alias-border-l1,#eceef2);flex:1;min-height:140px;padding:6px;overflow-y:auto}.dshpm-directoryRow{cursor:pointer;text-align:left;border:0;background:0 0;color:var(--dsw-alias-label-primary,#1f2328);border-radius:7px;align-items:center;gap:8px;width:100%;padding:6px 8px;font:inherit;font-size:13px;line-height:20px;display:flex}.dshpm-directoryRow:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-directoryRowHidden{cursor:pointer;text-align:left;border:0;background:0 0;color:var(--dsw-alias-label-secondary,#6b7280);opacity:.6;border-radius:7px;align-items:center;gap:8px;width:100%;padding:6px 8px;font:inherit;font-size:13px;line-height:20px;display:flex}.dshpm-directoryRowHidden:hover{opacity:.9;background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-directoryIcon{flex:none;width:16px;font-size:12px;line-height:16px}.dshpm-directoryName{white-space:nowrap;text-overflow:ellipsis;flex:1;min-width:0;overflow:hidden}.dshpm-dialogNote{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0;padding:12px;font-size:12px;line-height:18px}.dshpm-dialogError{color:var(--dsw-alias-label-error,#dc2626);word-break:break-word;margin:0;padding:12px;font-size:12px;line-height:18px}.dshpm-dialogFoot{border-top:1px solid var(--dsw-alias-border-l1,#eceef2);background:var(--dsw-alias-bg-layer-2,#fff);flex:none;align-items:center;gap:8px;padding:10px 12px;display:flex}.dshpm-dialogPath{color:var(--dsw-alias-label-tertiary,#8b93a1);white-space:nowrap;text-overflow:ellipsis;flex:1;min-width:0;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:11px;line-height:16px;overflow:hidden}.dshpm-dialogBtn{cursor:pointer;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);color:var(--dsw-alias-label-primary,#1f2328);white-space:nowrap;border-radius:7px;padding:5px 12px;font:inherit;font-size:12px;line-height:18px}.dshpm-dialogBtn:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-dialogBtnPrimary{cursor:pointer;border:1px solid var(--dsw-alias-button-primary-fill,#3a6ef5);background:var(--dsw-alias-button-primary-fill,#3a6ef5);color:var(--dsw-alias-label-primary-foreground,#fff);white-space:nowrap;border-radius:7px;padding:5px 12px;font:inherit;font-size:12px;line-height:18px}.dshpm-dialogBtnPrimary:disabled{cursor:default;opacity:.5}.dshpm-status{color:var(--dsw-alias-label-secondary,#6b7280);margin:4px 0 0;font-size:12px;line-height:18px}.dshpm-actions{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);justify-content:flex-end;align-items:center;gap:8px;margin-top:16px;padding-top:12px;display:flex}.dshpm-unsaved{color:var(--dsw-alias-label-secondary,#6b7280);background:var(--dsw-alias-bg-module-platform,#eef0f4);border-radius:9px;padding:0 6px;font-size:11px;font-weight:600;line-height:17px}.dshpm-failed{min-width:0;color:var(--dsw-alias-label-error,#dc2626);flex:1;margin:0;font-size:12px;line-height:18px}.dshpm-notice{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:4px 0 0;font-size:12px;line-height:18px}";
 
 const TAG_PREFIX = "@local/dsh-turn-cost/memory";
 
@@ -3051,7 +3889,7 @@ function injectStyle(id, css, plugin) {
 function ensureMemoryStyles() {
   injectStyle(TAG_PREFIX + "/TaskPanel.module.css", PANEL_CSS, "@local/dsh-turn-cost");
   injectStyle(TAG_PREFIX + "/TaskCommandNode.module.css", CMD_CSS, "@local/dsh-turn-cost");
-  injectStyle(TAG_PREFIX + "/SettingsCard.module.css", SETTINGS_CSS, "@local/dsh-turn-cost");
+  injectStyle(TAG_PREFIX + "/SettingsSection.module.css", SETTINGS_CSS, "@local/dsh-turn-cost");
 }
 
 /** TaskPanel.module.css 的 hashed 类名映射（88 项）。 */
@@ -3150,28 +3988,46 @@ const cmdCss = {
   "icon": "_9r5h7a_icon",
   "row": "_9r5h7a_row"
 };
-/** SettingsCard.module.css 的 hashed 类名映射（20 项）。 */
+/** SettingsSection.module.css 的类名映射（17 项）。 */
 const settingsCss = {
-  "actions": "CSjuLW_actions",
-  "body": "CSjuLW_body",
-  "card": "CSjuLW_card",
-  "cardOpen": "CSjuLW_cardOpen",
-  "chevron": "CSjuLW_chevron",
-  "chevronOpen": "CSjuLW_chevronOpen",
-  "control": "CSjuLW_control",
-  "desc": "CSjuLW_desc",
-  "failed": "CSjuLW_failed",
-  "headText": "CSjuLW_headText",
-  "header": "CSjuLW_header",
-  "hint": "CSjuLW_hint",
-  "label": "CSjuLW_label",
-  "labelBox": "CSjuLW_labelBox",
-  "name": "CSjuLW_name",
-  "notice": "CSjuLW_notice",
-  "number": "CSjuLW_number",
-  "row": "CSjuLW_row",
-  "unit": "CSjuLW_unit",
-  "unsaved": "CSjuLW_unsaved"
+  "actions": "dshpm-actions",
+  "control": "dshpm-control",
+  "crumb": "dshpm-crumb",
+  "crumbCurrent": "dshpm-crumbCurrent",
+  "crumbs": "dshpm-crumbs",
+  "dialog": "dshpm-dialog",
+  "dialogBtn": "dshpm-dialogBtn",
+  "dialogBtnPrimary": "dshpm-dialogBtnPrimary",
+  "dialogClose": "dshpm-dialogClose",
+  "dialogError": "dshpm-dialogError",
+  "dialogFoot": "dshpm-dialogFoot",
+  "dialogHead": "dshpm-dialogHead",
+  "dialogMask": "dshpm-dialogMask",
+  "dialogNote": "dshpm-dialogNote",
+  "dialogPath": "dshpm-dialogPath",
+  "dialogTitle": "dshpm-dialogTitle",
+  "directoryIcon": "dshpm-directoryIcon",
+  "directoryList": "dshpm-directoryList",
+  "directoryName": "dshpm-directoryName",
+  "directoryRow": "dshpm-directoryRow",
+  "directoryRowHidden": "dshpm-directoryRowHidden",
+  "failed": "dshpm-failed",
+  "group": "dshpm-group",
+  "hint": "dshpm-hint",
+  "intro": "dshpm-intro",
+  "label": "dshpm-label",
+  "labelBox": "dshpm-labelBox",
+  "linkBtn": "dshpm-linkBtn",
+  "notice": "dshpm-notice",
+  "number": "dshpm-number",
+  "page": "dshpm-page",
+  "repoValue": "dshpm-repoValue",
+  "row": "dshpm-row",
+  "status": "dshpm-status",
+  "text": "dshpm-text",
+  "title": "dshpm-title",
+  "unit": "dshpm-unit",
+  "unsaved": "dshpm-unsaved"
 };
     __exports.ensureMemoryStyles = ensureMemoryStyles;
     __exports.PANEL_CSS = PANEL_CSS;

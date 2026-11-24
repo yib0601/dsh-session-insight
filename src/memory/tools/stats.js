@@ -4,6 +4,7 @@ import { assertIndexRoot, memoryRootFor, resolveSafeIndexRoot } from '../util/fs
 import { ProjectMemoryStore, storeOverview } from '../store.js'
 import { cfgInsight, defaultGlobalFile, GlobalStore } from '../insight-store.js'
 import { cfgEngine } from '../auto-inject.js'
+import { cfgValue } from '../util/config.js'
 import { resolveVectorLayer, vectorIndexSummary, vectorItemsFrom } from '../vector-index.js'
 import { truncate } from '../util/text.js'
 import { listIndexFailures } from '../index-failures.js'
@@ -14,7 +15,8 @@ export function statsTool(config) {
   return defineTool({
     name: 'pm_stats',
     description:
-      'Show store totals, last index time and the per-file index list.',
+      'Show memory store totals: insights, experience notes, tasks and the optional vector layer. '
+      + 'File-level index statistics appear only when corpus indexing is enabled.',
     parameters: {
       root: rootParam(),
     },
@@ -27,18 +29,31 @@ export function statsTool(config) {
       assertIndexRoot(root, args.root || root)
       const store = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
       const overview = storeOverview(store)
-      const files = Object.entries(store.files).sort((a, b) => String(b[1].indexedAt || '').localeCompare(String(a[1].indexedAt || '')))
-      const lines = [
-        `Memory store: ${store.dir}`,
-        `Files indexed: ${overview.files} | Entries: ${overview.entries} | Experience notes: ${overview.experience}`,
-        overview.latest ? `Last index: ${overview.latest}` : 'Last index: never',
-      ]
+      // 语料层关掉时（默认）没有文件级语料可报：不打印 "Files indexed: 0 / Last index: never"，
+      // 那两行会让"记忆是空的"成为误判——insights 与任务本来就不经过索引。
+      const corpusOn = cfgValue(config, 'corpusEnabled') === true
+      const files = corpusOn
+        ? Object.entries(store.files).sort((a, b) => String(b[1].indexedAt || '').localeCompare(String(a[1].indexedAt || '')))
+        : []
+      const lines = corpusOn
+        ? [
+            `Memory store: ${store.dir}`,
+            `Files indexed: ${overview.files} | Entries: ${overview.entries} | Experience notes: ${overview.experience}`,
+            overview.latest ? `Last index: ${overview.latest}` : 'Last index: never',
+          ]
+        : [
+            `Memory store: ${store.dir}`,
+            `Insights: ${Array.isArray(store.insights?.items) ? store.insights.items.length : 0} | Tasks: ${Array.isArray(store.tasks) ? store.tasks.length : 0} | Experience notes: ${overview.experience}`,
+            'Corpus indexing: off (corpusEnabled: false) — code structure is served by codegraph, notes by search_notes',
+          ]
       // 后台索引失败（watch / 懒索引）过去只写日志：这里跟 store 状态一起报，避免
-      // "看着一切正常、实际有文件从没进过语料"。
-      const background = listIndexFailures(root, 3)
-      if (background.count) {
-        const detail = background.items.map((i) => `${i.rel} (${truncate(i.message, 60)})`).join('; ')
-        lines.push(`Index failures: ${background.count} file(s) — ${detail}`)
+      // "看着一切正常、实际有文件从没进过语料"。语料层关掉时没有后台索引，也就没有失败可报。
+      if (corpusOn) {
+        const background = listIndexFailures(root, 3)
+        if (background.count) {
+          const detail = background.items.map((i) => `${i.rel} (${truncate(i.message, 60)})`).join('; ')
+          lines.push(`Index failures: ${background.count} file(s) — ${detail}`)
+        }
       }
       if (files.length) {
         lines.push('')

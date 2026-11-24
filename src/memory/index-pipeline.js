@@ -30,6 +30,24 @@ export function fileKind(ext) {
   return null
 }
 
+/**
+ * 配置感知的 kind 判定：`indexDocs === false` 时文档一律当作不可索引。
+ *
+ * 为什么要有这个开关（而不是靠 roots.exclude）
+ * ──────────────────────────────────────────
+ * `roots.exclude` 是**根级硬拒**（`rootRejection` 把它放在判定链最前），排除整个笔记仓库
+ * 会让它不能当记忆根 —— insight 与 TaskBridge 一并失效。而这里要的只是"文档不进 chunk
+ * 索引"，代码符号、insights、任务都必须照常。所以判据必须落在**文件类型**这一层。
+ *
+ * 默认关（Config 里 `indexDocs: default(false)`）：笔记语料由 `notes` 那条路（原
+ * search-notes 内核）提供，section 级混合检索的质量高出一个量级，留着文档层只会让
+ * `query_memory` 返回与之冲突的截断切块。
+ */
+export function fileKindWith(config, ext) {
+  if (config && config.indexDocs === false && isSupportedDoc(ext)) return null
+  return fileKind(ext)
+}
+
 function exceedsSizeCap(size, config) {
   return !!config.maxFileSizeMb && size > config.maxFileSizeMb * 1024 * 1024
 }

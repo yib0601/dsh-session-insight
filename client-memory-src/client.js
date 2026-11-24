@@ -26,7 +26,8 @@ import { registerShowTaskPanelView } from './ShowTaskPanelNode.js';
 import { taskUIStore } from './task-ui-store.js';
 import { createSlashSource } from './slash.js';
 import { DEGRADED_GRACE_MS, later, missingServices, service } from './services.js';
-import { registerSettingsCard } from './settings-card.js';
+import { registerSettingsSection } from './settings-section.js';
+import { ensureMemoryStyles } from './styles.js';
 const NS = 'dsh-project-memory';
 export const name = NS;
 /**
@@ -163,9 +164,19 @@ function reportDegradedLater(ctx) {
 }
 export function apply(ctx) {
     // 顶层不再有任何硬依赖：这里的几步都在缺服务时降级，绝不早退（早退就是静默消失）。
+    //
+    // CSS 必须在这里注入一次（幂等）：三份样式是构建期 hashed 的类名映射，组件用它们做
+    // className，但没有任何模块负责把 <style> 挂进 document —— 漏了这步的表现是
+    // 「面板挂在 DOM 里、却完全没样式」，而且不报错（2026-11-23 实测踩到）。
+    try {
+        ensureMemoryStyles();
+    }
+    catch (err) {
+        console.warn(`[${NS}] style injection failed:`, err);
+    }
     registerTaskPanel(ctx);
     registerSlashSource(ctx);
-    // 插件详情页上的可视化设置：宿主没有 settings / configForms 时整段不跑（见 settings-card.tsx）。
-    registerSettingsCard(ctx);
+    // 设置面板里的「记忆与笔记」页：宿主没有 settings / configForms 时整段不跑（见 settings-section.js）。
+    registerSettingsSection(ctx);
     reportDegradedLater(ctx);
 }

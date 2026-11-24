@@ -5,7 +5,7 @@ import { existsSync, statSync } from 'node:fs'
 import { assertIndexRoot, assertReadableFile, assertSafeRoot, excludedEntryForPath, findProjectRoot, memoryRootFor, resolveIndexRoot, sessionMemoryRootOrNull, sha256OfFile, storeKey } from '../util/fs.js'
 import { buildDocEntries } from '../doc-pipeline.js'
 import { docEntriesNeedBackfill } from '../doc-index.js'
-import { fileKind } from '../index-pipeline.js'
+import { fileKind, fileKindWith } from '../index-pipeline.js'
 import { ProjectMemoryStore } from '../store.js'
 
 export function indexDocTool(ctx, config) {
@@ -73,11 +73,18 @@ export function indexDocTool(ctx, config) {
       // index_doc 只接受文档。此前不校验后缀，代码文件会被 buildDocEntries 当文本抽成
       // 一条 doc chunk，并用 type:'doc' 覆盖掉 index_repo 写下的同 rel 符号条目——
       // 符号层随即查不到东西，直到下一次 index_repo 才自愈。
-      const kind = fileKind(path.extname(filePath).toLowerCase())
+      const kind = fileKindWith(config, path.extname(filePath).toLowerCase())
       if (kind !== 'doc') {
-        const why = kind === 'code'
-          ? 'this is a source file; use index_repo (or lazy indexing) for code symbols'
-          : 'unsupported extension (index_doc accepts PDF/MD/txt)'
+        // `indexDocs: false` 时文档被判为不可索引，但后缀本身是合法的 —— 报"不支持的扩展名"
+        // 会把人带偏（改后缀？）。先分辨这一种，再落回真实的后缀判定。
+        const docsDisabled = config?.indexDocs === false
+          && fileKind(path.extname(filePath).toLowerCase()) === 'doc'
+        const why = docsDisabled
+          ? 'document indexing is off in this plugin (indexDocs: false); notes are served by the `search_notes` tool instead '
+            + '— set `indexDocs: true` only if you deliberately want a second, chunk-level copy'
+          : kind === 'code'
+            ? 'this is a source file; use index_repo (or lazy indexing) for code symbols'
+            : 'unsupported extension (index_doc accepts PDF/MD/txt)'
         return `Not indexed: ${rel} — ${why}. The existing record was left untouched.`
       }
       const storeExists = existsSync(memoryDir)

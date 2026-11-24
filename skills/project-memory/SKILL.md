@@ -16,6 +16,22 @@ kinds of things:
 
 Query it before re-deriving; write to it only after something has been verified.
 
+## What this store is about
+
+The subject is **this project's own conventions**, not the operator's global agent instructions:
+
+- `AGENTS.md` at the project root, `docs/` (architecture, design, style guides), README — all of them
+  land in the `doc` layer as chunks and are reachable through `query_memory` (`indexDocs` gates this;
+  with the default `indexDocs: false` the store holds code symbols only).
+- Chunks whose heading matches a normative word (必须 / 禁止 / 规则 / 约定 / 清单 / rules / must /
+  never …) rank at ×1.5 in the `doc` layer, so "what does this project require" questions surface the
+  rules section first.
+- The `doc` layer is **not** part of the per-step silent injection (`agent/pre-step` injects insights
+  only). Project rules take effect every turn through the host's own instruction injection; this store
+  is the retrievable, citable copy.
+- `~/.dsh/AGENTS.md` and profile-level rules belong to the operator's global setup — do not copy them
+  here, and do not write project decisions there.
+
 ## When to query
 
 - Before asking the human to re-explain the project, a past decision, or "what were we doing".
@@ -29,13 +45,16 @@ Query it before re-deriving; write to it only after something has been verified.
 1. **Locate context**
    - `query_memory` with `query` = what you actually need ("how are shards written", "why store
      scope", "where is X implemented").
-   - `type`: `all` (default) / `doc` / `symbol` / `experience` / `insight` / `task`.
+   - `type`: `all` (default) / `experience` / `insight` / `task`. `doc` / `symbol` are rejected
+     with a pointer instead of an empty result: corpus indexing is off (`corpusEnabled: false`) —
+     code structure belongs to `codegraph_explore`, note corpus to `search_notes`.
    - Results carry ids and citations. Treat them as evidence: read the cited file when the answer
      matters.
-2. **Refresh the index if it looks empty or stale**
-   - `index_repo root:"<project>"` — incremental; unchanged files are skipped.
-   - `index_doc file_path:"…"` — one document, even outside the corpus.
-   - `pm_stats` — counts, last index time, per-file list.
+2. **Check what the store holds**
+   - `pm_stats` — insight / task / experience counts, plus the optional vector layer.
+   - `index_repo` / `index_doc` / `watch_repo` exist only when `corpusEnabled: true`; with the
+     default `false` they are not registered at all, because code structure is served by
+     `codegraph_explore` and note corpus by `search_notes`.
 3. **Write back what will still be true next session**
    - `save_lesson` — one insight. Give `kind` (`lesson` / `decision` / `procedure`), a one-line
      `title`, and the body: `pattern` + `fix`, or `choice` + `reason`, or `steps`.
@@ -67,10 +86,18 @@ Run from a shell (no dsh required):
 node <this-skill-dir>/scripts/pm-digest.mjs <project-root>
 node <this-skill-dir>/scripts/pm-digest.mjs <project-root> --json
 node <this-skill-dir>/scripts/pm-digest.mjs <project-root> --memory-dir <name>
+
+# reflection 草稿（draft:true）先看清单，再审核并提升到 project 级
+node <this-skill-dir>/scripts/pm-insights-sweep.mjs <project-root> --dry-run
+node <this-skill-dir>/scripts/pm-insights-sweep.mjs <project-root>
 ```
 
-It prints store size, insight/task counts, trigger coverage, and staleness. Use it when memory looks
-empty, suspiciously large, or when you need to explain what is stored. The store directory is usually
+`pm-digest.mjs` prints store size, insight/task counts, trigger coverage, and staleness.
+`pm-insights-sweep.mjs` runs the same `actInsight()` the panel uses (`confirm` then `promote`), so it
+keeps usage trails, near-duplicate merging, and `maxProject` pruning; it is a no-op when no draft is
+pending. Pass `--min-confidence`, `--max-project`, `--decay-days` to mirror the profile's `insight.*`.
+
+The store directory is usually
 `.dsh-project-memory`; if the project configures another `memoryDir`, pass it with `--memory-dir`
 (or `DSH_PROJECT_MEMORY_DIR`) — without either, a single store-shaped directory directly under the
 root is picked up and reported as `auto-detected`, and the "no memory store" message says how to pass it.

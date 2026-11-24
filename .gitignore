@@ -5,6 +5,10 @@ node_modules/
 dist/
 *.tgz
 
+# python bytecode from the notes bridge (host/notes/bridge.py)
+__pycache__/
+*.pyc
+
 # local scratch
 *.log
 *.zstd

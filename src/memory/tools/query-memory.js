@@ -97,6 +97,14 @@ export function queryMemoryTool(ctx, config) {
       const store = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
       const type = args.type || 'all'
       const limit = Math.max(1, Math.min(Number(args.limit) || 8, 20))
+      // 语料层总闸关掉时（默认），doc/symbol 两型没有数据源。直接说清该去哪个工具，
+      // 而不是回一句"没命中"——那会被读成"这个项目没有相关记忆"。
+      const corpusOn = cfgValue(config, 'corpusEnabled') === true
+      if (!corpusOn && (type === 'doc' || type === 'symbol')) {
+        return type === 'doc'
+          ? 'Document chunk indexing is off in this plugin (corpusEnabled: false). Notes are served by `search_notes`; code structure by `codegraph_explore`.'
+          : 'Code-symbol indexing is off in this plugin (corpusEnabled: false). Code structure is served by `codegraph_explore` (node lookup, call paths, blast radius).'
+      }
 
       const queries = cfgValue(config, 'llmQueryExpansion')
         ? await expandQuery(ctx.llm, args.query, config.expansionCount, { route: resolveRoute(exec, config) })
@@ -106,7 +114,7 @@ export function queryMemoryTool(ctx, config) {
       const sessionId = exec?.agent?.session?.id
       const boundTaskId = sessionId && typeof store.getBoundTaskId === 'function' ? store.getBoundTaskId(sessionId) : null
       const globalStore = new GlobalStore(cfgInsight(config).globalFile || defaultGlobalFile()).load()
-      const wantMemory = type === 'all' || type === 'doc' || type === 'symbol'
+      const wantMemory = corpusOn && (type === 'all' || type === 'doc' || type === 'symbol')
       /** 本根记忆层（doc/symbol）的命中数：0 且存在子索引时，末尾要指路。 */
       let memHitCount = 0
       const wantInsight = type === 'all' || type === 'insight'
@@ -283,14 +291,15 @@ export function queryMemoryTool(ctx, config) {
             : type === 'insight'
               ? 'Save a lesson / decision / procedure with save_lesson so it can be recalled next time.'
               : type === 'all'
-                ? 'Index it first with index_repo / index_doc, or note a fix with remember or save_lesson.'
+                ? corpusOn
+                  ? 'Index it first with index_repo / index_doc, or note a fix with remember or save_lesson.'
+                  : 'Note a fix with remember, or save a lesson / decision / procedure with save_lesson, so it can be recalled next time.'
                 : 'Index it first with index_repo / index_doc.'
-        const tail =
-          overview.files === 0
-            ? '. The store has never been indexed.'
-            : overview.latest
-              ? `, last indexed at ${overview.latest}. Use pm_stats to see what the store contains.`
-              : '. Use pm_stats to see what the store contains.'
+        const tail = overview.files === 0
+          ? corpusOn ? '. The store has never been indexed.' : '.'
+          : overview.latest
+            ? `, last indexed at ${overview.latest}. Use pm_stats to see what the store contains.`
+            : '. Use pm_stats to see what the store contains.'
         const nestedNote = wantMemory && memHitCount === 0 ? nestedIndexNote(root, config) : ''
         return (
           `No memory matches for "${args.query}" in ${root}. ${hint}\n` +

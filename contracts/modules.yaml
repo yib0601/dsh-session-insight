@@ -70,7 +70,7 @@ modules:
     not_responsible_for: ["改 DSH 安装树（不打任何补丁、不改 node_modules）", "直接改写 profile 的 cordis.patch.yml（只经 settings.update，让 DSH 校验+落盘+重建 provider 一个事务完成）", "猜能力（行上没声明的模态/档位不写入，保留已有声明）", "替用户手改的 reasoningEfforts/compat 收编（发现非本模块生成的形状就整块不动）", "计价", "UI 渲染（页面/chip 在 context-client）", "把密钥或网关原始 payload 交给页面", "在普通读上阻塞等待网关（只有 force=1 才等）", "决定轮询之外的重试（失败等下一次查看或下个周期）"]
   - name: memory-host
     kind: internal
-    responsibility: "项目记忆引擎（原 @yolk_vat-y/dsh-project-memory 的 Host 半边，现为库而非独立插件行）：索引语料（文档 + 代码符号，带 path:line 引用）、insight 实体（lesson / decision / procedure / experience，分层去重-强化-提升-容量-归档）、跨会话任务（task 实体 + 宿主 todo 同步）；召回期向每步追加记忆消息（entry 常驻块 + relevance 门控 + 单会话预算），写入侧近重复检测；12 个工具与唯一命令 /tasks；把同一份能力暴露成宿主 skill 与原生服务 projectMemory，供别的插件消费。所有可选服务缺失都降级（失败点名打日志，不静默）"
+    responsibility: "项目记忆引擎（原 @yolk_vat-y/dsh-project-memory 的 Host 半边，现为库而非独立插件行）：insight 实体（lesson / decision / procedure / experience，分层去重-强化-提升-容量-归档）、跨会话任务（task 实体 + 宿主 todo 同步）；召回期向每步追加记忆消息（entry 常驻块 + relevance 门控 + 单会话预算），写入侧近重复检测；9 个工具与唯一命令 /tasks（语料索引层关闭：corpusEnabled: false 时不注册 index_repo / index_doc / watch_repo，不跑 watch 与惰性索引，query_memory 只查 insight / experience / task；代码结构归 codegraph、笔记语料归 search_notes）；把同一份能力暴露成宿主 skill 与原生服务 projectMemory，供别的插件消费。所有可选服务缺失都降级（失败点名打日志，不静默）"
     owns:
       - "index.js#Config (memory schema) / index.js#apply (memory 半边)"
       - "src/memory/index.js (toolDefinitions / registerTools / apply)"
@@ -79,7 +79,7 @@ modules:
       - "skills/project-memory/SKILL.md"
       - "skills/project-memory/scripts/pm-digest.mjs"
     exposes:
-      - "tools: list_tasks / select_task / archive_task / show_task_panel / index_doc / index_repo / query_memory / remember / forget / save_lesson / watch_repo / pm_stats（逐个注册，单个重名或 schema 非法只丢那一个）"
+      - "tools: list_tasks / select_task / archive_task / show_task_panel / query_memory / remember / forget / save_lesson / pm_stats（逐个注册，单个重名或 schema 非法只丢那一个）；index_doc / index_repo / watch_repo 仅在 corpusEnabled: true 时注册"
       - "宿主命令 /tasks（唯一：裸 /tasks 给清单快照，子动词 switch|archive|unbind|rename|todos 与 insight list|confirm|promote|… 由面板按钮经 remote.commands.execute 驱动；不声明 input，裸回车立刻执行）"
       - "宿主 skill project-memory（setupSkill 注册；无 skills 服务则静默跳过）+ scripts/pm-digest.mjs 体检脚本"
       - "原生服务 projectMemory（installProjectMemoryService：别的插件/宿主可经 ctx.get('projectMemory') 消费召回与写入；老宿主无 ctx.provide 时安全跳过）"
@@ -87,19 +87,20 @@ modules:
       - "Config（bundle 行唯一配置面：memoryDir / chunkChars / maxFileSizeMb / lazyIndexing / watch / autoIndexOnFirstUse / watchInterval / roots.* / insight.* / reflection.* / autoContext.* / tasklist.*）；volatile 字段只有 autoIndexOnFirstUse / watchInterval / llmQueryExpansion"
       - "磁盘契约：<root>/.dsh-project-memory/（索引、insight、任务、审计与影子日志），单项目日志硬上限 2×shadowMaxBytes + 2×auditMaxBytes"
     depends_on: ["ctx.tools", "ctx.commands (可选)", "ctx.skills (可选)", "ctx.llm (可选，召回期查询扩展/反思)", "ctx.session (session/event · session/disposed)", "ctx.provide (可选)", ".dsh-project-memory/ 与项目工作目录"]
-    not_responsible_for: ["计价 / token 统计 / 上下文投影（成本半边的事）", "UI 渲染（面板与设置卡在 memory-client）", "索引期调用 LLM（索引全本地；LLM 只出现在召回期查询扩展与反思，且默认关）", "扫描家目录 / 文件系统根 / 系统目录（assertSafeRoot 默认拒绝，roots.allow 才放行）", "在 DSH 安装树里打补丁或改写会话日志", "把索引正文塞进 prompt（注入只带摘要与引用）"]
+    not_responsible_for: ["计价 / token 统计 / 上下文投影（成本半边的事）", "UI 渲染（面板与设置页在 memory-client）", "索引期调用 LLM（索引全本地；LLM 只出现在召回期查询扩展与反思，且默认关）", "扫描家目录 / 文件系统根 / 系统目录（assertSafeRoot 默认拒绝，roots.allow 才放行）", "在 DSH 安装树里打补丁或改写会话日志", "把索引正文塞进 prompt（注入只带摘要与引用）"]
   - name: memory-client
     kind: internal
-    responsibility: "项目记忆的界面半边（懒加载兄弟 chunk）：任务面板（shell.overlay 浮层，任务页 / 记忆页 / 新建条目表单 / 分页 / 拖拽），会话内 /tasks 命令节点（接管内置大段文本卡片，避免 JSON 载荷刷屏），show_task_panel 的工具视图（结果一渲染就开面板 —— 面板状态只在浏览器侧），`/` 菜单「工作流」斜杠源（纯客户端开面板页，不发宿主命令），以及插件详情页的可视化设置卡（三个 volatile 字段，经 configForms 宿主校验 + revision fence 原地生效）。全部软依赖：slots / configForms / locale / inputTriggers 缺任一项只降级成一条点名告警，绝不静默消失"
+    responsibility: "项目记忆的界面半边（懒加载兄弟 chunk）：任务面板（shell.overlay 浮层，任务页 / 记忆页 / 新建条目表单 / 分页 / 拖拽），会话内 /tasks 命令节点（接管内置大段文本卡片，避免 JSON 载荷刷屏），show_task_panel 的工具视图（结果一渲染就开面板 —— 面板状态只在浏览器侧），`/` 菜单「工作流」斜杠源（纯客户端开面板页，不发宿主命令），以及设置面板的「记忆与笔记」页（settings.section，id project-memory：记忆三个 volatile 字段经 configForms 宿主校验 + revision fence 原地生效，笔记三项走嵌套路径 mutate）。全部软依赖：slots / configForms / locale / inputTriggers 缺任一项只降级成一条点名告警，绝不静默消失"
     owns: ["client.memory.js", "client-memory-src/"]
     exposes:
       - "shell.overlay (list, id=dsh-project-memory-task-panel, order=100)"
       - "conversation.chat.commandview (keyed, key=tasks)"
       - "tool.call.toolview (keyed, key=show_task_panel)"
       - "inputTriggers source project-memory (line /，order 1，组标题由行上的 section 取代)"
-      - "plugins.bundle.config (keyed, key=@local/dsh-turn-cost, locale dsh-project-memory.settings)"
+      - "settings.section (list, id=project-memory, order=32, locale dsh-project-memory.settings)"
+      - "settings.section.icon (list, id=project-memory, order=32)"
       - "locale namespace dsh-project-memory.settings (zh/en)"
-    depends_on: ["ctx.slots (shell.overlay / conversation.chat.commandview / tool.call.toolview)", "ctx.configForms + ctx.locale (设置卡)", "ctx.inject(inputTriggers, sessions)", "react (宿主模块表)", "memory-host 的工具与 remote.commands（只在动作上，非装配依赖）", "client.js 的 require.async 装载"]
+    depends_on: ["ctx.slots (shell.overlay / conversation.chat.commandview / tool.call.toolview)", "ctx.configForms + ctx.locale (设置页)", "ctx.inject(inputTriggers, sessions)", "react (宿主模块表)", "memory-host 的工具与 remote.commands（只在动作上，非装配依赖）", "client.js 的 require.async 装载"]
     not_responsible_for: ["索引 / 召回 / 注入策略（memory-host）", "直接读写 .dsh-project-memory/（面板只走工具与 remote）", "成本 / 额度 / 上下文界面（client.js 与 client.context.js）", "早退式降级（缺服务也必须挂载并说明原因）"]
   - name: context-items
     kind: internal
@@ -224,15 +225,23 @@ public_slots:
     kind: keyed
     scope: session
     key: show_task_panel
-  - key: plugins.bundle.config
-    kind: keyed
+  - key: settings.section
+    kind: list
     scope: root
-    key: "@local/dsh-turn-cost"
+    id: project-memory
+    order: 32
+    locale: dsh-project-memory.settings
+  - key: settings.section.icon
+    kind: list
+    scope: root
+    inline: true
+    id: project-memory
+    order: 32
     locale: dsh-project-memory.settings
 contract_exceptions:
   - rule: "single file <= 400 lines"
     reason: "static dsh.client entry is served as one client.js and the lazy chunks as one client.context.js / client.memory.js; a chunk is reached only through async require.async, so a surface cannot be split across synchronously required files"
-    mitigation: "section-separated pure pricing core independently unit-tested; the model-catalog store/helpers are exported to test/model-catalog-client.test.js and executed there; client.memory.js 是 client-memory-src/ 23 个模块按 __ModuleLoader__ 协议装配出来的 chunk（改源码后重新装配并 touch 入口），面板/store/命令解析各自成文件；Host 侧按文件分模块（src/memory/ 单文件均 < 300 行，host/model-sync 同理）且全部可单测；no shared mutable state"
+    mitigation: "section-separated pure pricing core independently unit-tested; the model-catalog store/helpers are exported to test/model-catalog-client.test.js and executed there; client.memory.js 是 client-memory-src/ 24 个模块按 __ModuleLoader__ 协议装配出来的 chunk（改源码后重新装配并 touch 入口），面板/store/命令解析各自成文件；Host 侧按文件分模块（src/memory/ 单文件均 < 300 行，host/model-sync 同理）且全部可单测；no shared mutable state"
 replacement:
   target: "dsh-context v0.59.0 (not installed in this profile; the plugin now owns the surfaces)"
   kept_internal_ids: "tc* slot ids/projection keys stay prefixed so a future co-install cannot collide"

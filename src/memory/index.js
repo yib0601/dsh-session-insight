@@ -45,7 +45,7 @@ export const Config = Schema.object({
     provider: Schema.string(),
     model: Schema.string(),
   }).default({}),
-  // 以下三个键在 web 的插件页上有可视化设置（`plugins.bundle.config`，见 src/client/settings-card.tsx）。
+  // 以下三个键在设置面板的「记忆与笔记」页上可改（`settings.section`，见 client-memory-src/settings-section.js）。
   // `.volatile()` 是宿主设置页的准入条件：只有 volatile 字段能经 settings 接口写入，且写入后**不重启**
   // 插件、以 ref 形式原地更新。读取一律走 util/config.js 的 cfgValue()（ref 是对象，直接判真会读错）。
   //
@@ -77,6 +77,46 @@ export const Config = Schema.object({
     // 任务成为会话绑定（select_task / /task switch）时，把任务步骤推成宿主 todo/write 快照
     syncHostOnAdopt: Schema.boolean().default(true),
   }).default({}),
+  // 笔记检索（原 mcp__search-notes__search_notes，现由本插件的 `search_notes` 工具提供）。
+  //
+  // 为什么收进来：它和记忆引擎的文档层（通用 3000 字切块）覆盖同一批 Markdown，而它的
+  // 质量高出一个量级 —— section 级 BM25F + 语义 RRF 融合 + 中文别名 + 相关性策略，实测
+  // 同一个查询它给「网络/FRP.md L1 锚点名 + 原文行」，记忆引擎只给截断切块还混噪声。
+  // 收进来之后 `indexDocs` 默认关掉，笔记语料只有一个真相源。
+  //
+  // `enabled` / `repo` / `timeoutMs` 标了 volatile：它们是「设置 → 记忆与笔记 →
+  // 笔记检索」里的三个控件（client-memory-src/notes-settings.js 直接按
+  // `['notes','repo']` 这样的**嵌套路径**写宿主设置，因为宿主的 SettingsFormModel
+  // 只能寻址顶层键）。宿主校验「编辑路径的最近 volatile 祖先」（isVolatilePath），
+  // 未标 volatile 的键写进去会被 400 拒绝。
+  //
+  // `python` / `warmup` 刻意不标：它们不是"用户偏好"，只在 profile 里改，改完重启生效。
+  notes: Schema.object({
+    enabled: asVolatile(Schema.boolean().default(true)),
+    // 仓库根。空 = 不启用（host 半边不会拉起 python 进程，工具如实报未配置）。
+    repo: asVolatile(Schema.string().default('')),
+    // 解释器。空 = 自动：优先 <repo>/.notes/venv/bin/python（语义层依赖装在那里），
+    // 退到 python3（只剩词面）。显式指定可指向别的 venv。
+    python: Schema.string().default(''),
+    // 单次检索超时。首查要加载模型（实测 1-6s），之后 200-400ms；留给冷启动的余量。
+    timeoutMs: asVolatile(Schema.number().default(30000)),
+    // 启动后预热一次（只 ping 进程，不加载模型）。
+    warmup: Schema.boolean().default(true),
+  }).default({}),
+  // 语料索引层总闸：doc chunk + 代码符号。默认 **false**。
+  //
+  // 两个去处各归各的工具：代码结构归 codegraph（符号图 + 调用路径 + 影响面），笔记语料归
+  // `notes` 那条路（section 级 BM25F + 语义 RRF）。插件自己再存一份，只会让 query_memory
+  // 给出与两者都不一致的第三份答案，并把后台轮询与惰性索引的常驻成本摊在每个会话上。
+  //
+  // 关掉后受影响的面只有语料那半边：`index_repo` / `index_doc` / `watch_repo` 三个工具
+  // 不注册、watch 不启动、惰性索引不挂、启动全量索引不跑、query_memory 只查 insight /
+  // experience / task 三层、pm_stats 不报文件级统计。insights、任务、静默注入、反思管线
+  // 与笔记检索全部不受影响。
+  corpusEnabled: Schema.boolean().default(false),
+  // 文档层子开关（仅在 `corpusEnabled` 打开时才有意义）。关掉后 `.md/.pdf/.txt` 不再进
+  // 记忆库的 chunk 索引，代码符号层不受影响。
+  indexDocs: Schema.boolean().default(false),
   // insight 实体：分层去重/强化/提升/容量/归档
   insight: Schema.object({
     dedupOverlap: Schema.number().default(0.7),
@@ -164,26 +204,30 @@ export const Config = Schema.object({
 })
 
 /**
- * 12 个工具的唯一定义处：apply 与 schema 预算测试共用，避免测试里手抄一份列表
- *（新增第 13 个工具不会因为漏抄而绕过预算）。
+ * 9 个工具的唯一定义处：apply 与 schema 预算测试共用，避免测试里手抄一份列表
+ *（新增工具不会因为漏抄而绕过预算）。
+ *
+ * 语料层关掉（`corpusEnabled: false`，默认）时，三个索引类工具**不注册**：留一个
+ * "调用即报错"的工具只会让模型反复试错，工具表里压根没有才是对的答案。
  * @param {object} config 插件配置
  * @param {object} ctx 宿主上下文（仅部分工具构造时需要）
  * @param {object} watchManager watch 管理器
  * @returns {object[]} defineTool 的产物
  */
 export function toolDefinitions(config, ctx, watchManager) {
+  const corpusOn = cfgValue(config, 'corpusEnabled') === true
   return [
     listTasksTool(config),
     selectTaskTool(config, { llm: ctx?.llm, ctx }),
     archiveTaskTool(config, { llm: ctx?.llm, ctx }),
     showTaskPanelTool(config),
-    indexDocTool(ctx, config),
-    indexRepoTool(ctx, config),
+    ...(corpusOn
+      ? [indexDocTool(ctx, config), indexRepoTool(ctx, config), watchRepoTool(watchManager, config)]
+      : []),
     queryMemoryTool(ctx, config),
     rememberTool(config),
     forgetTool(config),
     lessonTool(config),
-    watchRepoTool(watchManager, config),
     statsTool(config),
   ]
 }
@@ -230,12 +274,16 @@ export function apply(ctx, config) {
     initTypeScript(config)
   }
 
+  // 语料层总闸：默认关（见 Config 里 `corpusEnabled` 的注释）。关掉时整条索引链路不接线 ——
+  // 没有轮询器、没有惰性索引、没有启动全量扫描，工具表里也没有那三个索引工具。
+  const corpusOn = cfgValue(config, 'corpusEnabled') === true
   const watchManager = new WatchManager(ctx, config)
   // watchInterval 是 volatile 字段：设置页改完要当场生效（重排定时器），而不是等下次启动。
   // watch 本身不提供界面开关（关掉监视等于放任索引过期），但仍可在 profile 里设 false。
   // 持久化的根清单只恢复一次；先关后开时补一次（否则"打开监视"要等到下次启动才真的开始轮询）。
   let watchRestored = false
   const syncWatch = () => {
+    if (!corpusOn) return false
     if (cfgValue(config, 'watch') !== false && !watchRestored) {
       watchRestored = true
       watchManager.restorePersisted()
@@ -247,7 +295,7 @@ export function apply(ctx, config) {
     return () => watchManager.stop()
   })
 
-  if (config.lazyIndexing) {
+  if (corpusOn && config.lazyIndexing) {
     setupLazyIndexing(ctx, config, watchManager)
   }
 
@@ -271,12 +319,15 @@ export function apply(ctx, config) {
   ctx.on('session/event', (session, event) => {
     if (event?.type === 'request/header') rememberRoute(session)
     // 会话活跃信号：跑回合时把 watch 轮询压到最低，回合结束立刻补扫一次（见 watch.js）。
+    // 语料层关掉时没有轮询器，这条信号没有接收方。
+    if (!corpusOn) return
     const key = session?.id ?? 'unknown'
     if (event?.type === 'turn/start' || event?.type === 'step/start') watchManager.setSessionActive(key, true)
     else if (event?.type === 'turn/end') watchManager.setSessionActive(key, false)
   })
   // 会话被销毁时也要摘掉活跃标记，否则没有正常 turn/end 的会话会把轮询**永久**压在兜底节拍。
   ctx.on('session/disposed', (session) => {
+    if (!corpusOn) return
     watchManager.setSessionActive(session?.id ?? 'unknown', false)
   })
   registerTools(ctx, toolDefinitions(config, ctx, watchManager))
@@ -301,7 +352,8 @@ export function apply(ctx, config) {
 
   // 启动时全量索引是**一次性**动作：设置页把它打开只影响下一次启动，不会当场扫全树
   // （卡片上的说明也这么写）。所以这里读的是本次启动时的值，不订阅后续变化。
-  if (cfgValue(config, 'autoIndexOnFirstUse')) {
+  // 它属于语料层：总闸关掉时连判断都不做。
+  if (corpusOn && cfgValue(config, 'autoIndexOnFirstUse')) {
     // effect 回调必须同步并返回 disposer；异步体独立执行，用 cancelled 标志避免卸载后再写日志
     ctx.effect(() => {
       let cancelled = false

@@ -9,9 +9,11 @@ import { ProjectMemoryStore, storeOverview } from './store.js'
 import { cfgInsight, defaultGlobalFile, GlobalStore, removeMemory, saveInsight } from './insight-store.js'
 import { insightBodyText, recallItems } from './recall.js'
 import { forgetVectorRows } from './vector-index.js'
+import { cfgValue } from './util/config.js'
 
-/** 默认四层与 `recallItems` 的默认值保持一致。 */
+/** 默认四层与 `recallItems` 的默认值保持一致；语料层关掉时 doc/symbol 没有数据源，不算进去。 */
 const DEFAULT_LAYERS = ['doc', 'symbol', 'experience', 'insight']
+const NO_CORPUS_LAYERS = ['experience', 'insight']
 
 /** `snippet` 是展示用摘要，不追求全文；正文兜底用 `insightBodyText`（经验条目没有 summary）。 */
 const SNIPPET_CHARS = 300
@@ -70,7 +72,10 @@ export function createProjectMemoryService(ctx, config) {
       assertSafeRoot(root, { config })
       assertIndexRoot(root, opts.root)
       const limit = Number.isFinite(opts.limit) && opts.limit > 0 ? Math.min(50, Math.floor(opts.limit)) : 8
-      const layers = Array.isArray(opts.layers) && opts.layers.length ? opts.layers : DEFAULT_LAYERS
+      const corpusOn = cfgValue(config, 'corpusEnabled') === true
+      const layers = Array.isArray(opts.layers) && opts.layers.length
+        ? opts.layers
+        : corpusOn ? DEFAULT_LAYERS : NO_CORPUS_LAYERS
       const { store, globalStore } = openStores(root, config)
       const recalled = recallItems({
         store,

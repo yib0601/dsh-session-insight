@@ -3,7 +3,7 @@ import { TEXT_OUTPUT, persistenceNote, rootParam } from './output.js'
 import path from 'node:path'
 import { existsSync, statSync } from 'node:fs'
 import { assertIndexRoot, assertSafeRoot, excludedEntryForPath, listProjectFiles, memoryDirName, memoryRootFor, relativePath, resolveIndexRoot, scanLimits, storeKey } from '../util/fs.js'
-import { DROP, OVERSIZE, UNCHANGED, commitFileUpdates, fileKind, planFileIndex, toFileUpdate } from '../index-pipeline.js'
+import { DROP, OVERSIZE, UNCHANGED, commitFileUpdates, fileKindWith, planFileIndex, toFileUpdate } from '../index-pipeline.js'
 import { ProjectMemoryStore } from '../store.js'
 import { onFileIndexed, isTypeScriptFile, enhanceQueueStats } from '../enhancer.js'
 import { clearIndexFailure, listIndexFailures } from '../index-failures.js'
@@ -48,7 +48,7 @@ export async function indexRepository(ctx, config, root, { reindex = false, allo
   for (const filePath of files) {
     const rel = storeKey(relativePath(root, filePath))
     seen.add(rel)
-    const kind = fileKind(path.extname(filePath).toLowerCase())
+    const kind = fileKindWith(config, path.extname(filePath).toLowerCase())
     if (!kind) continue
 
     try {

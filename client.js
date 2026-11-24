@@ -1197,7 +1197,7 @@ window.__ModuleLoader__.load({
           console.error('[dsh-turn-cost] context chunk failed to load:', error);
         });
 
-        // 项目记忆 UI（任务面板 / 记忆列表 / 设置卡）同样是懒加载的兄弟 chunk。
+        // 项目记忆 UI（任务面板 / 记忆列表 / 设置页「记忆与笔记」）同样是懒加载的兄弟 chunk。
         // 它是从原 @yolk_vat-y/dsh-project-memory 合并进来的独立半边，源码在
         // client-memory-src/，与成本 UI 零交集；装载失败只记日志，绝不连累成本显示。
         //
