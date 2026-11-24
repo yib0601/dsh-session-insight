@@ -1,9 +1,9 @@
 {
-  "name": "@local/dsh-turn-cost",
-  "version": "1.16.0",
+  "name": "@local/dsh-session-insight",
+  "version": "1.18.0",
   "private": true,
   "type": "module",
-  "description": "Per-turn and session cost in CNY/USD at official list prices; sessions own a Context tab (breakdown, commands, files) and a cross-session usage overview with subscription quota. Settings hold every preference: cost (badge/pill, currency, billing tier, budget), model catalog sync, and project memory plus notes retrieval.",
+  "description": "Everything a DSH session should show about itself: per-turn and session cost at official list prices (CNY/USD), the context breakdown and cross-session usage overview, subscription quota with its reset countdown, self-hosted gateway model-catalog sync, and a cross-session project memory engine plus notes retrieval. Every preference lives in its own settings pages.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -13,7 +13,12 @@
     "cost-tracking",
     "token-usage",
     "llm-pricing",
-    "dashboard"
+    "dashboard",
+    "context-inspector",
+    "subscription-quota",
+    "model-catalog",
+    "project-memory",
+    "notes-search"
   ],
   "exports": {
     ".": "./index.js",

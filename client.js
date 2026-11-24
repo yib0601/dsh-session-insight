@@ -1,5 +1,5 @@
 /**
- * dsh-turn-cost — Client half. Prices each completed turn's exact DSH token
+ * dsh-session-insight — Client half. Prices each completed turn's exact DSH token
  * usage with the vendor's official list price, and shows the running session
  * total in the composer dock. The context-insight surfaces live in the lazy
  * sibling chunk `client.context.js`, fed by the Host's `tc*` projections.
@@ -17,7 +17,7 @@
  */
 
 window.__ModuleLoader__.load({
-  id: '@local/dsh-turn-cost',
+  id: '@local/dsh-session-insight',
   factory(require) {
     const React = require('react');
     const ReactDOM = require('react-dom');   // baseline platform module (used by shipped chat bundle)
@@ -543,7 +543,7 @@ window.__ModuleLoader__.load({
     // §1.5 preferences (client-local; no Host config form needed)
     // ─────────────────────────────────────────────────────────────────────────
 
-    const PREF_KEY = 'dsh-turn-cost:prefs';
+    const PREF_KEY = 'dsh-session-insight:prefs';
     // `budget` is a soft cap in the display currency: 0 switches it off.
     const PREF_DEFAULTS = Object.freeze({
       badge: true, pill: true, tier: 'auto', currency: 'CNY', budget: 0,
@@ -609,51 +609,51 @@ window.__ModuleLoader__.load({
 
     const STYLES = `
 /* Turn-tail seat: only Turns without an action row keep the chip on its own line. */
-.dsh-turn-cost-root{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:2px 0 6px;font-size:calc(var(--dsh-content-font-size-secondary, 13px) - 1px);line-height:1.5}
+.dsh-session-insight-root{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:2px 0 6px;font-size:calc(var(--dsh-content-font-size-secondary, 13px) - 1px);line-height:1.5}
 /* Action-row seat: same line as usage / clock, trailing the meta instead of
    taking a line of its own. */
-.dsh-turn-cost-chip{position:relative;display:inline-flex;align-items:center;order:99;margin:0 0 0 2px}
+.dsh-session-insight-chip{position:relative;display:inline-flex;align-items:center;order:99;margin:0 0 0 2px}
 /* Match the host's Turn-usage pill: transparent resting, small radius, tertiary label. */
-.dsh-turn-cost-badge{display:inline-flex;align-items:center;gap:4px;min-width:0;padding:2px 8px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-variant-numeric:tabular-nums;line-height:calc(24px + var(--dsh-content-font-delta, 0px));white-space:nowrap;cursor:pointer}
-.dsh-turn-cost-badge[aria-expanded='true']{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
-@media (hover:hover){.dsh-turn-cost-badge:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}}
-.dsh-turn-cost-badge:focus-visible{outline-width:var(--dsw-focus-ring-width,2px);outline-style:solid;outline-color:var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
-.dsh-turn-cost-badge[data-unknown="true"]{border:1px dashed var(--dsw-alias-border-l1)}
+.dsh-session-insight-badge{display:inline-flex;align-items:center;gap:4px;min-width:0;padding:2px 8px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-variant-numeric:tabular-nums;line-height:calc(24px + var(--dsh-content-font-delta, 0px));white-space:nowrap;cursor:pointer}
+.dsh-session-insight-badge[aria-expanded='true']{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}
+@media (hover:hover){.dsh-session-insight-badge:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-tertiary)}}
+.dsh-session-insight-badge:focus-visible{outline-width:var(--dsw-focus-ring-width,2px);outline-style:solid;outline-color:var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.dsh-session-insight-badge[data-unknown="true"]{border:1px dashed var(--dsw-alias-border-l1)}
 /* One money skin for both surfaces: the transcript badge and the composer pill
    must read as the same number in the same type, size and colour. The size
    matches the host's own dock pills (activity / usage) and the transcript meta. */
-.dsh-turn-cost-amount,.dsh-turn-cost-pill-amount{font-family:inherit;font-size:calc(var(--dsh-content-font-size-secondary, 13px) - 1px);font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:.01em;color:var(--dsw-alias-label-primary)}
-.dsh-turn-cost-approx{opacity:.7;margin-right:1px}
+.dsh-session-insight-amount,.dsh-session-insight-pill-amount{font-family:inherit;font-size:calc(var(--dsh-content-font-size-secondary, 13px) - 1px);font-weight:500;font-variant-numeric:tabular-nums;letter-spacing:.01em;color:var(--dsw-alias-label-primary)}
+.dsh-session-insight-approx{opacity:.7;margin-right:1px}
 /* Details disclosure: the shipped stat-dialog skin (Turn-usage / session
    stats), so a cost panel reads as one more DSH statistics card. */
-.dsh-turn-cost-details{box-sizing:border-box;width:max-content;min-width:min(300px,calc(100vw - 24px));max-width:min(440px,calc(100vw - 24px));padding:16px;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);box-shadow:var(--dsw-elevation-prominent);font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);cursor:default;max-height:calc(100dvh - 24px);overflow-y:auto}
+.dsh-session-insight-details{box-sizing:border-box;width:max-content;min-width:min(300px,calc(100vw - 24px));max-width:min(440px,calc(100vw - 24px));padding:16px;border:0;border-radius:var(--dsw-radius-lg);background:var(--dsw-specific-menu);backdrop-filter:var(--dsw-menu-backdrop-filter);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);box-shadow:var(--dsw-elevation-prominent);font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);cursor:default;max-height:calc(100dvh - 24px);overflow-y:auto}
 /* Heading row: section name left, its headline figure right, both primary weight. */
-.dsh-turn-cost-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:8px;color:var(--dsw-alias-label-primary);font-weight:500}
-.dsh-turn-cost-head-label{display:inline-flex;align-items:center;gap:6px;min-width:0}
-.dsh-turn-cost-head-label svg{width:14px;height:14px;flex:none}
-.dsh-turn-cost-head-value{font-variant-numeric:tabular-nums;white-space:nowrap}
-.dsh-turn-cost-rule{margin-bottom:10px;border-top:.5px solid var(--dsw-alias-border-l2)}
-.dsh-turn-cost-details dl{display:grid;grid-template-columns:minmax(76px,auto) minmax(0,1fr);gap:6px 16px;margin:0;color:var(--dsw-alias-label-tertiary)}
-.dsh-turn-cost-details dt,.dsh-turn-cost-details dd{min-width:0;margin:0}
-.dsh-turn-cost-details dd{text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary)}
-.dsh-turn-cost-details p{margin:8px 0 0;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}
-.dsh-turn-cost-details a{color:var(--dsw-alias-brand-primary);text-decoration:none}
-.dsh-turn-cost-details a:hover{text-decoration:underline}
+.dsh-session-insight-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:8px;color:var(--dsw-alias-label-primary);font-weight:500}
+.dsh-session-insight-head-label{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.dsh-session-insight-head-label svg{width:14px;height:14px;flex:none}
+.dsh-session-insight-head-value{font-variant-numeric:tabular-nums;white-space:nowrap}
+.dsh-session-insight-rule{margin-bottom:10px;border-top:.5px solid var(--dsw-alias-border-l2)}
+.dsh-session-insight-details dl{display:grid;grid-template-columns:minmax(76px,auto) minmax(0,1fr);gap:6px 16px;margin:0;color:var(--dsw-alias-label-tertiary)}
+.dsh-session-insight-details dt,.dsh-session-insight-details dd{min-width:0;margin:0}
+.dsh-session-insight-details dd{text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary)}
+.dsh-session-insight-details p{margin:8px 0 0;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px}
+.dsh-session-insight-details a{color:var(--dsw-alias-brand-primary);text-decoration:none}
+.dsh-session-insight-details a:hover{text-decoration:underline}
 /* Composer-dock session total: same pill skin as the host's activity/usage pills. */
-.dsh-turn-cost-dock{display:inline-flex;position:relative;min-width:0}
-.dsh-turn-cost-pill{display:inline-flex;align-items:center;min-width:0;padding:1px 8px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:calc(var(--dsh-content-font-size-secondary, 13px) - 1px);line-height:20px;white-space:nowrap;cursor:pointer}
-.dsh-turn-cost-pill-amount{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.dsh-turn-cost-pill:focus-visible{outline-width:var(--dsw-focus-ring-width,2px);outline-style:solid;outline-color:var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.dsh-session-insight-dock{display:inline-flex;position:relative;min-width:0}
+.dsh-session-insight-pill{display:inline-flex;align-items:center;min-width:0;padding:1px 8px;border:none;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:calc(var(--dsh-content-font-size-secondary, 13px) - 1px);line-height:20px;white-space:nowrap;cursor:pointer}
+.dsh-session-insight-pill-amount{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.dsh-session-insight-pill:focus-visible{outline-width:var(--dsw-focus-ring-width,2px);outline-style:solid;outline-color:var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
 /* Budget gauge: with a cap set the pill reads amount / cap plus a hairline bar. */
-.dsh-turn-cost-pill[data-over='true'] .dsh-turn-cost-pill-amount{color:var(--dsw-alias-state-error-primary)}
-.dsh-turn-cost-gauge{display:inline-block;width:32px;height:3px;margin-left:6px;border-radius:2px;overflow:hidden;vertical-align:middle;background:var(--dsw-alias-bg-layer-3)}
-.dsh-turn-cost-gauge i{display:block;height:100%;background:var(--dsw-alias-state-business-primary)}
-.dsh-turn-cost-pill[data-over='true'] .dsh-turn-cost-gauge i{background:var(--dsw-alias-state-error-primary)}
-.dsh-turn-cost-budget{position:relative;height:4px;margin-top:10px;border-radius:2px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
-.dsh-turn-cost-budget i{display:block;height:100%;background:var(--dsw-alias-state-business-primary)}
-.dsh-turn-cost-budget[data-over='true'] i{background:var(--dsw-alias-state-error-primary)}
+.dsh-session-insight-pill[data-over='true'] .dsh-session-insight-pill-amount{color:var(--dsw-alias-state-error-primary)}
+.dsh-session-insight-gauge{display:inline-block;width:32px;height:3px;margin-left:6px;border-radius:2px;overflow:hidden;vertical-align:middle;background:var(--dsw-alias-bg-layer-3)}
+.dsh-session-insight-gauge i{display:block;height:100%;background:var(--dsw-alias-state-business-primary)}
+.dsh-session-insight-pill[data-over='true'] .dsh-session-insight-gauge i{background:var(--dsw-alias-state-error-primary)}
+.dsh-session-insight-budget{position:relative;height:4px;margin-top:10px;border-radius:2px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}
+.dsh-session-insight-budget i{display:block;height:100%;background:var(--dsw-alias-state-business-primary)}
+.dsh-session-insight-budget[data-over='true'] i{background:var(--dsw-alias-state-error-primary)}
 /* The inline seat has no room to grow: the details panel floats above it. */
-.dsh-turn-cost-chip .dsh-turn-cost-details{position:absolute;right:0;bottom:calc(100% + 8px);z-index:60}
+.dsh-session-insight-chip .dsh-session-insight-details{position:absolute;right:0;bottom:calc(100% + 8px);z-index:60}
 `;
 
     /** No-op selector, so the hooks below stay unconditional off their own seat. */
@@ -680,11 +680,11 @@ window.__ModuleLoader__.load({
     /** Section heading + headline figure, then the hairline rule above the rows. */
     function panelHeading(label, value) {
       return [
-        h('div', { key: 'head', className: 'dsh-turn-cost-head' },
-          h('span', { className: 'dsh-turn-cost-head-label' }, costIcon(), label),
+        h('div', { key: 'head', className: 'dsh-session-insight-head' },
+          h('span', { className: 'dsh-session-insight-head-label' }, costIcon(), label),
           value === undefined || value === null ? null
-            : h('span', { className: 'dsh-turn-cost-head-value' }, value)),
-        h('div', { key: 'rule', className: 'dsh-turn-cost-rule', 'aria-hidden': 'true' }),
+            : h('span', { className: 'dsh-session-insight-head-value' }, value)),
+        h('div', { key: 'rule', className: 'dsh-session-insight-rule', 'aria-hidden': 'true' }),
       ];
     }
 
@@ -744,7 +744,7 @@ window.__ModuleLoader__.load({
       const openState = React.useState(false);
       const open = openState[0];
       const setOpen = openState[1];
-      const idState = React.useState(() => 'dsh-turn-cost-' + Math.random().toString(36).slice(2, 10));
+      const idState = React.useState(() => 'dsh-session-insight-' + Math.random().toString(36).slice(2, 10));
       const detailsId = idState[0];
       const rootRef = React.useRef(null);
       const t = props.t;
@@ -813,7 +813,7 @@ window.__ModuleLoader__.load({
 
       const badge = h('button', {
         type: 'button',
-        className: 'dsh-turn-cost-badge',
+        className: 'dsh-session-insight-badge',
         'data-unknown': isUnknown ? 'true' : 'false',
         'data-turn': String(turnNumber === undefined ? '' : turnNumber),
         'aria-expanded': open ? 'true' : 'false',
@@ -823,14 +823,14 @@ window.__ModuleLoader__.load({
         onClick: () => { setOpen(!open); },
       },
         // Keep the approximation marker adjacent to the number it qualifies.
-        h('span', { className: 'dsh-turn-cost-amount' },
+        h('span', { className: 'dsh-session-insight-amount' },
           result.approximate === true && !isUnknown
-            ? h('span', { className: 'dsh-turn-cost-approx', 'aria-hidden': true }, '≈') : null,
+            ? h('span', { className: 'dsh-session-insight-approx', 'aria-hidden': true }, '≈') : null,
           label,
         ),
       );
 
-      const containerClass = inline ? 'dsh-turn-cost-chip' : 'dsh-turn-cost-root';
+      const containerClass = inline ? 'dsh-session-insight-chip' : 'dsh-session-insight-root';
       if (!open) return h('div', { className: containerClass, ref: rootRef }, badge);
 
       const rows = [];
@@ -888,7 +888,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: containerClass, ref: rootRef },
         badge,
         h('div', {
-          id: detailsId, className: 'dsh-turn-cost-details',
+          id: detailsId, className: 'dsh-session-insight-details',
           role: 'region', 'aria-label': t('detailsLabel'),
         }, ...rows),
       );
@@ -977,18 +977,18 @@ window.__ModuleLoader__.load({
           : '');
 
       const pill = h('button', {
-        type: 'button', className: 'dsh-turn-cost-pill',
+        type: 'button', className: 'dsh-session-insight-pill',
         'data-composer-stat': 'session-cost', 'data-over': overBudget ? 'true' : 'false',
         'aria-expanded': open ? 'true' : 'false',
         'aria-controls': open ? detailsId : undefined, 'aria-label': label + ' · ' + summary, title: summary,
         onClick: toggle,
       },
-        h('span', { className: 'dsh-turn-cost-pill-amount' },
+        h('span', { className: 'dsh-session-insight-pill-amount' },
           result.approximate === true && !unknown
-            ? h('span', { className: 'dsh-turn-cost-approx', 'aria-hidden': true }, '≈') : null,
+            ? h('span', { className: 'dsh-session-insight-approx', 'aria-hidden': true }, '≈') : null,
           label),
         budget > 0 && !unknown
-          ? h('span', { className: 'dsh-turn-cost-gauge', 'aria-hidden': 'true' },
+          ? h('span', { className: 'dsh-session-insight-gauge', 'aria-hidden': 'true' },
             h('i', { style: { width: gaugeRatio.toFixed(1) + '%' } }))
           : null,
       );
@@ -1010,7 +1010,7 @@ window.__ModuleLoader__.load({
       rows.push(h('dl', { key: 'dl' }, ...dl));
       if (budget > 0 && !unknown) {
         rows.push(h('div', {
-          key: 'budget-bar', className: 'dsh-turn-cost-budget',
+          key: 'budget-bar', className: 'dsh-session-insight-budget',
           'data-over': overBudget ? 'true' : 'false',
         }, h('i', { style: { width: gaugeRatio.toFixed(1) + '%' } })));
       }
@@ -1032,13 +1032,13 @@ window.__ModuleLoader__.load({
 
       const panel = !open || anchor === null ? null : ReactDOM.createPortal(
         h('div', {
-          ref: panelRef, id: detailsId, className: 'dsh-turn-cost-details',
+          ref: panelRef, id: detailsId, className: 'dsh-session-insight-details',
           role: 'region', 'aria-label': t('sessionDetailsLabel'),
           style: { position: 'fixed', left: anchor.left + 'px', bottom: anchor.bottom + 'px', zIndex: 9999 },
         }, ...rows),
         document.body,
       );
-      return h('span', { className: 'dsh-turn-cost-dock', ref: rootRef }, pill, panel);
+      return h('span', { className: 'dsh-session-insight-dock', ref: rootRef }, pill, panel);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1152,12 +1152,12 @@ window.__ModuleLoader__.load({
         ctx.effect(() => {
           const style = document.createElement('style');
           style.textContent = STYLES;
-          style.setAttribute('data-dsh-turn-cost', '');
+          style.setAttribute('data-dsh-session-insight', '');
           document.head.appendChild(style);
           return () => { style.remove(); };
-        }, 'dsh-turn-cost: styles');
+        }, 'dsh-session-insight: styles');
 
-        ctx.effect(() => ctx.locale.register('turnCost', LOCALE), 'dsh-turn-cost: dictionaries');
+        ctx.effect(() => ctx.locale.register('turnCost', LOCALE), 'dsh-session-insight: dictionaries');
 
         // Per-Turn money on the message's action row (same line as usage / clock),
         // so it costs no vertical space of its own.
@@ -1167,16 +1167,16 @@ window.__ModuleLoader__.load({
           order: 90,
           label: 'Turn cost',
           locale: 'turnCost',
-        }, TurnCostBadge)), 'dsh-turn-cost: assistant action entry');
+        }, TurnCostBadge)), 'dsh-session-insight: assistant action entry');
 
         // The same chip for Turns that never finalized a message (no action row).
         ctx.effect(() => ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
           name: 'conversation.chat.turnTail',
-          id: 'dsh-turn-cost',
+          id: 'dsh-session-insight',
           order: 90,
           label: 'Turn cost',
           locale: 'turnCost',
-        }, TurnCostBadge)), 'dsh-turn-cost: turnTail entry');
+        }, TurnCostBadge)), 'dsh-session-insight: turnTail entry');
 
         // Session-wide total in the composer's bottom stats row (after the
         // shipped `activity` / `usage` pills).
@@ -1186,15 +1186,15 @@ window.__ModuleLoader__.load({
           order: 2,
           label: 'Session cost',
           locale: 'turnCost',
-        }, SessionCostPill)), 'dsh-turn-cost: composer dock pill');
+        }, SessionCostPill)), 'dsh-session-insight: composer dock pill');
 
         // The context-insight surfaces live in a lazily loaded sibling chunk so
         // this file stays focused on pricing. A chunk failure must never take
         // down the cost features above, so it is isolated and only logged.
         void require.async('./client.context.js').then((context) => {
-          ctx.effect(() => context.apply(ctx, PRICING_API), 'dsh-turn-cost: context surfaces');
+          ctx.effect(() => context.apply(ctx, PRICING_API), 'dsh-session-insight: context surfaces');
         }).catch((error) => {
-          console.error('[dsh-turn-cost] context chunk failed to load:', error);
+          console.error('[dsh-session-insight] context chunk failed to load:', error);
         });
 
         // 项目记忆 UI（任务面板 / 记忆列表 / 设置页「记忆与笔记」）同样是懒加载的兄弟 chunk。
@@ -1205,9 +1205,9 @@ window.__ModuleLoader__.load({
         // 里根本不会出现 client.memory.js（实测清单只含 client.js / client.context.js），
         // 表现是"Host 工具都在、界面上却没有任务面板"，且没有任何报错。
         void require.async('./client.memory.js').then((memory) => {
-          ctx.effect(() => memory.apply(ctx), 'dsh-turn-cost: project memory surfaces');
+          ctx.effect(() => memory.apply(ctx), 'dsh-session-insight: project memory surfaces');
         }).catch((error) => {
-          console.error('[dsh-turn-cost] memory chunk failed to load:', error);
+          console.error('[dsh-session-insight] memory chunk failed to load:', error);
         });
       },
 

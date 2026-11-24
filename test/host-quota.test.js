@@ -19,7 +19,7 @@ import {
 // ── constants ───────────────────────────────────────────────────────────────
 assert.equal(BALANCE_ENDPOINT, 'https://api.deepseek.com/user/balance');
 assert.equal(USAGE_ENDPOINT, 'https://opencode.ai/zen/go/v1/usage');
-assert.equal(QUOTA_PATH, '/dsh-turn-cost/quota');
+assert.equal(QUOTA_PATH, '/dsh-session-insight/quota');
 assert.equal(KEY_REFS.deepseek, 'DEEPSEEK_API_KEY');
 assert.equal(KEY_REFS['opencode-go'], 'OPENCODE_GO_API_KEY');
 assert.equal(KEY_REFS.workbuddy, 'WORKBUDDY_SHIM_TOKEN');
@@ -264,18 +264,18 @@ assert.equal(registered.length, 0, 'the disposer unregisters the route');
 // route bills and what is left on it — so when it is configured it answers
 // first. Every failure must fall through to the direct vendor read: a gateway
 // outage may not be able to blank a figure a vendor read can still produce.
-assert.equal(GATEWAY_URL_ENV, 'DSH_TURN_COST_GATEWAY_URL');
+assert.equal(GATEWAY_URL_ENV, 'DSH_SESSION_INSIGHT_GATEWAY_URL');
 assert.equal(GATEWAY_KEY_REF, 'AI_ROUTER_API_KEY');
-assert.equal(GATEWAY_BACKENDS_ENV, 'DSH_TURN_COST_GATEWAY_BACKENDS');
+assert.equal(GATEWAY_BACKENDS_ENV, 'DSH_SESSION_INSIGHT_GATEWAY_BACKENDS');
 assert.equal(GATEWAY_QUOTA_PATH, '/v1/quota');
 assert.deepEqual({ ...GATEWAY_BACKEND_OF_SOURCE },
   { workbuddy: 'workbuddy', 'opencode-go': 'oc-go', deepseek: 'deepseek-official' });
 assert.equal(resolveGateway({}), null, 'no URL means no gateway read at all');
-assert.equal(resolveGateway({ DSH_TURN_COST_GATEWAY_URL: '   ' }), null, 'a blank URL is unset');
+assert.equal(resolveGateway({ DSH_SESSION_INSIGHT_GATEWAY_URL: '   ' }), null, 'a blank URL is unset');
 
 const gatewayEnv = {
-  DSH_TURN_COST_GATEWAY_URL: 'https://gw.example/',
-  DSH_TURN_COST_GATEWAY_BACKENDS: 'opencode-go=ocg,deepseek',
+  DSH_SESSION_INSIGHT_GATEWAY_URL: 'https://gw.example/',
+  DSH_SESSION_INSIGHT_GATEWAY_BACKENDS: 'opencode-go=ocg,deepseek',
 };
 const gateway = resolveGateway(gatewayEnv);
 assert.equal(gateway.baseURL, 'https://gw.example', 'the trailing slash is dropped once, here');
@@ -326,7 +326,7 @@ assert.equal(normalizeGatewayQuota('workbuddy', { status: 'failed' }), null, 'a 
 const gatewaySeen = [];
 const vendorSeen = [];
 const viaGateway = createQuotaReader({
-  gateway: resolveGateway({ DSH_TURN_COST_GATEWAY_URL: 'https://gw.example' }),
+  gateway: resolveGateway({ DSH_SESSION_INSIGHT_GATEWAY_URL: 'https://gw.example' }),
   fetch: async (url, init) => {
     if (String(url).startsWith('https://gw.example')) {
       gatewaySeen.push({ url: String(url), auth: init.headers.authorization });
@@ -348,7 +348,7 @@ assert.equal((await viaGateway.read('workbuddy', async () => 'gw-key', false)).c
 
 /** Same reader, gateway now broken: the vendor read must still answer. */
 const fallingBack = createQuotaReader({
-  gateway: resolveGateway({ DSH_TURN_COST_GATEWAY_URL: 'https://gw.example' }),
+  gateway: resolveGateway({ DSH_SESSION_INSIGHT_GATEWAY_URL: 'https://gw.example' }),
   fetch: async (url) => {
     if (String(url).startsWith('https://gw.example')) return { ok: false, status: 502, json: async () => ({}) };
     return {

@@ -16,3 +16,6 @@ __pycache__/
 .env.*
 .DS_Store
 Thumbs.db
+
+# 笔记草稿区（临时，未确认并入前不进 Git 索引）
+.notes/drafts/

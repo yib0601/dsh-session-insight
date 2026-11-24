@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""notes bridge — 常驻的笔记检索服务，供 dsh-turn-cost 的 Host 半边调用。
+"""notes bridge — 常驻的笔记检索服务，供 dsh-session-insight 的 Host 半边调用。
 
 为什么需要它
 ────────────

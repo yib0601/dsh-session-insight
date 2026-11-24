@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 export const SKILL_NAME = 'project-memory'
 /** 包内目录：`<repo>/skills/project-memory/`（npm files 白名单里有 `skills`）。
- *  合并进 dsh-turn-cost 后本文件位于 `src/memory/`，故需上跳两级到包根（原包内是 `../skills`）。 */
+ *  合并进 dsh-session-insight 后本文件位于 `src/memory/`，故需上跳两级到包根（原包内是 `../skills`）。 */
 export const SKILL_DIR = fileURLToPath(new URL('../../skills/project-memory/', import.meta.url))
 
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/

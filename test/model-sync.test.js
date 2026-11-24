@@ -24,7 +24,7 @@ import {
 } from '../host/model-sync/mount.js';
 
 // ── constants ───────────────────────────────────────────────────────────────
-assert.equal(MODELS_PATH, '/dsh-turn-cost/models');
+assert.equal(MODELS_PATH, '/dsh-session-insight/models');
 assert.equal(DEFAULT_SETTINGS_NS, 'llm-pi-ai');
 assert.deepEqual([...DEFAULT_ROUTES], ['ai-router']);
 assert.equal(DEFAULT_INTERVAL_MS, 600_000);
@@ -331,13 +331,13 @@ const makeSync = (overrides = {}) => {
 assert.deepEqual(resolveSyncOptions({}), {
   enabled: true, settingsNs: 'llm-pi-ai', routes: ['ai-router'], intervalMs: 600_000, bootMs: 20_000, staleMs: 300_000,
 });
-assert.equal(resolveSyncOptions({ DSH_TURN_COST_MODEL_STALE_MS: '1000' }).staleMs, 1_000);
-assert.equal(resolveSyncOptions({ DSH_TURN_COST_MODEL_SYNC: '0' }).enabled, false);
-assert.equal(resolveSyncOptions({ DSH_TURN_COST_MODEL_SYNC: 'off' }).enabled, false);
-assert.deepEqual(resolveSyncOptions({ DSH_TURN_COST_MODEL_ROUTES: ' ai-router , other ' }).routes, ['ai-router', 'other']);
-assert.equal(resolveSyncOptions({ DSH_TURN_COST_MODEL_SYNC_MS: '60000' }).intervalMs, 60_000);
-assert.equal(resolveSyncOptions({ DSH_TURN_COST_MODEL_SYNC_MS: 'soon' }).intervalMs, 600_000);
-assert.equal(resolveSyncOptions({ DSH_TURN_COST_SETTINGS_NS: 'llm-pi-ai-2' }).settingsNs, 'llm-pi-ai-2');
+assert.equal(resolveSyncOptions({ DSH_SESSION_INSIGHT_MODEL_STALE_MS: '1000' }).staleMs, 1_000);
+assert.equal(resolveSyncOptions({ DSH_SESSION_INSIGHT_MODEL_SYNC: '0' }).enabled, false);
+assert.equal(resolveSyncOptions({ DSH_SESSION_INSIGHT_MODEL_SYNC: 'off' }).enabled, false);
+assert.deepEqual(resolveSyncOptions({ DSH_SESSION_INSIGHT_MODEL_ROUTES: ' ai-router , other ' }).routes, ['ai-router', 'other']);
+assert.equal(resolveSyncOptions({ DSH_SESSION_INSIGHT_MODEL_SYNC_MS: '60000' }).intervalMs, 60_000);
+assert.equal(resolveSyncOptions({ DSH_SESSION_INSIGHT_MODEL_SYNC_MS: 'soon' }).intervalMs, 600_000);
+assert.equal(resolveSyncOptions({ DSH_SESSION_INSIGHT_SETTINGS_NS: 'llm-pi-ai-2' }).settingsNs, 'llm-pi-ai-2');
 
 // ── framework glue: cache-first read, background revalidation ──────────────
 {
@@ -354,7 +354,7 @@ assert.equal(resolveSyncOptions({ DSH_TURN_COST_SETTINGS_NS: 'llm-pi-ai-2' }).se
   };
   const updates = [];
   const creds = [];
-  let registered;
+  const registered = new Map();
   const disposers = [];
   const scoped = {
     get: (name) => ({
@@ -366,7 +366,7 @@ assert.equal(resolveSyncOptions({ DSH_TURN_COST_SETTINGS_NS: 'llm-pi-ai-2' }).se
         },
       },
       credentials: { resolve: async (ref) => { creds.push(ref); return { value: 'sk-live' }; } },
-      webServer: { register: (definition) => { registered = definition; return () => {}; } },
+      webServer: { register: (definition) => { registered.set(definition.path, definition); return () => {}; } },
     })[name],
     effect: (callback, name) => { disposers.push({ name, dispose: callback() }); },
     logger: { info: () => {}, warn: () => {} },
@@ -386,7 +386,7 @@ assert.equal(resolveSyncOptions({ DSH_TURN_COST_SETTINGS_NS: 'llm-pi-ai-2' }).se
     return fakeResponse(listing);
   };
 
-  const read = () => registered.resource(new Request('http://127.0.0.1:3080/dsh-turn-cost/models'));
+  const read = () => registered.get(MODELS_PATH).resource(new Request('http://127.0.0.1:3080/dsh-session-insight/models'));
   const timeout = (ms, label) => new Promise((_, reject) => { setTimeout(() => { reject(new Error(label)); }, ms); });
 
   try {
@@ -433,19 +433,19 @@ assert.equal(resolveSyncOptions({ DSH_TURN_COST_SETTINGS_NS: 'llm-pi-ai-2' }).se
     assert.equal(typeof second.quotaSourcesAt, 'number');
 
     // 3. `force=1` is the explicit path and does wait for the gateway.
-    const forced = await (await registered.resource(new Request('http://127.0.0.1:3080/dsh-turn-cost/models?force=1'))).json();
+    const forced = await (await registered.get(MODELS_PATH).resource(new Request('http://127.0.0.1:3080/dsh-session-insight/models?force=1'))).json();
     assert.equal(calls.length, before + 1);
     assert.equal(forced.last.reason, 'unchanged', 'no drift now, so nothing is rewritten');
     assert.equal(updates.length, 1);
 
     // 4. A POST is refused; the route is read-only.
-    const rejected = await registered.resource(new Request('http://127.0.0.1:3080/dsh-turn-cost/models', { method: 'POST' }));
+    const rejected = await registered.get(MODELS_PATH).resource(new Request('http://127.0.0.1:3080/dsh-session-insight/models', { method: 'POST' }));
     assert.equal(rejected.status, 405);
 
     mounted.stop();
     assert.deepEqual(disposers.map((row) => row.name), [
-      'dsh-turn-cost: model sync loop',
-      'dsh-turn-cost: model sync route',
+      'dsh-session-insight: model sync loop',
+      'dsh-session-insight: model sync route',
     ]);
   } finally {
     globalThis.fetch = originalFetch;
@@ -467,18 +467,18 @@ test('the models route is claimed before settings exists', async () => {
   // error. It is now claimed as soon as `webServer` exists, answers
   // `syncUnavailable` with a reason until the loop attaches, and serves the live
   // catalog afterwards.
-  let registered = null;
+  const registered = new Map();
   const web = {
-    get: (name) => ({ webServer: { register: (definition) => { registered = definition; return () => { registered = null; }; } } })[name],
+    get: (name) => ({ webServer: { register: (definition) => { registered.set(definition.path, definition); return () => { registered.delete(definition.path); }; } } })[name],
     logger: { info: () => {}, warn: () => {} },
   };
   const options = { enabled: true, settingsNs: 'llm-pi-ai', routes: ['ai-router'], intervalMs: 0, bootMs: 0, staleMs: 300_000 };
   const surface = createModelsSurface(web, options);
-  assert.equal(registered?.path, MODELS_PATH, 'the path is claimed immediately');
+  assert.equal(registered.get(MODELS_PATH)?.path, MODELS_PATH, 'the path is claimed immediately');
   assert.equal(surface.mounted, false);
 
   const read = async (method = 'GET') => {
-    const response = await registered.resource(new Request('http://127.0.0.1:3080' + MODELS_PATH, { method }));
+    const response = await registered.get(MODELS_PATH).resource(new Request('http://127.0.0.1:3080' + MODELS_PATH, { method }));
     const text = await response.text();
     // A 405 answers plain text (`method not allowed`); only the JSON bodies parse.
     return { status: response.status, body: text.startsWith('{') ? JSON.parse(text) : text };
@@ -501,7 +501,7 @@ test('the models route is claimed before settings exists', async () => {
   assert.deepEqual(live.body.quotaSources, { 'kimi-k3': 'workbuddy' });
   assert.equal(live.body.last.reason, 'written');
   surface.dispose();
-  assert.equal(registered, null, 'disposal releases the path');
+  assert.equal(registered.size, 0, 'disposal releases the path');
 });
 
 test('a wedged cycle is abandoned, so the loop cannot freeze', async () => {
@@ -542,13 +542,13 @@ test('an unhealthy cycle arms one short retry', async () => {
   assert.equal(DEFAULT_RETRY_MS, 60_000);
   assert.equal(DEFAULT_RETRY_MAX_MS, 5 * 60_000);
   let listings = 0;
-  let registered = null;
+  const registered = new Map();
   const descriptor = { ns: 'llm-pi-ai', value: { providers: { 'ai-router': { baseURL: 'https://gw.example', models: [] } } }, user: {} };
   const scoped = {
     get: (name) => ({
       settings: { describe: () => [descriptor], update: async () => {} },
       credentials: { resolve: async () => ({ value: 'k' }) },
-      webServer: { register: (definition) => { registered = definition; return () => {}; } },
+      webServer: { register: (definition) => { registered.set(definition.path, definition); return () => {}; } },
     })[name],
     effect: (cb) => { cb(); return () => {}; },
     logger: { info: () => {}, warn: () => {} },
@@ -571,10 +571,10 @@ test('an unhealthy cycle arms one short retry', async () => {
     // A read is what a surface does: with nothing synced yet it starts a cycle in
     // the background — the exact path that used to leave a boot failure in place
     // for a whole interval.
-    await (await registered.resource(new Request('http://x/dsh-turn-cost/models'))).json();
+    await (await registered.get(MODELS_PATH).resource(new Request('http://x/dsh-session-insight/models'))).json();
     await new Promise((resolve) => { setTimeout(resolve, 200); });
     assert.ok(listings >= 2, 'the retry looked again well before the ten-minute interval');
-    const body = await (await registered.resource(new Request('http://x/dsh-turn-cost/models'))).json();
+    const body = await (await registered.get(MODELS_PATH).resource(new Request('http://x/dsh-session-insight/models'))).json();
     assert.equal(body.last.ok, true, 'a later cycle is healthy');
     assert.ok(['written', 'unchanged'].includes(body.last.reason), `healthy reason, got ${body.last.reason}`);
     assert.deepEqual(body.quotaSources, { 'kimi-k3': 'workbuddy' }, 'the retry heals the map');

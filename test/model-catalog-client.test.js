@@ -122,7 +122,7 @@ test('catalog store paints the cache, follows the background refresh, keeps a fa
   const cached = models.createModelsStore();
   assert.equal(cached.getSnapshot().phase, 'cache', 'a second store starts from the persisted paint');
   assert.equal(models.ModelsChip({ t, catalog: cached }).type, 'button', 'a cached catalog renders the chip before any read');
-  storage.removeItem('dsh-turn-cost:model-catalog');
+  storage.removeItem('dsh-session-insight:model-catalog');
   assert.equal(models.ModelsChip({ t, catalog: models.createModelsStore() }), null,
     'a browser with no cache and no route yet renders nothing');
   const unsupported = models.createModelsStore();
@@ -136,10 +136,10 @@ test('catalog store paints the cache, follows the background refresh, keeps a fa
     urls.push(url);
     return Promise.resolve({ ok: true, status: 200, json: async () => reply([KIMI]) });
   });
-  assert.equal(urls[0], '/dsh-turn-cost/models');
+  assert.equal(urls[0], '/dsh-session-insight/models');
   assert.equal(fetched.models.length, 1);
   await models.readModelsRoute(true, (url) => { urls.push(url); return Promise.resolve({ ok: true, status: 200, json: async () => reply([]) }); });
-  assert.equal(urls[1], '/dsh-turn-cost/models?force=1', 'a forced check names itself');
+  assert.equal(urls[1], '/dsh-session-insight/models?force=1', 'a forced check names itself');
   await assert.rejects(
     models.readModelsRoute(false, () => Promise.resolve({ ok: false, status: 503, json: async () => ({}) })),
     /http-503/u,
@@ -180,7 +180,7 @@ test('catalog store paints the cache, follows the background refresh, keeps a fa
   assert.equal(after.syncedAt, 42);
   assert.equal(after.refreshing, false);
   assert.equal(call, 2, 'exactly one follow-up');
-  assert.equal(JSON.parse(storage.getItem('dsh-turn-cost:model-catalog')).models.length, 2,
+  assert.equal(JSON.parse(storage.getItem('dsh-session-insight:model-catalog')).models.length, 2,
     'the refreshed list becomes the next paint');
 
   // 3. a forced check goes straight out

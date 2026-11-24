@@ -1,5 +1,5 @@
 /**
- * dsh-turn-cost — Memory client half（项目记忆 UI）。
+ * dsh-session-insight — Memory client half（项目记忆 UI）。
  *
  * 与 `client.js`（成本）+ `client.context.js`（上下文洞察）并列的第三个 client bundle：
  * 任务是面板/记忆列表/设置页「记忆与笔记」三种视图，与成本 UI 无交集，物理上独立更容易维护。
@@ -11,7 +11,7 @@
  * HMR：宿主只 watch 声明的入口文件；改 `client-memory-src/` 内部后需 touch 本文件。
  */
 window.__ModuleLoader__.load({
-  id: '@local/dsh-turn-cost',
+  id: '@local/dsh-session-insight',
   chunk: 'client.memory.js',
   factory(require) {
     // 宿主 seed 模块：与 client.js / client.context.js 同一套（react + ui-primitives）。
@@ -2208,7 +2208,68 @@ const zh = {
     'slash.global-desc': '全局记忆：跨项目的经验条目',
     // 设置面板里的「记忆与笔记」页（settings.section，id = project-memory）。
     'settings.nav': '记忆与笔记',
-    'settings.intro': '笔记检索的仓库入口、启用开关与单次超时；保存后立即生效。项目记忆在这里只保留决策与任务记录 —— 代码结构由 codegraph 提供，笔记语料由 search_notes 提供，插件不再自建索引。',
+    'settings.intro': '这个项目记住了什么、记忆库能长多大、笔记检索读哪个仓库；保存后立即生效。记忆条目由模型调用 save_lesson / remember 写入，这里负责让你看见并调整规模 —— 代码结构由 codegraph 提供，笔记语料由 search_notes 提供，插件不再自建索引。',
+    'settings.memory.section': '项目记忆',
+    'settings.memory.hint': '本项目已存下的记忆（只读）。写入由模型完成；点条目标题行展开，可看全文、涉及的文件与触发条件。确认、提升、归档在任务面板的记忆视图里。',
+    'settings.memory.scope.project': '项目',
+    'settings.memory.scope.task': '任务草稿',
+    'settings.memory.scope.global': '全局',
+    'settings.memory.usage': '已存 {used} 条 · 容量 {capacity} 条（{percent}%）',
+    'settings.memory.usage.nocap': '已存 {used} 条 · 这一层没有容量上限',
+    'settings.memory.loading': '正在读取记忆库…',
+    'settings.memory.loadingShort': '读取中…',
+    'settings.memory.refresh': '刷新',
+    'settings.memory.empty': '这一层还没有记忆。',
+    'settings.memory.failed': '读取失败：{message}',
+    'settings.memory.unparsable': '宿主返回的载荷无法解析',
+    'settings.memory.noSession': '没有活跃会话：记忆清单要靠会话命令读取，先打开一个对话。',
+    'settings.memory.truncated': '只显示最近 {shown} / {total} 条；完整列表在任务面板的记忆视图。',
+    'settings.memory.untitled': '（无标题）',
+    'settings.memory.badge.draft': '待确认',
+    'settings.memory.badge.archived': '已归档',
+    'settings.memory.meta.confidence': '置信 {value}',
+    'settings.memory.meta.hits': '命中 {count}',
+    'settings.memory.meta.files': '文件 {count}',
+    'settings.memory.meta.symbols': '符号 {count}',
+    'settings.memory.meta.members': '合并 {count} 个任务',
+    'settings.memory.expand': '展开详情',
+    'settings.memory.collapse': '收起详情',
+    'settings.memory.detail.body': '正文',
+    'settings.memory.detail.steps': '步骤（{count} 条）',
+    'settings.memory.detail.files': '涉及的文件（{count} 个）',
+    'settings.memory.detail.symbols': '涉及的符号（{count} 个）',
+    'settings.memory.detail.trigger': '触发条件',
+    'settings.memory.detail.more': '只列出前 {shown} 个，共 {total} 个。',
+    'settings.memory.detail.id': '条目 id：{id}',
+    'settings.memory.trigger.writes': '写',
+    'settings.memory.trigger.ops': '动作',
+    'settings.memory.trigger.intents': '意图',
+    'settings.memory.trigger.paths': '路径',
+    'settings.memory.trigger.hosts': '主机',
+    'settings.memory.trigger.keywords': '关键词',
+    'settings.memory.trigger.scope': '作用域',
+    'settings.memory.trigger.guard': '限定',
+    'settings.memory.field.problem': '问题',
+    'settings.memory.field.choice': '选择',
+    'settings.memory.field.reason': '理由',
+    'settings.memory.field.fix': '修法',
+    'settings.memory.field.solution': '解决',
+    'settings.memory.field.pattern': '模式',
+    'settings.memory.unit.items': '条',
+    'settings.memory.unit.chars': '字符',
+    // 记忆规模只有一格上界面（`MEMORY_SCALE_VISIBLE_FIELDS`）：词典跟着界面走，
+    // 不渲染的字段不留空壳文案，其余规模值在 profile 配置里改。
+    'settings.memory.scale.section': '记忆规模',
+    'settings.memory.scale.maxTokens.title': '单轮注入预算',
+    'settings.memory.scale.maxTokens.hint': '每轮最多注入多少字符的记忆（按 3 字符/token 折成配置值），保存后下一次注入就用新值；挤掉的条目按预算丢弃并留痕。',
+    'settings.memory.project.label': '项目',
+    'settings.memory.project.currentMark': '（当前会话）',
+    'settings.memory.project.empty': '没有可选项目：宿主没提供工作区列表',
+    'settings.memory.project.foreign': '只读视图：正在看 {path}，写入仍落在当前会话项目。',
+    'settings.memory.project.stale': '这个宿主进程还不认跨项目读取（重启 dsh 后生效）：下面仍是当前会话项目的记忆。',
+    'settings.memory.inject.line': '本步注入 {chars} 字符（≈{tokens} token）/ 上限 {limit} 字符（{percent}%）· 该层记忆共 {pool} 字符 / {count} 条',
+    'settings.memory.inject.failed': '注入估算读不到：{message}',
+    'settings.memory.inject.unparsable': '注入估算的载荷看不懂',
     'settings.unsaved': '未保存',
     // 笔记检索（search_notes 工具 / 常驻 python 桥）的三个可写字段。
     // 这段文案本身就是"功能发现"：卡片没展开时它也在标题区之外的界面上留了痕迹。
@@ -2332,7 +2393,66 @@ const en = {
     'slash.project-desc': 'Project memory: this project’s lessons / decisions / procedures',
     'slash.global-desc': 'Global memory: experience entries shared across projects',
     'settings.nav': 'Memory & notes',
-    'settings.intro': 'The notes repository the search tool reads, its enable switch and per-search timeout; saved changes apply immediately. Project memory keeps decisions and task records — code structure comes from codegraph, note corpus from search_notes, so the plugin keeps no index of its own.',
+    'settings.intro': 'What this project remembers, how large the memory store may grow, and which repository the notes search reads; saved changes apply immediately. Entries are written by the model (save_lesson / remember); this page shows them and sizes the store — code structure comes from codegraph, note corpus from search_notes, so the plugin keeps no index of its own.',
+    'settings.memory.section': 'Project memory',
+    'settings.memory.hint': 'What this project has stored (read-only). The model writes entries; click a title row to expand the full text, files touched and trigger. Confirming, promoting or archiving happens in the task panel’s memory view.',
+    'settings.memory.scope.project': 'Project',
+    'settings.memory.scope.task': 'Task drafts',
+    'settings.memory.scope.global': 'Global',
+    'settings.memory.usage': '{used} stored · capacity {capacity} ({percent}%)',
+    'settings.memory.usage.nocap': '{used} stored · this layer has no capacity cap',
+    'settings.memory.loading': 'Reading the memory store…',
+    'settings.memory.loadingShort': 'Reading…',
+    'settings.memory.refresh': 'Refresh',
+    'settings.memory.empty': 'This layer holds no memory yet.',
+    'settings.memory.failed': 'Read failed: {message}',
+    'settings.memory.unparsable': 'the host payload could not be parsed',
+    'settings.memory.noSession': 'No active session: the inventory is read through a session command, so open a conversation first.',
+    'settings.memory.truncated': 'Showing the newest {shown} of {total}; the full list lives in the task panel’s memory view.',
+    'settings.memory.untitled': '(untitled)',
+    'settings.memory.badge.draft': 'Draft',
+    'settings.memory.badge.archived': 'Archived',
+    'settings.memory.meta.confidence': 'confidence {value}',
+    'settings.memory.meta.hits': '{count} hits',
+    'settings.memory.meta.files': '{count} files',
+    'settings.memory.meta.symbols': '{count} symbols',
+    'settings.memory.meta.members': '{count} tasks merged',
+    'settings.memory.expand': 'Show details',
+    'settings.memory.collapse': 'Hide details',
+    'settings.memory.detail.body': 'Body',
+    'settings.memory.detail.steps': 'Steps ({count})',
+    'settings.memory.detail.files': 'Files touched ({count})',
+    'settings.memory.detail.symbols': 'Symbols touched ({count})',
+    'settings.memory.detail.trigger': 'Trigger',
+    'settings.memory.detail.more': 'Showing the first {shown} of {total}.',
+    'settings.memory.detail.id': 'Entry id: {id}',
+    'settings.memory.trigger.writes': 'Writes',
+    'settings.memory.trigger.ops': 'Ops',
+    'settings.memory.trigger.intents': 'Intents',
+    'settings.memory.trigger.paths': 'Paths',
+    'settings.memory.trigger.hosts': 'Hosts',
+    'settings.memory.trigger.keywords': 'Keywords',
+    'settings.memory.trigger.scope': 'Scope',
+    'settings.memory.trigger.guard': 'Guard',
+    'settings.memory.field.problem': 'Problem',
+    'settings.memory.field.choice': 'Choice',
+    'settings.memory.field.reason': 'Reason',
+    'settings.memory.field.fix': 'Fix',
+    'settings.memory.field.solution': 'Solution',
+    'settings.memory.field.pattern': 'Pattern',
+    'settings.memory.unit.items': 'items',
+    'settings.memory.unit.chars': 'chars',
+    'settings.memory.scale.section': 'Memory size',
+    'settings.memory.scale.maxTokens.title': 'Per-turn injection budget',
+    'settings.memory.scale.maxTokens.hint': 'How many characters of memory each turn may carry (stored as 3 chars per token); the next injection uses the new value, and entries that do not fit are dropped and logged.',
+    'settings.memory.project.label': 'Project',
+    'settings.memory.project.currentMark': '(this session)',
+    'settings.memory.project.empty': 'No projects available: this host exposes no workspace list',
+    'settings.memory.project.foreign': 'Read-only view: showing {path}; writes still land in this session\'s project.',
+    'settings.memory.project.stale': 'This host process does not honor cross-project reads yet (restart dsh): the list below is still this session\'s project.',
+    'settings.memory.inject.line': 'This step injects {chars} chars (≈{tokens} tokens) of a {limit}-char cap ({percent}%) · layer holds {pool} chars / {count} entries',
+    'settings.memory.inject.failed': 'Injection estimate unavailable: {message}',
+    'settings.memory.inject.unparsable': 'The injection estimate payload is unreadable',
     'settings.unsaved': 'Unsaved',
     'settings.notes.section': 'Notes retrieval',
     'settings.notes.status.on': 'Enabled: {path} — `search_notes` reads this repository.',
@@ -2383,6 +2503,277 @@ function createTranslate(dict) {
     __exports.createTranslate = createTranslate;
     __exports.zh = zh;
     __exports.en = en;
+    };
+
+    __modules["client-memory-src/memory-inventory.js"] = function (__exports, __req) {
+/**
+ * 「记忆清单」的纯逻辑层：载荷 → 行 + 占用统计（零 React 依赖，可单测）。
+ *
+ * 数据来源与任务面板的记忆视图**同一条**通道：`/tasks insight list <scope> <offset> <limit>`
+ * （见 paging.js 的 insightListLine / memory-load.js 的 parseInsightPayloadText）。这里不新增
+ * 第二条读取路径 —— 设置页只是把同一份记忆库以"能不能看见"的方式摆出来。
+ *
+ * 为什么要单独一层
+ * ───────────────
+ * 设置页只需要三件事：每条长什么样、这一层占了多少、容量还有多远。把它们写在组件里，
+ * 「容量该用哪个配置键」「归档条目算不算占用」这类判断就只能靠读 JSX 猜；抽出来之后
+ * 每条判据都能被测试钉住（test/memory-inventory.test.js）。
+ *
+ * 载荷字段（宿主 src/memory/commands/insight-actions.js 的 insSummary）：
+ *   id / scope / kind / title / body / draft / archived / confidence / hitCount /
+ *   members / files / symbols / updatedAt /（task 层附加）taskId / taskTitle
+ */
+
+/**
+ * 清单页签的顺序：**项目层在前**。设置页是"我这个项目的记忆"的入口，任务层草稿与全局层
+ * 是旁支（前者等模型确认，后者跨项目），放前面会让人以为记忆主要长在临时层里。
+ */
+const MEMORY_SCOPES = ['project', 'task', 'global']
+
+/**
+ * 作用域 → 控制它的容量配置字段。
+ *
+ * 任务层没有容量（草稿挂在各自任务上，随任务归档），返回 `null` —— 界面上就不画进度条，
+ * 而不是画一条永远 0% 的假容量。
+ */
+const CAPACITY_FIELD = {
+  project: 'maxProject',
+  global: 'maxGlobalProcedures',
+  task: null,
+}
+
+/**
+ * 某一层的容量来自哪个配置字段。
+ * @param {string} scope - `project` | `task` | `global`。
+ * @returns {string|null} `maxProject` / `maxGlobalProcedures`；任务层为 null。
+ */
+function scopeCapacityField(scope) {
+  return Object.hasOwn(CAPACITY_FIELD, scope) ? CAPACITY_FIELD[scope] : null
+}
+
+/**
+ * 单次读取的行数。
+ *
+ * 设置页是"总览 + 抽查"，不是全量编辑器（那是任务面板的记忆视图）：一屏 40 条足够看清
+ * 最近学了什么，也避免每次打开设置都拉几百条 JSON 进内存。宿主侧仍有 `total`，占用统计
+ * 因此不受这个窗口影响。
+ */
+const INVENTORY_PAGE_SIZE = 40
+
+/** 非空字符串数组：去空白、丢非字符串、保持原顺序（路径/符号的次序有意义）。 */
+function stringList(value) {
+  if (!Array.isArray(value)) return []
+  const out = []
+  for (const raw of value) {
+    if (typeof raw !== 'string') continue
+    const text = raw.trim()
+    if (text !== '' && !out.includes(text)) out.push(text)
+  }
+  return out
+}
+
+/** 非负整数计数；脏值一律归 0（界面上「-1 个文件」只会让人怀疑数据坏了）。 */
+function countOf(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+/** 正文型字段：空串与纯空白视为"没有"，返回 null 好在渲染时直接跳过。 */
+function textOf(value) {
+  return typeof value === 'string' && value.trim() !== '' ? value : null
+}
+
+/**
+ * 触发条件归一化。
+ *
+ * 决策条目的 `trigger.when` 是它**唯一真正生效**的那部分（写哪些文件、跑哪类动作、
+ * 命中哪些意图词），老字段 `keywords` / `scope` 仍在用。三者都空 → 返回 null，
+ * 渲染层据此不画一个空标题块。
+ * @param {any} value - 载荷的 `trigger`。
+ * @returns {{keywords: string[], scope: string[], when: object|null}|null} 归一化触发条件。
+ */
+function normalizeTrigger(value) {
+  if (!value || typeof value !== 'object') return null
+  const when = value.when && typeof value.when === 'object' ? value.when : null
+  const guard = when && when.guard && typeof when.guard === 'object' ? when.guard : null
+  const normalized = {
+    keywords: stringList(value.keywords),
+    scope: stringList(value.scope),
+    when: when === null ? null : {
+      writes: stringList(when.writes),
+      ops: stringList(when.ops),
+      intents: stringList(when.intents),
+      paths: stringList(when.paths),
+      hosts: stringList(when.hosts),
+      guard: guard === null ? null : {
+        paths: stringList(guard.paths),
+        notPaths: stringList(guard.not_paths ?? guard.notPaths),
+        tags: stringList(guard.tags),
+      },
+    },
+  }
+  const hasWhen = normalized.when !== null && (
+    normalized.when.writes.length > 0 || normalized.when.ops.length > 0
+    || normalized.when.intents.length > 0 || normalized.when.paths.length > 0
+    || normalized.when.hosts.length > 0 || normalized.when.guard !== null
+  )
+  if (normalized.keywords.length === 0 && normalized.scope.length === 0 && !hasWhen) return null
+  return normalized
+}
+
+/**
+ * 宿主载荷的字段 → 归一化行。
+ *
+ * 归一化只做两件事：**别让脏数据把界面弄坏**（负命中、坏时间、非字符串路径），
+ * 以及**别丢掉详情**。第二点是这条链路曾经的缺口：`files` / `symbols` 在宿主载荷里
+ * 带了两份（总数 + 清单），旧版本只把动作用到的几个字段搬过来，于是设置页只能写
+ * 「文件 3」，用户点不开也看不到是哪三个文件 —— 数据一直在，是渲染层拿不到。
+ *
+ * @param {object} raw - 载荷里的单条。
+ * @returns {object} 归一化行（形状由 test/memory-inventory.test.js 钉住）。
+ */
+function normalizeInventoryRow(raw) {
+  const item = raw && typeof raw === 'object' ? raw : {}
+  return {
+    id: typeof item.id === 'string' ? item.id : '',
+    kind: typeof item.kind === 'string' && item.kind !== '' ? item.kind : 'lesson',
+    title: typeof item.title === 'string' ? item.title : '',
+    body: typeof item.body === 'string' ? item.body : '',
+    draft: item.draft === true,
+    archived: item.archived === true,
+    confidence: typeof item.confidence === 'number' && Number.isFinite(item.confidence) ? item.confidence : null,
+    // 负命中数没有语义（脏数据/旧格式），归一成 0：界面上写「-1 次命中」只会让人怀疑数据坏了。
+    hitCount: typeof item.hitCount === 'number' && Number.isFinite(item.hitCount) && item.hitCount > 0 ? item.hitCount : 0,
+    updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : '',
+    taskTitle: typeof item.taskTitle === 'string' && item.taskTitle !== '' ? item.taskTitle : null,
+    // 详情面：涉及的文件/符号（清单 + 总数）、合并过几个任务、触发条件、步骤与各 kind 的正文。
+    files: countOf(item.files),
+    fileList: stringList(item.fileList),
+    symbols: countOf(item.symbols),
+    symbolList: stringList(item.symbolList),
+    members: countOf(item.members),
+    trigger: normalizeTrigger(item.trigger),
+    steps: stringList(item.steps),
+    problem: textOf(item.problem),
+    choice: textOf(item.choice),
+    reason: textOf(item.reason),
+    fix: textOf(item.fix),
+    solution: textOf(item.solution),
+    pattern: textOf(item.pattern),
+  }
+}
+
+
+/**
+ * 一批载荷行归一化，丢掉没有 id 的脏条目（没有 id 就没有稳定 key，渲染会互相顶替）。
+ * @param {ReadonlyArray<object>} items - 载荷 items。
+ * @returns {Array<object>} 可用行。
+ */
+function inventoryRows(items) {
+  if (!Array.isArray(items)) return []
+  const rows = []
+  const seen = new Set()
+  for (const item of items) {
+    const row = normalizeInventoryRow(item)
+    if (row.id === '' || seen.has(row.id)) continue
+    seen.add(row.id)
+    rows.push(row)
+  }
+  return rows
+}
+
+/**
+ * 一层的占用统计。
+ *
+ * `used` 取载荷的 `total`（含归档）：写入侧 prune 判的就是**含归档**的条数（超限先删归档），
+ * 用"只算活跃"的数字会让进度条永远差一截，看起来像容量没生效。归档/草稿另行单列，供用户判断
+ * "这一层里有多少是还没确认的、多少是软删的"。
+ * @param {{items?: ReadonlyArray<object>, total?: number, capacity?: number|null}} input -
+ *   载荷行、宿主报的总条数、该层容量（任务层为 null）。
+ * @returns {{used: number, capacity: number|null, ratio: number|null, archived: number,
+ *   drafts: number, shown: number}} 统计结果；`ratio` 为 null 表示没有容量概念。
+ */
+function summarizeInventory(input) {
+  const rows = inventoryRows(input?.items)
+  const total = typeof input?.total === 'number' && Number.isFinite(input.total) && input.total >= 0
+    ? input.total
+    : rows.length
+  const capacity = typeof input?.capacity === 'number' && Number.isFinite(input.capacity) && input.capacity > 0
+    ? input.capacity
+    : null
+  // 已用量以宿主的 total 为准，但永不小于本次实际拿到的行数（载荷缺 total 时不至于显示 0）。
+  const used = Math.max(total, rows.length)
+  return {
+    used,
+    capacity,
+    ratio: capacity === null ? null : Math.min(1, used / capacity),
+    archived: rows.filter((row) => row.archived).length,
+    drafts: rows.filter((row) => row.draft && !row.archived).length,
+    shown: rows.length,
+  }
+}
+
+/**
+ * 注入量估算载荷（`/tasks insight estimate`）→ 一行可读的三段数字。
+ *
+ * 为什么不自己算：宿主那个数字是用**真引擎**（cfgEngine + buildInjection）跑出来的，与下一步
+ * 实际注入同源；客户端再算一遍就会有两份公式，早晚分叉。
+ *
+ * 三个数各回答一个问题：
+ *  - `limitChars`：这一轮最多能注入多少（硬上限，含常驻卡）；
+ *  - `poolChars`：这个项目的活跃记忆正文一共多长（全命中时的理论上限，回答"记忆有多大"）；
+ *  - `chars`：按当前话题/绑定任务算出来的**本步**注入（0 = 这一步不会注入任何东西）。
+ * @param {any} payload - 宿主载荷。
+ * @returns {{chars: number, limitChars: number, estTokens: number, percent: number|null,
+ *   entryChars: number, itemChars: number, items: number, dropped: number, poolChars: number,
+ *   poolItems: number, total: number, topicGate: string|null, root: string|null}|null}
+ */
+function injectSummary(payload) {
+  if (!payload || typeof payload !== 'object') return null
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
+  const chars = num(payload.chars)
+  const limitChars = num(payload.limitChars)
+  return {
+    chars,
+    limitChars,
+    // token 折算跟上下文用量面同一口径（4 字符 ≈ 1 token），否则两个界面会给出互相矛盾的数字。
+    estTokens: Math.ceil(chars / 4),
+    percent: limitChars > 0 ? Math.round(Math.min(1, chars / limitChars) * 100) : null,
+    entryChars: num(payload.entryChars),
+    itemChars: num(payload.itemChars),
+    items: num(payload.items),
+    dropped: num(payload.dropped),
+    poolChars: num(payload.poolChars),
+    poolItems: num(payload.poolItems),
+    total: num(payload.total),
+    topicGate: typeof payload.topicGate === 'string' ? payload.topicGate : null,
+    root: typeof payload.root === 'string' ? payload.root : null,
+  }
+}
+
+/**
+ * 把比例变成整数百分比（进度条宽度与文案共用，避免两处各自取整给出矛盾数字）。
+ * @param {number|null} ratio - 0..1；null 表示没有容量。
+ * @returns {number|null} 0..100 的整数；无容量时 null。
+ */
+function usagePercent(ratio) {
+  if (typeof ratio !== 'number' || !Number.isFinite(ratio)) return null
+  return Math.round(Math.max(0, Math.min(1, ratio)) * 100)
+}
+
+/** 清单的初始状态（组件与测试共用的空形状）。 */
+function emptyInventory() {
+  return { scope: 'project', rows: [], total: 0, nextOffset: null, loading: false, error: null, loaded: false }
+}
+    __exports.scopeCapacityField = scopeCapacityField;
+    __exports.normalizeTrigger = normalizeTrigger;
+    __exports.normalizeInventoryRow = normalizeInventoryRow;
+    __exports.inventoryRows = inventoryRows;
+    __exports.summarizeInventory = summarizeInventory;
+    __exports.injectSummary = injectSummary;
+    __exports.usagePercent = usagePercent;
+    __exports.emptyInventory = emptyInventory;
+    __exports.MEMORY_SCOPES = MEMORY_SCOPES;
+    __exports.INVENTORY_PAGE_SIZE = INVENTORY_PAGE_SIZE;
     };
 
     __modules["client-memory-src/memory-load.js"] = function (__exports, __req) {
@@ -2436,7 +2827,11 @@ function writeInsightCache(sessionId, scope, root, boundTaskId, rows, total, nex
   }
 }
 
-function parseInsightPayloadText(text) {
+/**
+ * 取命令输出里的 JSON 载荷：优先围栏块，其次从最后一个 `{` 起截。解析失败返回 null。
+ * 抽出来是因为现在有**两种**载荷（列表 / 注入估算），JSON 提取逻辑只该有一份。
+ */
+function parsePayloadText(text) {
   if (!text) return null
   let jsonBlock = null
   const fenced = text.match(/```(?:json)?\s*\n([\s\S]*?)\n```/)
@@ -2448,19 +2843,469 @@ function parseInsightPayloadText(text) {
   if (!jsonBlock) return null
   try {
     const data = JSON.parse(jsonBlock)
+    return data && typeof data === 'object' ? data : null
+  } catch {
+    return null
+  }
+}
+
+function parseInsightPayloadText(text) {
+  const data = parsePayloadText(text)
+  if (!data) return null
+  {
     if (!Array.isArray(data.items)) return null
     // 分页字段走 paging.js 归一：老宿主没有 total/nextOffset 时按"一次给全"降级，
     // 新宿主则给出真实的下一页游标。
     const w = normalizeWindow(data, 0)
-    return { scope: data.scope ?? 'project', count: w.total, total: w.total, offset: w.offset, nextOffset: w.nextOffset, items: w.items }
-  } catch {
-    return null
+    // `root` 是宿主对 `root=` 参数的**回执**（这次到底读了哪个项目）：设置页拿它判断跨项目读取
+    // 是否真的生效。归一化时必须原样带出来 —— 否则「宿主忽略了参数」与「宿主读对了」在界面上
+    // 长得一模一样，而前者会让页面把别的项目的清单标成本项目的。
+    return {
+      scope: data.scope ?? 'project',
+      root: typeof data.root === 'string' && data.root !== '' ? data.root : null,
+      count: w.total,
+      total: w.total,
+      offset: w.offset,
+      nextOffset: w.nextOffset,
+      items: w.items,
+    }
   }
 }
     __exports.readInsightCache = readInsightCache;
     __exports.invalidateInsightCache = invalidateInsightCache;
     __exports.writeInsightCache = writeInsightCache;
+    __exports.parsePayloadText = parsePayloadText;
     __exports.parseInsightPayloadText = parseInsightPayloadText;
+    };
+
+    __modules["client-memory-src/memory-settings.js"] = function (__exports, __req) {
+/**
+ * 「记忆规模」表单：七个可写字段，界面上只画一格（单轮注入预算）。
+ *
+ * 这份表单回答的是「记忆库能长多大、每轮最多塞进多少」：项目层与全局层的容量、单轮注入
+ * 预算、常驻块条数、每会话的条数/字符保险丝、主题门控。它们全是 Config 里的嵌套键
+ * （`insight.maxProject` / `autoContext.maxTokens`），写入走宿主设置接口的数组 path
+ * （实现见 nested-form.js）。**哪些上界面**由 `MEMORY_SCALE_VISIBLE_FIELDS` 定，不是在这里删字段。
+ *
+ * 为什么字段不跟着界面一起砍
+ * ─────────────────────────────────
+ * 摘掉字段就等于摘掉快照里的投影：设置页清单的容量占用（`maxProject`）、注入量估算的
+ * 预算（`maxTokens` × 3 字符）都读这些生效值，断了就退化成"没有容量 / 没有上限"。
+ * 只改渲染是唯一既保住读通道、又只留一个旋钮的做法。
+ *
+ * 为什么只剩一格、而不是把 Config 全摊开
+ * ─────────────────────────────────
+ * 其余键分两类，都不该出现在"规模"里：
+ *  - 阈值/权重（`dedupOverlap`、`signalMinRatio`、`hintMinCoverage`…）——调它们改的是判据
+ *    质量，默认值是实测标定的，摆到界面上只会被随手改坏；
+ *  - 只在启动期生效的（`watch`、`corpusEnabled`、`lazyIndexing`）——它们不是 volatile，
+ *    改了要重启，与"保存后立即生效"的卡片语义冲突。
+ *
+ * 各字段的语义（与宿主实现一一对应）
+ *  - `maxProject`：项目层 insight 条数上限，超了先删归档条目（`pruneItems`）；
+ *  - `maxGlobalProcedures`：全局层上限，提升(path to global)只增不减，不收口就形同虚设；
+ *  - `maxTokens`：单轮注入的字符预算（引擎按 ≈token 折算），挤掉的条目记 `budget` 丢弃 ——
+ *    界面上唯一那一格；
+ *  - `entryMaxInsights`：常驻任务卡里最多带几条洞察；
+ *  - `maxItemsPerSession` / `maxItemCharsPerSession`：**保险丝**，不是节流阀——打到上限
+ *    后本会话永久静默，所以默认值给得偏大（60 条 / 24000 字符）；
+ *  - `topicGate`：四档主题门控，默认 `weak`。
+ */
+const { NestedSettingsForm } = __req("./nested-form.js");
+/** 字段 → 配置路径。数组形状由宿主设置接口的 ops 协议决定。 */
+const PATHS = {
+  maxProject: ['insight', 'maxProject'],
+  maxGlobalProcedures: ['insight', 'maxGlobalProcedures'],
+  maxTokens: ['autoContext', 'maxTokens'],
+  entryMaxInsights: ['autoContext', 'entryMaxInsights'],
+  maxItemsPerSession: ['autoContext', 'maxItemsPerSession'],
+  maxItemCharsPerSession: ['autoContext', 'maxItemCharsPerSession'],
+  topicGate: ['autoContext', 'topicGate'],
+}
+
+/**
+ * 快照里读不到该键时显示什么。与 Config 的 `default(...)` 同值，但**不是**第二份默认配置：
+ * 能读到快照时永远以快照为准。
+ */
+const FALLBACK = {
+  maxProject: 100,
+  maxGlobalProcedures: 200,
+  maxTokens: 400,
+  entryMaxInsights: 6,
+  maxItemsPerSession: 60,
+  maxItemCharsPerSession: 24000,
+  topicGate: 'weak',
+}
+
+/**
+ * 输入框的取值区间（`min` / `max` 同时给 `<input>` 与校验用）。
+ *
+ * 下限不是装饰：`maxProject: 0` 会让写入侧每一次 prune 都清空项目层；`maxTokens: 0` 会让
+ * 注入通道彻底失声。下限 1 表示"至少还留得住一条"，真正想关掉请用开关而不是 0。
+ *
+ * 单位是**配置单位**（`maxTokens` 是 token 数）。界面上那一格按字符收，换算见
+ * `BUDGET_CHARS_PER_TOKEN` 与 `MEMORY_SCALE_WIDGET`。
+ */
+const MEMORY_SCALE_LIMITS = Object.freeze({
+  maxProject: { min: 1, max: 5000, step: 10, unit: 'items' },
+  maxGlobalProcedures: { min: 1, max: 5000, step: 10, unit: 'items' },
+  maxTokens: { min: 50, max: 8000, step: 50, unit: 'tokens' },
+  entryMaxInsights: { min: 0, max: 50, step: 1, unit: 'items' },
+  maxItemsPerSession: { min: 0, max: 1000, step: 5, unit: 'items' },
+  maxItemCharsPerSession: { min: 0, max: 200000, step: 1000, unit: 'chars' },
+})
+
+/**
+ * 预算的显示单位换算：引擎的硬上限是 `maxTokens × 3` **字符**
+ * （`src/memory/auto-inject.js` 的 `stepBudget`，常驻任务卡与条目共享这一份）。
+ *
+ * 所以设置页那一格直接**按字符收**：用户看到 2700，注入时就是 2700 字的上限，不再出现
+ * 「预算写 900 token、明细却显示约 675 token」那种两把尺子。写回时 ÷3 折成 token 数——
+ * 配置键仍是 `maxTokens`，宿主读它做 ×3，换算只发生在这一层。
+ */
+const BUDGET_CHARS_PER_TOKEN = 3
+
+/** 一个数字字段的 spec：范围为闭合区间、必须整数。 */
+function intSpec(key, section) {
+  const limit = MEMORY_SCALE_LIMITS[key]
+  return {
+    section,
+    fallback: FALLBACK[key],
+    read: (value) => (Number.isFinite(value) ? String(value) : ''),
+    parse: (text) => {
+      const trimmed = text.trim()
+      if (trimmed === '') return { op: 'unset', path: PATHS[key] }
+      const value = Number(trimmed)
+      if (!Number.isFinite(value)) return undefined
+      const rounded = Math.round(value)
+      if (rounded < limit.min || rounded > limit.max) return undefined
+      return { op: 'set', path: PATHS[key], value: rounded }
+    },
+  }
+}
+
+/**
+ * 预算的 spec：界面收字符，配置存 token。
+ *
+ * 取整按 3 的倍数就近（`Math.round(chars / 3)`）：宿主那边只有整 token，界面把结果再
+ * ×3 显示回来，所以 `1000` 字符保存后会显示 `999` —— 这是换算的必然，hint 里说了。
+ * 校验仍在 token 域做（`MEMORY_SCALE_LIMITS.maxTokens`），别把它挪到字符域：那会让
+ * 「150 字符」这种输入静默落到 50 token 之下。
+ */
+function budgetSpec(section) {
+  const limit = MEMORY_SCALE_LIMITS.maxTokens
+  return {
+    section,
+    fallback: FALLBACK.maxTokens,
+    read: (value) => (Number.isFinite(value) ? String(value * BUDGET_CHARS_PER_TOKEN) : ''),
+    parse: (text) => {
+      const trimmed = text.trim()
+      if (trimmed === '') return { op: 'unset', path: PATHS.maxTokens }
+      const chars = Number(trimmed)
+      if (!Number.isFinite(chars)) return undefined
+      const tokens = Math.round(chars / BUDGET_CHARS_PER_TOKEN)
+      if (tokens < limit.min || tokens > limit.max) return undefined
+      return { op: 'set', path: PATHS.maxTokens, value: tokens }
+    },
+  }
+}
+
+/**
+ * 主题门控的四档（与 `src/memory/auto-inject.js` 的 `cfgEngine` 一一对应）：
+ * `weak` = 提示通道 + 万能 op（file-write / shell-run / git-commit）命中；`hint` = 只提示通道；
+ * `all` = 精确条件也挡；`off` = 不门控。值必须是这四个字符串之一，宿主不接受布尔。
+ */
+const TOPIC_GATE_VALUES = ['weak', 'hint', 'all', 'off']
+
+/** 一个枚举字段的 spec：渲染成 <select>，解析时只认白名单。 */
+function enumSpec(key, section, options) {
+  return {
+    section,
+    fallback: FALLBACK[key],
+    kind: 'select',
+    options,
+    read: (value) => (typeof value === 'string' && options.includes(value) ? value : FALLBACK[key]),
+    parse: (text) => {
+      const value = String(text ?? '').trim()
+      if (!options.includes(value)) return undefined
+      return { op: 'set', path: PATHS[key], value }
+    },
+  }
+}
+
+const SPECS = {
+  maxProject: intSpec('maxProject', 'insight'),
+  maxGlobalProcedures: intSpec('maxGlobalProcedures', 'insight'),
+  maxTokens: budgetSpec('autoContext'),
+  entryMaxInsights: intSpec('entryMaxInsights', 'autoContext'),
+  maxItemsPerSession: intSpec('maxItemsPerSession', 'autoContext'),
+  maxItemCharsPerSession: intSpec('maxItemCharsPerSession', 'autoContext'),
+  topicGate: enumSpec('topicGate', 'autoContext', TOPIC_GATE_VALUES),
+}
+
+/** 表单里的数字字段名，顺序即表单顺序（容量 → 预算 → 保险丝）；渲染取子集，见下。 */
+const MEMORY_SCALE_FIELDS = [
+  'maxProject',
+  'maxGlobalProcedures',
+  'maxTokens',
+  'entryMaxInsights',
+  'maxItemsPerSession',
+  'maxItemCharsPerSession',
+]
+
+/**
+ * 不按数字渲染的字段（下拉）。单独一张表是因为它们不参与 `MEMORY_SCALE_LIMITS`
+ * （没有 min/max/step），渲染成 `<select>`；当前没有一格在界面上（见下方可见表）。
+ */
+const MEMORY_ENUM_FIELDS = ['topicGate']
+
+/** 表单里出现的全部字段（数字在前、枚举在后）。 */
+const MEMORY_SCALE_ALL_FIELDS = [...MEMORY_SCALE_FIELDS, ...MEMORY_ENUM_FIELDS]
+
+/**
+ * 界面上真正渲染的那几格：只有「单轮注入预算」。
+ *
+ * 判断标准是「谁能被随手调坏」：注入预算是每轮都要看、看一个数字就够的量；其余六项
+ * （两层容量、常驻条数、两个保险丝、主题门控）是写入侧与降级路径的参数，默认值是实测
+ * 标定的，摆在设置页只会被当成待办逐格调一遍。它们仍留在表单里 —— 不是留着好看：
+ *   - 记忆清单的容量占用（「已存 N 条 · 容量 M 条（P%）」）取 `maxProject` 的**生效值**，
+ *     字段从表单摘掉，快照里那个键就没有投影，用量条会退化成「已存 N 条」；
+ *   - 主题门控的当前档位也要被读着（改配置后这一页跟着变），只是不画下拉。
+ * 想改这些值：写进 profile 配置即可，与在本页保存走同一条宿主校验 + revision fence。
+ */
+const MEMORY_SCALE_VISIBLE_FIELDS = Object.freeze(['maxTokens'])
+
+/**
+ * 输入框的渲染区间（**显示单位**）。`min/max/step/unit` 都是界面上那个单位的数值。
+ *
+ * 只有预算不是 1:1：界面按字符（= 引擎的硬上限），配置存 token。校验仍走
+ * `MEMORY_SCALE_LIMITS`（配置单位），这里只负责把 `<input>` 的框画对。
+ */
+const DISPLAY_SCALE = { maxTokens: BUDGET_CHARS_PER_TOKEN }
+
+const MEMORY_SCALE_WIDGET = Object.freeze(Object.fromEntries(
+  MEMORY_SCALE_FIELDS.map((key) => {
+    const limit = MEMORY_SCALE_LIMITS[key]
+    const scale = DISPLAY_SCALE[key] ?? 1
+    return [key, {
+      min: limit.min * scale,
+      max: limit.max * scale,
+      step: limit.step * scale,
+      unit: scale === 1 ? limit.unit : 'chars',
+    }]
+  }),
+))
+
+class MemoryScaleForm extends NestedSettingsForm {
+  constructor(scope) {
+    super(scope, {
+      fields: MEMORY_SCALE_ALL_FIELDS,
+      specs: SPECS,
+      actions: { edit: 'editScale', save: 'saveScale', discard: 'discardScale' },
+    })
+  }
+}
+    __exports.MemoryScaleForm = MemoryScaleForm;
+    __exports.MEMORY_SCALE_LIMITS = MEMORY_SCALE_LIMITS;
+    __exports.BUDGET_CHARS_PER_TOKEN = BUDGET_CHARS_PER_TOKEN;
+    __exports.TOPIC_GATE_VALUES = TOPIC_GATE_VALUES;
+    __exports.MEMORY_SCALE_FIELDS = MEMORY_SCALE_FIELDS;
+    __exports.MEMORY_ENUM_FIELDS = MEMORY_ENUM_FIELDS;
+    __exports.MEMORY_SCALE_ALL_FIELDS = MEMORY_SCALE_ALL_FIELDS;
+    __exports.MEMORY_SCALE_VISIBLE_FIELDS = MEMORY_SCALE_VISIBLE_FIELDS;
+    __exports.MEMORY_SCALE_WIDGET = MEMORY_SCALE_WIDGET;
+    };
+
+    __modules["client-memory-src/nested-form.js"] = function (__exports, __req) {
+/**
+ * 嵌套路径设置表单的通用底座。
+ *
+ * 为什么需要它
+ * ─────────────
+ * 宿主导出的 `SettingsFormModel` 只会寻址**顶层键**（读 `value[field]`、写
+ * `{op:'set', path:[field]}`），而本插件的可写配置都在 Config 的子对象里：
+ * `notes.repo` / `insight.maxProject` / `autoContext.maxTokens`。宿主校验写路径时看的是
+ * "最近 volatile 祖先"（`isVolatilePath`），`['notes.repo']` 这种单段字符串既匹配不到
+ * schema，写进去还会被设置接口 400 拒掉。宿主的真写口是 `configForm.mutate(ops, revision)`，
+ * ops 的 path 是**数组**（`['notes','repo']`）。
+ *
+ * 于是每个嵌套字段都需要同一套东西：草稿、脏判定、非法判定、保存（带 revision fence）、
+ * 保存失败保留草稿、快照订阅。这套逻辑原先只活在「笔记检索」三个字段里；记忆规模是第二批，
+ * 再抄一份就是两份会各自跑偏的实现，所以抽成这里。
+ *
+ * 契约（与宿主体贴保持）
+ * ────────────────────
+ *  - 只依赖注入进来的 `scope`（`getSnapshot` / `subscribe` / `mutate`），零宿主模块；
+ *  - `shell()` 给出状态、`field()` 给出渲染所需的三元组，页面把两者合进自己的投影；
+ *  - `plan()` 只产出「与当前生效值不同、且解析得出」的 ops —— 保存按钮的 disabled 判据与
+ *    真正提交的 ops 必须同源，否则会出现"按钮亮着、点了什么也没发生"。
+ *
+ * 字段规格（`specs[key]`）
+ *  - `section`：Config 里的子对象名（`notes` / `insight` / `autoContext`）；
+ *  - `read(value)`：把生效值渲染成输入框文本；
+ *  - `parse(text)`：把文本翻成 `{op:'set'|'unset', path, value?}`；`undefined` = 非法；
+ *  - `fallback`：快照里读不到该键时显示的默认值（**不是**一份平行的默认配置表：能读到快照
+ *    时永远以快照为准）。
+ */
+
+/** 宿主快照给的是 `plainConfig` 之后的普通值；ref 形状仍兜一层。 */
+function unwrap(value) {
+  return value && typeof value.get === 'function' ? value.get() : value
+}
+
+class NestedSettingsForm {
+  /**
+   * @param scope - 本条目在 `configForms` 里的 scope。
+   * @param options.fields - 字段名数组，顺序即渲染顺序。
+   * @param options.specs - 字段规格表（见文件头）。
+   * @param options.actions - 生成的 action 名（`{ edit, save, discard }`）。
+   */
+  constructor(scope, options) {
+    this.scope = scope
+    this.fields = [...options.fields]
+    this.specs = options.specs
+    this.actionNames = options.actions ?? { edit: 'edit', save: 'save', discard: 'discard' }
+    this.staged = new Map()
+    this.listeners = new Set()
+    this.baseline = undefined
+    this.saving = false
+    this.failed = false
+    this.unsubscribe = typeof scope?.subscribe === 'function'
+      ? scope.subscribe(() => { this.publish() })
+      : undefined
+  }
+
+  /** 宿主快照：`value` 是生效值，`base` 是继承层（profile 与默认），`user` 是本条覆盖。 */
+  snapshot() {
+    try {
+      return this.scope?.getSnapshot?.() ?? {}
+    } catch {
+      return {}
+    }
+  }
+
+  /** 某字段在某一层上的值；缺键时回落到 spec.fallback。 */
+  sectionValue(key, layer = 'value') {
+    const spec = this.specs[key]
+    if (spec === undefined) return undefined
+    const section = this.snapshot()[layer]?.[spec.section]
+    if (section === undefined || section === null) return spec.fallback
+    const value = unwrap(section[key])
+    return value === undefined ? spec.fallback : value
+  }
+
+  /** 本条目是否在 profile 里被显式覆盖过（决定要不要显示"已覆盖"）。 */
+  stored(key) {
+    const section = this.snapshot().user?.[this.specs[key].section]
+    return section !== undefined && section !== null && Object.hasOwn(section, key)
+  }
+
+  /** 一个字段的渲染态：文本 / 是否被显式覆盖 / 是否非法。 */
+  field(key) {
+    const spec = this.specs[key]
+    const draft = this.staged.get(key)
+    if (draft === undefined) {
+      return { text: spec.read(this.sectionValue(key)), overridden: this.stored(key), invalid: false }
+    }
+    const op = spec.parse(draft)
+    return { text: draft, overridden: op !== undefined && op.op === 'set', invalid: op === undefined }
+  }
+
+  /** 待写入的 ops：只包含「与当前生效值不同且解析得出」的字段。 */
+  plan() {
+    const ops = []
+    for (const [key, draft] of this.staged) {
+      const spec = this.specs[key]
+      if (draft === spec.read(this.sectionValue(key))) continue
+      const op = spec.parse(draft)
+      if (op !== undefined) ops.push(op)
+    }
+    return ops
+  }
+
+  /** 表单级状态（页面把多份表单的状态合成一个保存按钮）。 */
+  shell() {
+    const snapshot = this.snapshot()
+    const ops = this.plan()
+    let invalid = false
+    for (const [key, draft] of this.staged) {
+      if (this.specs[key].parse(draft) === undefined) invalid = true
+    }
+    return {
+      available: snapshot.status === 'ready',
+      writable: snapshot.writable === true,
+      dirty: ops.length > 0,
+      invalid,
+      saving: this.saving,
+      failed: this.failed,
+    }
+  }
+
+  stage(key, text) {
+    this.baseline ??= this.snapshot()
+    this.staged.set(key, text)
+    this.failed = false
+    this.publish()
+  }
+
+  discard() {
+    if (this.staged.size === 0 && !this.failed) return
+    this.staged.clear()
+    this.baseline = undefined
+    this.failed = false
+    this.publish()
+  }
+
+  async save() {
+    const ops = this.plan()
+    if (this.saving || ops.length === 0 || this.shell().invalid) return
+    if (typeof this.scope?.mutate !== 'function') return
+    this.saving = true
+    this.failed = false
+    this.publish()
+    let ok = false
+    try {
+      ok = await this.scope.mutate(ops, this.baseline?.revision)
+    } catch {
+      ok = false
+    }
+    this.saving = false
+    if (ok) {
+      this.staged.clear()
+      this.baseline = undefined
+    } else {
+      // 保留草稿：宿主拒了（比如改完别人又动了配置），值不该被吞掉。
+      this.failed = true
+    }
+    this.publish()
+  }
+
+  /** 交给页面 `inject()` 的 action 集合。 */
+  actions() {
+    return {
+      [this.actionNames.edit]: (key, text) => { this.stage(key, text) },
+      [this.actionNames.save]: () => this.save(),
+      [this.actionNames.discard]: () => { this.discard() },
+    }
+  }
+
+  subscribe(listener) {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+
+  publish() {
+    for (const listener of this.listeners) listener()
+  }
+
+  dispose() {
+    this.listeners.clear()
+    if (typeof this.unsubscribe === 'function') this.unsubscribe()
+    this.unsubscribe = undefined
+  }
+}
+    __exports.unwrap = unwrap;
+    __exports.NestedSettingsForm = NestedSettingsForm;
     };
 
     __modules["client-memory-src/notes-directory.js"] = function (__exports, __req) {
@@ -2666,7 +3511,7 @@ function crumbLabel(crumb) {
  * 而笔记配置在 Config 里是 `notes` 的子键，宿主校验写路径时看的是"最近 volatile 祖先"
  * （`isVolatilePath`），`['notes.repo']` 这种单段字符串既匹配不到 schema，写进去还会被
  * 设置接口拒掉。宿主真正的写口是 `configForm.mutate(ops, revision)`，ops 的 path 是
- * **数组**，所以这里直接按 `['notes','repo']` 读写。
+ * **数组**，所以这里直接按 `['notes','repo']` 读写（实现见 nested-form.js）。
  *
  * 为什么值得为它单写一份
  * ─────────────────────
@@ -2675,9 +3520,9 @@ function crumbLabel(crumb) {
  * 这份表单的全部目的就是让它在插件详情页上可见、可改、改完立即生效（volatile）。
  *
  * 形状与宿主表单保持一致（`shell()` / `field()` / `actions()`），`settings-section.js`
- * 才能把两份表单的状态合成一个保存按钮；刻意不依赖任何宿主模块，纯函数 + 订阅。
+ * 才能把几份表单的状态合成一个保存按钮；刻意不依赖任何宿主模块，纯函数 + 订阅。
  */
-
+const { NestedSettingsForm } = __req("./nested-form.js");
 /** 三个字段的配置路径。数组形状由宿主设置接口的 ops 协议决定。 */
 const PATHS = {
   repo: ['notes', 'repo'],
@@ -2686,28 +3531,19 @@ const PATHS = {
 }
 
 /**
- * 用户没动过时显示什么。
+ * 快照里读不到该键时显示什么（宿主没提供这个命名空间时兜住渲染）。
  *
- * 取值走宿主 settings 快照的 `value`（= 当前生效值），不是自己再复制一份默认值；
- * `DEFAULTS` 只在快照不可用（宿主没提供这个命名空间）时兜住渲染。
+ * 正常的取值一律走快照的 `value`（= 当前生效值），这张表不是第二份默认配置。
  */
-const DEFAULTS = { repo: '', enabled: true, timeoutMs: 30000 }
-
-/**
- * 宿主设置快照给的是 `plainConfig` 之后的普通值；ref 形状仍兜一层。
- *
- * 不兜的话，一旦某个字段以 `{get()}` 形态到达，渲染出来就是 `[object Object]`，
- * 而那种"看得见但没用"的输入框比报错更难查。
- */
-function unwrap(value) {
-  return value && typeof value.get === 'function' ? value.get() : value
-}
+const FALLBACK = { repo: '', enabled: true, timeoutMs: 30000 }
 
 /** 超时下限：低于 1 秒连冷启动的进程 ready 都等不到。 */
 const MIN_TIMEOUT_MS = 1000
 
 const SPECS = {
   repo: {
+    section: 'notes',
+    fallback: FALLBACK.repo,
     read: (value) => (typeof value === 'string' ? value : ''),
     // 空文本 = 清掉 profile 里的覆盖值（回到默认空 = 不启用），而不是写一个空字符串。
     parse: (text) => {
@@ -2718,6 +3554,8 @@ const SPECS = {
     },
   },
   enabled: {
+    section: 'notes',
+    fallback: FALLBACK.enabled,
     read: (value) => (value === false ? 'false' : 'true'),
     parse: (text) => text === 'true'
       ? { op: 'set', path: PATHS.enabled, value: true }
@@ -2726,6 +3564,8 @@ const SPECS = {
         : undefined,
   },
   timeoutMs: {
+    section: 'notes',
+    fallback: FALLBACK.timeoutMs,
     read: (value) => (Number.isFinite(value) ? String(value) : ''),
     parse: (text) => {
       const trimmed = text.trim()
@@ -2741,140 +3581,14 @@ const SPECS = {
 /** 表单里出现的字段名，顺序即渲染顺序。 */
 const NOTES_FIELDS = ['repo', 'enabled', 'timeoutMs']
 
-class NotesSettingsForm {
+class NotesSettingsForm extends NestedSettingsForm {
   constructor(scope) {
-    this.scope = scope
-    this.staged = new Map()
-    this.listeners = new Set()
-    this.baseline = undefined
-    this.saving = false
-    this.failed = false
-    this.unsubscribe = typeof scope?.subscribe === 'function'
-      ? scope.subscribe(() => { this.publish() })
-      : undefined
-  }
-
-  /** 宿主快照：`value` 是生效值，`base` 是继承层（profile 与默认），`user` 是本条覆盖。 */
-  snapshot() {
-    try {
-      return this.scope?.getSnapshot?.() ?? {}
-    } catch {
-      return {}
-    }
-  }
-
-  sectionValue(key, layer = 'value') {
-    const notes = this.snapshot()[layer]?.notes
-    if (notes === undefined || notes === null) return key === 'repo' ? '' : DEFAULTS[key]
-    const value = unwrap(notes[key])
-    return value === undefined ? (key === 'repo' ? '' : DEFAULTS[key]) : value
-  }
-
-  /** 本条目是否在 profile 里被显式覆盖过（决定要不要显示"已覆盖"）。 */
-  stored(key) {
-    const notes = this.snapshot().user?.notes
-    return notes !== undefined && notes !== null && Object.hasOwn(notes, key)
-  }
-
-  field(key) {
-    const spec = SPECS[key]
-    const draft = this.staged.get(key)
-    if (draft === undefined) {
-      return { text: spec.read(this.sectionValue(key)), overridden: this.stored(key), invalid: false }
-    }
-    const op = spec.parse(draft)
-    return { text: draft, overridden: op !== undefined && op.op === 'set', invalid: op === undefined }
-  }
-
-  /** 待写入的 ops：只包含"与当前生效值不同且解析得出"的字段。 */
-  plan() {
-    const ops = []
-    for (const [key, draft] of this.staged) {
-      const spec = SPECS[key]
-      if (draft === spec.read(this.sectionValue(key))) continue
-      const op = spec.parse(draft)
-      if (op !== undefined) ops.push(op)
-    }
-    return ops
-  }
-
-  shell() {
-    const snapshot = this.snapshot()
-    const ops = this.plan()
-    let invalid = false
-    for (const [key, draft] of this.staged) {
-      if (SPECS[key].parse(draft) === undefined) invalid = true
-    }
-    return {
-      available: snapshot.status === 'ready',
-      writable: snapshot.writable === true,
-      dirty: ops.length > 0,
-      invalid,
-      saving: this.saving,
-      failed: this.failed,
-    }
-  }
-
-  stage(key, text) {
-    this.baseline ??= this.snapshot()
-    this.staged.set(key, text)
-    this.failed = false
-    this.publish()
-  }
-
-  discard() {
-    if (this.staged.size === 0 && !this.failed) return
-    this.staged.clear()
-    this.baseline = undefined
-    this.failed = false
-    this.publish()
-  }
-
-  async save() {
-    const ops = this.plan()
-    if (this.saving || ops.length === 0 || this.shell().invalid) return
-    if (typeof this.scope?.mutate !== 'function') return
-    this.saving = true
-    this.failed = false
-    this.publish()
-    let ok = false
-    try {
-      ok = await this.scope.mutate(ops, this.baseline?.revision)
-    } catch {
-      ok = false
-    }
-    this.saving = false
-    if (ok) {
-      this.staged.clear()
-      this.baseline = undefined
-    } else {
-      // 保留草稿：宿主拒了（比如改完别人又动了配置），值不该被吞掉。
-      this.failed = true
-    }
-    this.publish()
-  }
-
-  actions() {
-    return {
-      editNotes: (key, text) => { this.stage(key, text) },
-      saveNotes: () => this.save(),
-      discardNotes: () => { this.discard() },
-    }
-  }
-
-  subscribe(listener) {
-    this.listeners.add(listener)
-    return () => { this.listeners.delete(listener) }
-  }
-
-  publish() {
-    for (const listener of this.listeners) listener()
-  }
-
-  dispose() {
-    this.listeners.clear()
-    if (typeof this.unsubscribe === 'function') this.unsubscribe()
-    this.unsubscribe = undefined
+    super(scope, {
+      fields: NOTES_FIELDS,
+      specs: SPECS,
+      // action 名沿用既有契约（settings-section.js 的 `inject()` 按名字透传）。
+      actions: { edit: 'editNotes', save: 'saveNotes', discard: 'discardNotes' },
+    })
   }
 }
     __exports.NotesSettingsForm = NotesSettingsForm;
@@ -2913,8 +3627,20 @@ const SPINNER_DELAY_MS = 150
  * @param {number} limit - 本页条数。
  * @returns {string} 可直接交给 remote.commands.execute 的命令行。
  */
-function insightListLine(scope, offset, limit) {
-  return `/tasks insight list ${scope} ${offset} ${limit}`
+function insightListLine(scope, offset, limit, root) {
+  const base = `/tasks insight list ${scope} ${offset} ${limit}`
+  // 跨项目查看：root 走 URL 编码追加在最后，老宿主的多余词会被忽略（它只读前四个词）。
+  return root ? `${base} root=${encodeURIComponent(root)}` : base
+}
+
+/**
+ * 注入量估算的请求行：`/tasks insight estimate [root=<abs>]`。
+ * 宿主用**真引擎**跑一次 buildInjection，所以界面上显示的数字与下一步实际注入同源。
+ * @param {string|null} [root] - 目标项目根；不给即当前会话项目。
+ * @returns {string}
+ */
+function insightEstimateLine(root) {
+  return root ? `/tasks insight estimate root=${encodeURIComponent(root)}` : '/tasks insight estimate'
 }
 
 /**
@@ -3007,6 +3733,7 @@ function createRequestGate() {
   }
 }
     __exports.insightListLine = insightListLine;
+    __exports.insightEstimateLine = insightEstimateLine;
     __exports.appendUnique = appendUnique;
     __exports.normalizeWindow = normalizeWindow;
     __exports.progressCounts = progressCounts;
@@ -3015,6 +3742,168 @@ function createRequestGate() {
     __exports.HOST_PAGE_MAX = HOST_PAGE_MAX;
     __exports.PREFETCH_MARGIN = PREFETCH_MARGIN;
     __exports.SPINNER_DELAY_MS = SPINNER_DELAY_MS;
+    };
+
+    __modules["client-memory-src/project-options.js"] = function (__exports, __req) {
+/**
+ * 「看哪个项目」下拉框的行模型（纯逻辑，无 React、无宿主调用）。
+ *
+ * 这里原来给的是「当前会话项目」只读文本 + 「选择项目…」按钮（弹系统文件夹对话框）。
+ * 问题是**宿主的左侧栏本来就把工作区全列出来了**：用户已经认得那几条的名字与顺序，
+ * 设置页却要他从零在文件系统里再翻一遍目录，等于同一份清单让人挑两次；而且当前项目
+ * 只显示成一行灰字，看不出"我现在看的是哪个"。
+ *
+ * 所以改成下拉框：选项直接取宿主的工作区注册表（`ctx.workspaces.list` 的 `items`），
+ * 默认选中当前会话所在的那个项目，并在选项文本里标出来。两条细节必须处理：
+ *   1. 工作区注册表读不到（老宿主 / 服务没装配）时，退化成"会话行上出现过的 cwd"，
+ *      否则下拉框会空掉、连当前项目都选不了；
+ *   2. 用户在浏览对话框里挑的目录可能**还不是工作区**，必须补成一条"外来"选项 ——
+ *      否则 select 的 value 对不上任何 option，浏览器会把选择显示成空白。
+ *
+ * 这一层刻意不碰 DOM 与 ctx：它只做快照 → 行模型，因此能在 Node 里直接单测。
+ */
+const { sessionCwd, sessionRows } = __req("./session-id.js");
+/** 路径末段（"这个项目叫什么"的兜底）。 */
+function basename(p) {
+  const text = String(p ?? '').replace(/\/+$/, '')
+  const cut = text.lastIndexOf('/')
+  return cut < 0 ? text : text.slice(cut + 1)
+}
+
+/** 比较用的路径键：去首尾空白、合并重复斜杠、去掉尾部斜杠。 */
+function pathKey(p) {
+  const text = String(p ?? '').trim()
+  if (text === '') return ''
+  return text.replace(/\/{2,}/g, '/').replace(/(.)\/+$/, '$1')
+}
+
+/** 两个路径是否指向同一个目录（宿主给的 `path` 与 `cwd` 可能差一个尾斜杠）。 */
+function samePath(left, right) {
+  const key = pathKey(left)
+  return key !== '' && key === pathKey(right)
+}
+
+/** 路径太长时从中间省略，保住末两级目录（"是哪个项目"通常看尾巴）。 */
+function shortPath(p, max = 44) {
+  const text = String(p ?? '')
+  if (text.length <= max) return text
+  const parts = text.split('/')
+  const tail = parts.slice(-2).join('/')
+  return `${text.slice(0, Math.max(6, max - tail.length - 2))}…/${tail}`
+}
+
+/**
+ * 工作区注册表快照 → `[{ path, title }]`，按宿主顺序去重。
+ * 兼容三种输入：完整快照（`{ items }`）、裸数组、以及什么都没有。
+ * @param {object|Array|undefined|null} snap - `ctx.workspaces.list.getSnapshot()`
+ * @returns {Array<{path: string, title: string}>} 没有可用行时为 `[]`
+ */
+function workspaceRows(snap) {
+  const items = Array.isArray(snap) ? snap : Array.isArray(snap?.items) ? snap.items : []
+  const seen = new Set()
+  const rows = []
+  for (const item of items) {
+    const path = pathKey(item?.path)
+    if (path === '' || seen.has(path)) continue
+    seen.add(path)
+    const title = typeof item?.title === 'string' && item.title.trim() !== ''
+      ? item.title.trim()
+      : basename(path)
+    rows.push({ path, title })
+  }
+  return rows
+}
+
+/**
+ * 注册表不可用时的退化项目列表：会话快照里出现过的 `cwd`（按宿主顺序、去重）。
+ * 只在 `workspaces` 服务缺失时走这条 —— 那时"会话在哪个目录跑过"是唯一还能读到的线索。
+ * @param {object|undefined|null} snap - `ctx.sessions.list.getSnapshot()`
+ * @returns {Array<{path: string, title: string}>}
+ */
+function cwdRows(snap) {
+  const seen = new Set()
+  const rows = []
+  for (const row of sessionRows(snap)) {
+    const cwd = pathKey(sessionCwd(snap, row.id))
+    if (cwd === '' || seen.has(cwd)) continue
+    seen.add(cwd)
+    rows.push({ path: cwd, title: basename(cwd) })
+  }
+  return rows
+}
+
+/**
+ * 下拉框模型：选项、当前会话项目、当前选中项。
+ *
+ * `currentPath` 与 `options` 分开给，是因为"跟随会话"这件事必须能表达：选中项等于
+ * `currentPath` 时调用方清掉本地覆盖（不写 localStorage），会话一切换下拉框自动跟着走；
+ * 选了别的项目才写成覆盖（只读视图）。
+ * @param {object} [input] - 三个快照 + 会话 id + 本地覆盖路径
+ * @param {object|Array|null} [input.workspaces] - 工作区注册表快照
+ * @param {object|null} [input.sessions] - 会话列表快照
+ * @param {string|null} [input.sessionId] - 当前会话 id
+ * @param {string|null} [input.override] - 用户在上次会话里选的项目根（localStorage）
+ * @returns {{options: Array<{path: string, title: string, current: boolean, foreign: boolean}>, currentPath: string|null, selected: string, foreign: boolean}}
+ */
+function projectModel(input = {}) {
+  const { workspaces, sessions, sessionId, override } = input
+  const cwd = sessionCwd(sessions, sessionId)
+  const registered = workspaceRows(workspaces)
+  const rows = registered.length > 0 ? registered : cwdRows(sessions)
+
+  // 当前会话项目：注册表里与 cwd 同一个目录的那一条（用它的 path，才能让 option 对上），
+  // 匹配不上（会话在未注册的目录里跑）时就用 cwd 本身。
+  const matched = cwd === null ? null : rows.find((row) => samePath(row.path, cwd)) ?? null
+  const currentPath = matched !== null ? matched.path : cwd === null ? null : pathKey(cwd)
+
+  const options = rows.map((row) => ({
+    path: row.path,
+    title: row.title,
+    current: samePath(row.path, currentPath),
+    foreign: false,
+  }))
+  if (currentPath !== null && matched === null) {
+    options.unshift({ path: currentPath, title: basename(currentPath), current: true, foreign: false })
+  }
+
+  const wanted = pathKey(override)
+  const hit = wanted === '' ? null : options.find((option) => samePath(option.path, wanted)) ?? null
+  if (wanted !== '' && hit === null) {
+    options.push({ path: wanted, title: basename(wanted), current: false, foreign: true })
+  }
+
+  const selected = hit !== null ? hit.path : wanted !== '' ? wanted : currentPath ?? ''
+  return {
+    options,
+    currentPath,
+    selected,
+    // 有没有"正在看别的项目"：选中项不是当前会话项目时为 true（那种视图只读）。
+    foreign: selected !== '' && currentPath !== null && !samePath(selected, currentPath),
+  }
+}
+
+/**
+ * 下拉框里一行显示什么：只给项目名（自定义标题优先，否则路径末段），不铺路径。
+ *
+ * 这批选项就是宿主左侧栏那份工作区清单，所有人家的前缀都一样（`/home/<user>/Code/…`），
+ * 铺出来只是把真正要认的名字挤到右侧、还把下拉框撑宽。名字在本机是唯一的辨识依据，
+ * 全路径退到 hover 提示上（渲染侧给 `<option>` 挂 `title`），要核对目录时再看不迟。
+ * @param {{path: string, title?: string}} option - 一行
+ * @returns {string} 选项文本（不含"当前"标记，标记由渲染侧加）
+ */
+function projectOptionLabel(option) {
+  const title = String(option?.title ?? '').trim()
+  if (title !== '') return title
+  return basename(String(option?.path ?? ''))
+}
+    __exports.basename = basename;
+    __exports.pathKey = pathKey;
+    __exports.samePath = samePath;
+    __exports.shortPath = shortPath;
+    __exports.workspaceRows = workspaceRows;
+    __exports.cwdRows = cwdRows;
+    __exports.projectModel = projectModel;
+    __exports.projectOptionLabel = projectOptionLabel;
     };
 
     __modules["client-memory-src/relative-time.js"] = function (__exports, __req) {
@@ -3246,6 +4135,24 @@ function sessionRows(snap) {
 }
 
 /**
+ * 某一行的 `cwd`（"这个会话属于哪个项目"的唯一依据）。
+ *
+ * `SessionSummary` 上没有 `workspaceId` —— 会话与工作区的关联只体现在 `cwd` 上，
+ * 所以设置页要判断"当前会话项目是哪一个"只能读这个字段，再拿它跟工作区注册表的 `path` 比。
+ * 两种快照形状的取法不同（旧形状行数据在 `items` 里，0.1.7 在 `byId` 里），故这里各走一条。
+ * @param {object|undefined|null} snap - `ctx.sessions.list.getSnapshot()`
+ * @param {string} id - 会话 id
+ * @returns {string|null} 绝对路径；没有这一行 / 没有 cwd 时为 null
+ */
+function sessionCwd(snap, id) {
+  if (!snap || typeof snap !== 'object' || typeof id !== 'string' || id === '') return null
+  const row = Array.isArray(snap.items)
+    ? snap.items.find((item) => item?.sessionId === id)
+    : snap.byId && typeof snap.byId === 'object' ? snap.byId[id] : undefined
+  return typeof row?.cwd === 'string' && row.cwd !== '' ? row.cwd : null
+}
+
+/**
  * 选出一个可用于执行命令的会话 id（即"用户正在看的那个"）。
  *
  * 优先级：
@@ -3265,6 +4172,7 @@ function pickSessionId(snap) {
   return chosen ? chosen.id : null
 }
     __exports.sessionRows = sessionRows;
+    __exports.sessionCwd = sessionCwd;
     __exports.pickSessionId = pickSessionId;
     };
 
@@ -3281,20 +4189,34 @@ function pickSessionId(snap) {
  *   → 客户端 `ctx.configForms.get(...)` 读写 → 宿主校验 + revision fence + volatile 原地更新。
  *   这里既不写 profile 的 yml，也不缓存值：这一页永远是宿主那份配置的投影。
  *
- * 页面上只有一组控件：笔记检索三项（`notes.repo` 这类嵌套路径），走 notes-settings.js
- * 自己的 mutate 表单。记忆那三个顶层旋钮随语料索引层下线后，宿主 `SettingsFormModel`
- * 只用来提供 SnapshotStore 与 scope 订阅，字段表是空的。
+ * 三块内容，一条主线：「这个项目记住了什么 → 它能长多大 → 笔记检索在哪」
+ *   1. **记忆清单**（只读）：`/tasks insight list <scope>` 的可视化，带容量占用。用户的原话是
+ *      「只写了有项目记忆，但看不到有哪些记忆」—— 页面上不给清单，等于要求他先知道
+ *      `save_lesson` 和任务面板的记忆视图在哪儿。每条可展开：全文、涉及的文件与符号、
+ *      触发条件、条目 id 都在展开态里，不必为了看一个路径去翻数据文件。
+ *   2. **记忆规模**（可写）：界面上只有**单轮注入预算**一行（`MEMORY_SCALE_VISIBLE_FIELDS`）；
+ *      其余规模字段仍在表单里被读写，只是不占版面。写入走 `nested-form.js` 的数组 path。
+ *   3. **笔记检索**（可写）：目录 / 开关 / 超时（`notes.*`）。
+ * 记忆规模与笔记检索共用页面底部那一个保存按钮（`saveAll()` 依次落两份草稿）。
  */
 const { Button, SettingsFormModel, Switch } = __req("@deepseek-ai/dsh-client-ui-primitives");
-const { createElement: h, useEffect, useState } = __req("react");
+const { createElement: h, useCallback, useEffect, useRef, useState } = __req("react");
 const { service } = __req("./services.js");
 const { NOTES_FIELDS, NotesSettingsForm } = __req("./notes-settings.js");
+const { MEMORY_ENUM_FIELDS, MEMORY_SCALE_ALL_FIELDS, MEMORY_SCALE_FIELDS, MEMORY_SCALE_VISIBLE_FIELDS, MEMORY_SCALE_WIDGET, MemoryScaleForm, TOPIC_GATE_VALUES } = __req("./memory-settings.js");
+const { INVENTORY_PAGE_SIZE, MEMORY_SCOPES, emptyInventory, injectSummary, inventoryRows, scopeCapacityField, summarizeInventory, usagePercent } = __req("./memory-inventory.js");
+const { parseInsightPayloadText, parsePayloadText, readInsightCache, writeInsightCache } = __req("./memory-load.js");
+const { insightKindLabel } = __req("./kind-label.js");
+const { insightEstimateLine, insightListLine } = __req("./paging.js");
+const { invokeCommand } = __req("./commands.js");
+const { pickSessionId } = __req("./session-id.js");
+const { projectModel, projectOptionLabel, samePath, shortPath } = __req("./project-options.js");
 const { NotesDirectoryDialog } = __req("./NotesDirectoryDialog.js");
 const { directoryAccess } = __req("./notes-directory.js");
 const { createTranslate, en, zh } = __req("./locales.js");
 const { settingsCss: css } = __req("./styles.js");
 /** 本 bundle 在 profile 的 loader 条目 id（cordis.patch.yml 定死的那个），也是 settings 命名空间。 */
-const SETTINGS_ENTRY_ID = 'dsh-turn-cost'
+const SETTINGS_ENTRY_ID = 'dsh-session-insight'
 /** 设置面板里的分区 id；图标注册必须用同一个 id 才会被渲染。 */
 const SETTINGS_SECTION_ID = 'project-memory'
 /** 分区在设置导航里的位置（费用 30 / 模型目录 31 之后）。 */
@@ -3303,32 +4225,38 @@ const SETTINGS_SECTION_ORDER = 32
 const SETTINGS_NS = 'dsh-project-memory.settings'
 
 /**
- * 本页只有笔记检索一组控件。
+ * 收起态下正文的截断长度。
  *
- * 记忆那三个顶层旋钮（启动全量索引 / 刷新间隔 / 检索时扩展查询）随语料索引层一起下线：
- * 代码结构归 codegraph、笔记语料归 `search_notes`，这页再暴露"索什么、多久刷、要不要扩写"
- * 只会让人以为项目的记忆是靠扫盘建立的。项目记忆的实质入口是 insight（`save_lesson` 的
- * decision / lesson / procedure）与任务，它们不经过索引，也没有可调频率。
+ * 收起态负责"认出这条是什么"：一条 experience 的 solution 可以上千字，整段平铺会把下面
+ * 所有控件推出屏幕。全文与文件、触发条件都在展开态里（`inventoryDetail`），详情块自带
+ * 滚动，所以这里只需要一个够认人的长度。
  */
+const INVENTORY_BODY_CHARS = 140
 
-/** 把 settings 命名空间桥到本页的状态上。 */
+/**
+ * 桥接 settings 命名空间到本页状态。
+ *
+ * `SettingsFormModel` 仍然只用来提供 SnapshotStore 与 scope 订阅（`bind()` 是宿主唯一现成的
+ * 那个实现），字段表**故意空着**：本页没有任何顶层键可编辑，可写的都是 Config 子对象
+ * （`notes.*` / `insight.*` / `autoContext.*`，见 nested-form.js 的头注释）。
+ */
 class SettingsSectionController {
   /**
    * @param scope - 本条目在 `configForms` 里的 scope（读写宿主设置）。
    * @param directory - 目录浏览通道（`uiWorkspace.listDirectory` 的软包装）；
    *   宿主没有这项能力时传 `null`，设置页回退成手写输入框。
+   * @param ctx - client 根上下文。记忆清单要靠它读 `sessions` 服务与命令通道；
+   *   宿主装配里没有它时清单显示"没有活跃会话"，其余照常。
    */
-  constructor(scope, directory = null) {
-    // 记忆那三个顶层旋钮（启动全量索引 / 刷新间隔 / 检索时扩展查询）随语料索引层一起下线，
-    // 所以这张表单**故意空着**：它仍然负责给本页提供 SnapshotStore 与 scope 订阅
-    // （`bind()` 是宿主唯一现成的那个实现），但不再持有任何可编辑字段。
+  constructor(scope, directory = null, ctx = null) {
     this.form = new SettingsFormModel(scope, [])
-    // 笔记三项走自己的表单：宿主的 SettingsFormModel 只能寻址顶层键，而它们是
-    // `notes.repo` 这类嵌套路径（见 notes-settings.js 的头注释）。
     this.notes = new NotesSettingsForm(scope)
+    this.scale = new MemoryScaleForm(scope)
     this.directory = directory
+    this.ctx = ctx
     this.store = this.form.bind(() => this.projection())
     this.unsubscribeNotes = this.notes.subscribe(() => { this.store.set(this.projection()) })
+    this.unsubscribeScale = this.scale.subscribe(() => { this.store.set(this.projection()) })
   }
 
   /** 构造槽位注入面。 */
@@ -3336,42 +4264,63 @@ class SettingsSectionController {
     return {
       hooks: { settingsCard: this.store },
       directory: this.directory,
+      ctx: this.ctx,
       ...this.notes.actions(),
+      ...this.scale.actions(),
       save: () => { void this.saveAll() },
       discard: () => {
         this.form.actions().discard()
         this.notes.discard()
+        this.scale.discard()
       },
     }
   }
 
-  /** 一次保存点同时落两份草稿；记忆那份失败就不动笔记那份。 */
+  /** 一次保存点同时落两份草稿；任何一份失败就停在那里（不吞掉另一份的草稿）。 */
   async saveAll() {
     await this.form.save()
     if (this.form.shell().failed) return
+    await this.scale.save()
+    if (this.scale.shell().failed) return
     await this.notes.save()
   }
 
   /** 释放对宿主命名空间的订阅。 */
   dispose() {
     this.unsubscribeNotes?.()
+    this.unsubscribeScale?.()
     this.notes.dispose()
+    this.scale.dispose()
     this.form.dispose()
   }
 
   projection() {
     const notesFields = {}
     for (const field of NOTES_FIELDS) notesFields[field] = this.notes.field(field)
+    const scaleFields = {}
+    // `effective` 是**生效值**（不是草稿）：记忆清单的容量占用必须跟着已保存的容量走，
+    // 否则用户一边改容量、一边看进度条跳动，永远不知道哪个数字才算数。
+    // 枚举字段（topicGate）同样投影生效值——它是字符串，别拿数值判据把它筛掉。
+    const scaleEffective = {}
+    for (const field of MEMORY_SCALE_ALL_FIELDS) {
+      scaleFields[field] = this.scale.field(field)
+      const value = this.scale.sectionValue(field)
+      scaleEffective[field] = typeof value === 'number' && Number.isFinite(value)
+        ? value
+        : typeof value === 'string' && value ? value : null
+    }
     const base = this.form.shell()
     const notes = this.notes.shell()
+    const scale = this.scale.shell()
     return {
       available: base.available,
-      writable: base.writable && (!notes.available || notes.writable),
-      dirty: base.dirty || notes.dirty,
-      invalid: base.invalid || notes.invalid,
-      saving: base.saving || notes.saving,
-      failed: base.failed || notes.failed,
+      writable: base.writable && (!notes.available || notes.writable) && (!scale.available || scale.writable),
+      dirty: base.dirty || notes.dirty || scale.dirty,
+      invalid: base.invalid || notes.invalid || scale.invalid,
+      saving: base.saving || notes.saving || scale.saving,
+      failed: base.failed || notes.failed || scale.failed,
       notes: { ...notes, fields: notesFields },
+      scale: { ...scale, fields: scaleFields, effective: scaleEffective },
     }
   }
 }
@@ -3409,10 +4358,563 @@ const UNAVAILABLE_STATE = {
       NOTES_FIELDS.map((field) => [field, { text: '', overridden: false, invalid: false }]),
     ),
   },
+  scale: {
+    available: false,
+    writable: false,
+    dirty: false,
+    invalid: false,
+    saving: false,
+    failed: false,
+    effective: {},
+    fields: Object.fromEntries(
+      MEMORY_SCALE_FIELDS.map((field) => [field, { text: '', overridden: false, invalid: false }]),
+    ),
+  },
 }
 
 /** 非 Hook 的稳定回退：hook 数量在两次渲染之间不变，避免条件调用 Hooks。 */
 const fallbackHook = (selector) => selector(UNAVAILABLE_STATE)
+
+/**
+ * 当前会话 id（与任务面板同一份解析，见 session-id.js）。
+ *
+ * 设置页没有会话属性可拿，只能从 `sessions.list` 快照里挑"用户正在看的那个"。这条订阅是
+ * 必需的：切换对话后 `retainedBy.mainView` 变化会重新发布快照，清单才会跟着换项目。
+ */
+function useSessionId(ctx) {
+  const [, force] = useState(0)
+  useEffect(() => {
+    const list = ctx === null || ctx === undefined ? undefined : service(ctx, 'sessions')?.list
+    if (!list || typeof list.subscribe !== 'function') return undefined
+    return list.subscribe(() => force((n) => n + 1))
+  }, [ctx])
+  if (ctx === null || ctx === undefined) return null
+  return pickSessionId(service(ctx, 'sessions')?.list?.getSnapshot?.())
+}
+
+/**
+ * 宿主的工作区注册表快照（`ctx.workspaces.list`）。
+ *
+ * 「看哪个项目」下拉框的选项就是这份清单 —— 左侧栏里那几条项目与它是同一份数据，
+ * 所以在侧栏新增/改名/删除工作区时，设置页的下拉框会自动跟上，不需要刷新页面。
+ * 服务缺失（老宿主）时返回 undefined，由 `projectModel` 退化成会话 cwd 列表。
+ * @param {object|null} ctx - client 上下文（设置页拿不到时为 null）
+ * @returns {object|undefined} `ctx.workspaces.list.getSnapshot()`
+ */
+function useWorkspacesSnapshot(ctx) {
+  const [, force] = useState(0)
+  useEffect(() => {
+    const list = ctx === null || ctx === undefined ? undefined : service(ctx, 'workspaces')?.list
+    if (!list || typeof list.subscribe !== 'function') return undefined
+    return list.subscribe(() => force((n) => n + 1))
+  }, [ctx])
+  if (ctx === null || ctx === undefined) return undefined
+  return service(ctx, 'workspaces')?.list?.getSnapshot?.()
+}
+
+/** ISO 时间 → 本地短日期；坏时间留空（不显示 NaN）。 */function shortDate(iso) {
+  const t = Date.parse(iso ?? '')
+  if (!Number.isFinite(t)) return ''
+  try {
+    return new Date(t).toLocaleDateString()
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * 详情块里按 kind 展示的正文型字段（与摘要重复的会被跳过）。
+ *
+ * 顺序固定为「问题 → 选择 → 理由 → 修法 → 解决 → 模式」：它同时是一条记忆从
+ * 现象到结论的读法，而不是字段在 JSON 里的存储顺序。
+ */
+const DETAIL_FIELDS = [
+  ['problem', 'settings.memory.field.problem'],
+  ['choice', 'settings.memory.field.choice'],
+  ['reason', 'settings.memory.field.reason'],
+  ['fix', 'settings.memory.field.fix'],
+  ['solution', 'settings.memory.field.solution'],
+  ['pattern', 'settings.memory.field.pattern'],
+]
+
+/** 详情里的一个小节：标题 + 内容（可多个子节点）。 */
+function detailBlock(key, label, ...children) {
+  return h('div', { key, className: css.invBlock },
+    h('div', { className: css.invBlockLabel }, label),
+    ...children)
+}
+
+/** 「标签：值 值 值」一行；值为空时空行不画。 */
+function triggerLine(key, label, values) {
+  const list = Array.isArray(values) ? values : []
+  if (list.length === 0) return null
+  return h('div', { key, className: css.invTriggerRow },
+    h('span', { className: css.invTriggerLabel }, label),
+    h('span', { className: css.invTriggerValue }, list.join(' · ')))
+}
+
+/** 触发条件的各组取值（老字段 keywords/scope 与 when 并列，谁空谁不画）。 */
+function triggerLines(trigger, t) {
+  const when = trigger.when === null || trigger.when === undefined ? {} : trigger.when
+  const lines = [
+    triggerLine('writes', t('settings.memory.trigger.writes'), when.writes),
+    triggerLine('ops', t('settings.memory.trigger.ops'), when.ops),
+    triggerLine('intents', t('settings.memory.trigger.intents'), when.intents),
+    triggerLine('paths', t('settings.memory.trigger.paths'), when.paths),
+    triggerLine('hosts', t('settings.memory.trigger.hosts'), when.hosts),
+  ]
+  const guard = when.guard
+  if (guard && typeof guard === 'object') {
+    // `guard` 的三个面合成一行：前缀 `!` 表示排除、`#` 表示标签，裸值表示"必须落在这些路径里"。
+    lines.push(triggerLine('guard', t('settings.memory.trigger.guard'), [
+      ...(Array.isArray(guard.paths) ? guard.paths : []),
+      ...(Array.isArray(guard.notPaths) ? guard.notPaths.map((item) => `!${item}`) : []),
+      ...(Array.isArray(guard.tags) ? guard.tags.map((item) => `#${item}`) : []),
+    ]))
+  }
+  lines.push(triggerLine('keywords', t('settings.memory.trigger.keywords'), trigger.keywords))
+  lines.push(triggerLine('scope', t('settings.memory.trigger.scope'), trigger.scope))
+  return lines.filter(Boolean)
+}
+
+/**
+ * 展开态的详情。
+ *
+ * 全部字段都来自同一次列表载荷（`fileList` / `symbolList` / `trigger` / `steps` /
+ * 各 kind 正文），这里不发第二条命令、也不读第二份数据：一页拿到什么就显示什么。
+ * 唯一需要额外说明的是清单被宿主截断（`files > fileList.length`）——那行提示必须写，
+ * 否则「文件 23」下面只列出 40 个里的 23 个会让人以为列表漏了。
+ */
+function inventoryDetail(row, t) {
+  const blocks = []
+  // procedure 的 `body` 是宿主合成的「步骤 N 条：第一条…」摘要，展开后列真步骤更有用。
+  const stepsInline = row.kind === 'procedure' && row.steps.length > 0
+  if (row.body !== '' && !(stepsInline && row.body.startsWith('步骤'))) {
+    blocks.push(detailBlock('body', t('settings.memory.detail.body'),
+      h('p', { className: css.invBodyFull }, row.body)))
+  }
+  if (row.steps.length > 0) {
+    blocks.push(detailBlock('steps', t('settings.memory.detail.steps', { count: String(row.steps.length) }),
+      h('ol', { className: css.invSteps },
+        ...row.steps.map((step, index) => h('li', { key: String(index), className: css.invStep }, step)))))
+  }
+  for (const [field, labelKey] of DETAIL_FIELDS) {
+    const value = row[field]
+    if (value === null || value === undefined || value === row.body) continue
+    blocks.push(detailBlock(field, t(labelKey), h('p', { className: css.invBodyFull }, value)))
+  }
+  if (row.fileList.length > 0) {
+    const total = Math.max(row.files, row.fileList.length)
+    blocks.push(detailBlock('files', t('settings.memory.detail.files', { count: String(total) }),
+      h('div', { className: css.invChips },
+        ...row.fileList.map((file, index) => h('code', { key: `${file}#${index}`, className: css.invFile }, file))),
+      total > row.fileList.length
+        ? h('p', { className: css.invOverflow }, t('settings.memory.detail.more', {
+          shown: String(row.fileList.length), total: String(total),
+        }))
+        : null))
+  }
+  if (row.symbolList.length > 0) {
+    const total = Math.max(row.symbols, row.symbolList.length)
+    blocks.push(detailBlock('symbols', t('settings.memory.detail.symbols', { count: String(total) }),
+      h('div', { className: css.invChips },
+        ...row.symbolList.map((symbol, index) => h('code', { key: `${symbol}#${index}`, className: css.invSymbol }, symbol))),
+      total > row.symbolList.length
+        ? h('p', { className: css.invOverflow }, t('settings.memory.detail.more', {
+          shown: String(row.symbolList.length), total: String(total),
+        }))
+        : null))
+  }
+  if (row.trigger !== null) {
+    const lines = triggerLines(row.trigger, t)
+    if (lines.length > 0) blocks.push(detailBlock('trigger', t('settings.memory.detail.trigger'), ...lines))
+  }
+  blocks.push(h('p', { key: 'id', className: css.invId }, t('settings.memory.detail.id', { id: row.id })))
+  return h('div', { className: css.invDetail }, ...blocks)
+}
+
+/**
+ * 一条记忆在清单里的样子（kind 徽章 + 标题 + 摘要 + 元信息），点标题行展开详情。
+ *
+ * 展开不是锦上添花：摘要按 140 字截断，涉及的文件、符号、触发条件根本不在摘要里，
+ * 而设置页是用户唯一能"看"记忆库的地方 —— 只能看摘要等于看不到记忆。
+ * 一起进详情的是条目 id：要回到任务面板做确认/提升/归档时，靠它认人。
+ */
+function InventoryRow(props) {
+  const { row, t } = props
+  const [open, setOpen] = useState(false)
+  const meta = []
+  if (row.draft) meta.push(h('span', { key: 'draft', className: css.invBadgeDraft + ' ' + css.invBadge }, t('settings.memory.badge.draft')))
+  if (row.archived) meta.push(h('span', { key: 'archived', className: css.invBadge }, t('settings.memory.badge.archived')))
+  if (row.confidence !== null) meta.push(h('span', { key: 'conf' }, t('settings.memory.meta.confidence', { value: row.confidence.toFixed(2) })))
+  if (row.hitCount > 0) meta.push(h('span', { key: 'hits' }, t('settings.memory.meta.hits', { count: String(row.hitCount) })))
+  // 计数徽标放在收起态：不展开也能看出"这条牵着几个文件"，展开才知道是哪些。
+  if (row.files > 0) meta.push(h('span', { key: 'files' }, t('settings.memory.meta.files', { count: String(row.files) })))
+  if (row.symbols > 0) meta.push(h('span', { key: 'symbols' }, t('settings.memory.meta.symbols', { count: String(row.symbols) })))
+  if (row.members > 0) meta.push(h('span', { key: 'members' }, t('settings.memory.meta.members', { count: String(row.members) })))
+  if (row.taskTitle !== null) meta.push(h('span', { key: 'task' }, row.taskTitle))
+  const when = shortDate(row.updatedAt)
+  if (when !== '') meta.push(h('span', { key: 'when' }, when))
+  const rowClass = row.archived ? css.invRow + ' ' + css.invRowArchived : css.invRow
+  return h('div', {
+    className: open ? rowClass + ' ' + css.invRowOpen : rowClass,
+    'data-insight-id': row.id,
+    'data-open': open ? 'true' : 'false',
+  },
+  h('button', {
+    type: 'button',
+    className: css.invHead + ' ' + css.invHeadBtn,
+    'aria-expanded': open ? 'true' : 'false',
+    title: t(open ? 'settings.memory.collapse' : 'settings.memory.expand'),
+    onClick: () => { setOpen((prev) => !prev) },
+  },
+  h('span', {
+    key: 'chevron',
+    className: open ? css.invChevron + ' ' + css.invChevronOpen : css.invChevron,
+    'aria-hidden': 'true',
+  }, '▸'),
+  h('span', { key: 'kind', className: css.kind, 'data-kind': row.kind }, insightKindLabel(row.kind, t)),
+  h('span', { key: 'title', className: css.invTitle }, row.title === '' ? t('settings.memory.untitled') : row.title)),
+  row.body === '' || open
+    ? null
+    : h('p', { className: css.invBody }, row.body.length > INVENTORY_BODY_CHARS
+      ? row.body.slice(0, INVENTORY_BODY_CHARS) + '…'
+      : row.body),
+  meta.length === 0 ? null : h('div', { className: css.invMeta }, ...meta),
+  open ? inventoryDetail(row, t) : null)
+}
+
+/** 「看哪个项目」的选择持久化键：按浏览器记，不写回 profile（它只是视图，不是配置）。 */
+const PROJECT_OVERRIDE_KEY = 'dshpm.inventory.root'
+
+function readProjectOverride() {
+  try {
+    const v = window.localStorage.getItem(PROJECT_OVERRIDE_KEY)
+    return typeof v === 'string' && v ? v : null
+  } catch {
+    return null
+  }
+}
+
+function writeProjectOverride(root) {
+  try {
+    if (root) window.localStorage.setItem(PROJECT_OVERRIDE_KEY, root)
+    else window.localStorage.removeItem(PROJECT_OVERRIDE_KEY)
+  } catch {
+    /* 隐私模式/禁用存储：切项目仍生效，只是下次打开不记得 */
+  }
+}
+
+/** 路径太长时从中间省略的实现搬到了 `project-options.js`（那里要拿它拼选项文本）。 */
+
+/** 记忆清单（只读）。数据通道与任务面板的记忆视图完全相同。 */
+function InventoryPanel(props) {
+  const { ctx, t, scale } = props
+  const sessionId = useSessionId(ctx)
+  const [scope, setScope] = useState(MEMORY_SCOPES[0])
+  const [state, setState] = useState(() => emptyInventory())
+  const [refreshTick, setRefreshTick] = useState(0)
+  // 「手动刷新」只绕过一次缓存：消费掉这一跳之后，切页签仍然走 30 秒缓存。
+  const consumedRefresh = useRef(0)
+  // 看哪个项目：null = 当前会话项目；非 null = 用户在本地选的另一个项目根（只读）。
+  const [projectRoot, setProjectRoot] = useState(readProjectOverride)
+  // 注入量估算：宿主用真引擎跑出来的三个数（上限 / 本步 / 池子）。
+  const [inject, setInject] = useState(null)
+  // 宿主忽略了 `root=` 时的标记（见下面取数的注释）：跨项目读取还没生效，界面必须说出来。
+  const [viewStale, setViewStale] = useState(false)
+  // 工作区注册表：下拉框的选项来源。订阅它，侧栏新增/改名工作区时这一页自动跟上。
+  const workspaces = useWorkspacesSnapshot(ctx)
+  // 下拉框的行模型（选项 / 当前会话项目 / 当前选中项）。会话 cwd 变化时重算 ——
+  // `useSessionId` 已经订阅了会话列表，切对话会重渲染。
+  const projects = projectModel({
+    workspaces,
+    sessions: ctx === null || ctx === undefined ? undefined : service(ctx, 'sessions')?.list?.getSnapshot?.(),
+    sessionId,
+    override: projectRoot,
+  })
+
+  useEffect(() => {
+    let alive = true
+    if (!sessionId) {
+      // 没有活跃会话时不发命令、也不报错：宿主命令必须挂在某个会话上执行，
+      // 报"读取失败"会让人以为记忆库坏了。
+      setState({ ...emptyInventory(), scope, loaded: false })
+      setInject(null)
+      return () => { alive = false }
+    }
+    // 命中 30 秒缓存就不再发命令：`remote.commands.execute` 会在**会话历史里**留一条 command
+    // 节点（任务面板的记忆视图同样受这条约束），来回切页签不该在对话里堆一串命令卡片。
+    // 手动「刷新」用 refreshTick 显式绕过缓存。
+    const forced = consumedRefresh.current !== refreshTick
+    if (forced) consumedRefresh.current = refreshTick
+    const cached = forced ? null : readInsightCache(sessionId, scope, projectRoot, null)
+    if (cached !== null) {
+      // 缓存命中不经解析，就没有新的回执可判：跟随会话时直接清掉上一轮的"宿主没生效"提示。
+      if (projectRoot === null || projectRoot === undefined) setViewStale(false)
+      setState({
+        scope,
+        rows: cached.rows,
+        total: cached.total,
+        nextOffset: cached.nextOffset,
+        loading: false,
+        error: null,
+        loaded: true,
+      })
+      return () => { alive = false }
+    }
+    setState((prev) => ({ ...prev, scope, loading: true, error: null }))
+    void (async () => {
+      const result = await invokeCommand(ctx, sessionId, insightListLine(scope, 0, INVENTORY_PAGE_SIZE, projectRoot))
+      if (!alive) return
+      if (!result.ok) {
+        setState({ ...emptyInventory(), scope, error: result.error || 'command failed', loaded: true })
+        return
+      }
+      const parsed = parseInsightPayloadText(result.text)
+      if (!parsed) {
+        setState({ ...emptyInventory(), scope, error: t('settings.memory.unparsable'), loaded: true })
+        return
+      }
+      const rows = inventoryRows(parsed.items)
+      // 宿主有没有真的读到我们请求的项目：老宿主（`root=` 支持落地前启动的进程）会**忽略**这个参数，
+      // 悄悄返回会话自己的项目。载荷里的 `root` 是回执，对不上就在行上说明 —— 否则"正在看 note"
+      // 是假的，而界面上看不出任何区别。
+      setViewStale(
+        projectRoot !== null && projectRoot !== undefined
+        && !(typeof parsed.root === 'string' && samePath(parsed.root, projectRoot)),
+      )
+      // 缓存 key 带上当前查看的项目根：同一个会话切到别的项目时必须重新取，不能复用上一个项目的列表。
+      writeInsightCache(sessionId, scope, projectRoot, null, rows, parsed.total, parsed.nextOffset)
+      setState({
+        scope,
+        rows,
+        total: parsed.total,
+        nextOffset: parsed.nextOffset,
+        loading: false,
+        error: null,
+        loaded: true,
+      })
+    })()
+    return () => { alive = false }
+    // `t` 刻意不进依赖：语言切换不该触发一次命令；文案只在状态变化时读取。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx, sessionId, scope, refreshTick, projectRoot])
+
+  // 注入量估算：独立于清单，失败只在那一行说一句，不影响清单本身的可用性。
+  useEffect(() => {
+    let alive = true
+    if (!sessionId) {
+      setInject(null)
+      return () => { alive = false }
+    }
+    void (async () => {
+      const result = await invokeCommand(ctx, sessionId, insightEstimateLine(projectRoot))
+      if (!alive) return
+      if (!result.ok) {
+        setInject({ error: result.error || 'command failed' })
+        return
+      }
+      const payload = parsePayloadText(result.text)
+      const summary = injectSummary(payload)
+      setInject(summary === null ? { error: t('settings.memory.inject.unparsable') } : summary)
+    })()
+    return () => { alive = false }
+    // `t` 同样不进依赖：文案只在状态变化时取。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx, sessionId, projectRoot, refreshTick])
+
+  /**
+   * 选定「看哪个项目」。
+   *
+   * 选中项就是当前会话项目时**清掉本地覆盖**（回到"跟随会话"）：这样切对话后下拉框会跟着
+   * 会话走，而不是钉在某个路径上。选了别的项目才写覆盖 —— 那是一个只读视图。
+   * @param {string} next - 选中的项目根（空串 = 没有可选项目）
+   */
+  const chooseProjectPath = useCallback((next) => {
+    const path = typeof next === 'string' ? next : ''
+    const followCurrent = path === '' || (projects.currentPath !== null && samePath(path, projects.currentPath))
+    setProjectRoot(followCurrent ? null : path)
+    writeProjectOverride(followCurrent ? null : path)
+  }, [projects.currentPath])
+
+  /** 选择「看哪个项目」：只认宿主工作区注册表里的项目，下拉框就是入口。 */
+  const capacityField = scopeCapacityField(scope)
+  const capacity = capacityField === null ? null : scale?.effective?.[capacityField] ?? null
+  const stats = summarizeInventory({ items: state.rows, total: state.total, capacity })
+  const percent = usagePercent(stats.ratio)
+
+  const usageText = capacity === null
+    ? t('settings.memory.usage.nocap', { used: String(stats.used) })
+    : t('settings.memory.usage', { used: String(stats.used), capacity: String(capacity), percent: String(percent ?? 0) })
+
+  const tabs = h('div', { className: css.tabs, role: 'tablist' },
+    ...MEMORY_SCOPES.map((name) => h('button', {
+      key: name,
+      type: 'button',
+      role: 'tab',
+      'aria-selected': name === scope ? 'true' : 'false',
+      className: name === scope ? css.tab + ' ' + css.tabActive : css.tab,
+      onClick: () => { setScope(name) },
+    }, t(`settings.memory.scope.${name}`))))
+
+  let body
+  if (!sessionId) {
+    body = h('p', { className: css.invEmpty }, t('settings.memory.noSession'))
+  } else if (state.error !== null) {
+    body = h('p', { className: css.failed }, t('settings.memory.failed', { message: state.error }))
+  } else if (state.loading && state.rows.length === 0) {
+    body = h('p', { className: css.invEmpty }, t('settings.memory.loading'))
+  } else if (state.loaded && state.rows.length === 0) {
+    body = h('p', { className: css.invEmpty }, t('settings.memory.empty'))
+  } else {
+    body = h('div', { className: css.invList },
+      ...state.rows.map((row) => h(InventoryRow, { key: row.id, row, t })))
+  }
+
+  const truncated = state.nextOffset !== null && state.nextOffset !== undefined
+
+  // 看哪个项目：下拉框的选项就是宿主那份工作区列表（左侧栏同款），默认选中当前会话所在的项目；
+  // 选了别的项目只是**只读**视图 —— 写入永远走会话自己的项目。
+  const projectOptionNodes = projects.options.map((option) => h('option', {
+    key: option.path,
+    value: option.path,
+    // 选项只显示项目名，全路径挂在 title 上：hover 就能核对到底是哪个目录。
+    title: option.path,
+  }, projectOptionLabel(option) + (option.current ? ' ' + t('settings.memory.project.currentMark') : '')))
+  if (projectOptionNodes.length === 0) {
+    projectOptionNodes.push(h('option', { key: 'no-project', value: '' }, t('settings.memory.project.empty')))
+  }
+  const projectRow = h('div', { className: css.projectRow },
+    h('span', { className: css.projectLabel }, t('settings.memory.project.label')),
+    h('select', {
+      className: css.projectSelect,
+      'aria-label': t('settings.memory.project.label'),
+      title: projects.selected === '' ? t('settings.memory.project.empty') : projects.selected,
+      value: projects.selected,
+      disabled: !sessionId || projects.options.length === 0,
+      onChange: (event) => { chooseProjectPath(event.target.value) },
+    }, ...projectOptionNodes),
+    projects.foreign
+      ? h('span', { className: css.notice }, t('settings.memory.project.foreign', { path: shortPath(projects.selected) }))
+      : null,
+    viewStale
+      ? h('span', { className: css.notice, role: 'status' }, t('settings.memory.project.stale'))
+      : null)
+
+  // 注入量：宿主真引擎算出来的三个数。没有会话就不显示（读不到项目根）。
+  let injectRow = null
+  if (sessionId && inject) {
+    if (inject.error) injectRow = h('p', { className: css.notice }, t('settings.memory.inject.failed', { message: inject.error }))
+    else {
+      injectRow = h('p', { className: css.usage, 'data-kind': 'inject' },
+        h('span', null, t('settings.memory.inject.line', {
+          chars: String(inject.chars),
+          tokens: String(inject.estTokens),
+          limit: String(inject.limitChars),
+          percent: String(inject.percent ?? 0),
+          pool: String(inject.poolChars),
+          count: String(inject.poolItems),
+        })),
+        h('span', { className: css.usageBar },
+          h('span', {
+            className: css.usageFill,
+            style: { width: `${inject.percent ?? 0}%` },
+          })))
+    }
+  }
+
+  return h('div', null,
+    h('h4', { className: css.group }, t('settings.memory.section')),
+    h('p', { className: css.hint }, t('settings.memory.hint')),
+    projectRow,
+    injectRow,
+    h('div', { className: css.toolbar },
+      tabs,
+      h('button', {
+        type: 'button',
+        className: css.dialogBtn,
+        disabled: !sessionId || state.loading,
+        onClick: () => { setRefreshTick((n) => n + 1) },
+      }, state.loading ? t('settings.memory.loadingShort') : t('settings.memory.refresh'))),
+    h('p', { className: css.usage, 'data-scope': scope },
+      h('span', null, usageText),
+      capacity === null
+        ? null
+        : h('span', { className: css.usageBar },
+          h('span', {
+            className: css.usageFill,
+            'data-warn': stats.ratio !== null && stats.ratio >= 0.9 ? 'true' : undefined,
+            style: { width: `${percent ?? 0}%` },
+          }))),
+    body,
+    truncated
+      ? h('p', { className: css.invEmpty }, t('settings.memory.truncated', {
+        shown: String(stats.shown), total: String(stats.used),
+      }))
+      : null)
+}
+
+/**
+ * 记忆规模：**只画一行** —— 单轮注入预算。
+ *
+ * 其余规模字段（两层容量、常驻条数、两个保险丝、主题门控）仍在表单里被读写，只是不上界面：
+ * 判断标准见 `MEMORY_SCALE_VISIBLE_FIELDS` 的头注释。表单一格不改的直接后果是这一页只剩
+ * 一个数字框，保存、脏判定、范围校验仍然走同一套 nested-form 管线。
+ */
+function ScaleRows(props) {
+  const { t, scale, disabled, editScale } = props
+  const rows = []
+  for (const field of MEMORY_SCALE_VISIBLE_FIELDS) {
+    // 区间与单位取**显示单位**那张表：预算在界面上是字符（= 引擎硬上限），配置里是 token。
+    // 保存校验仍走 `MEMORY_SCALE_LIMITS`，两处差一个 `BUDGET_CHARS_PER_TOKEN`。
+    const widget = MEMORY_SCALE_WIDGET[field]
+    const unitKey = widget.unit === 'chars'
+      ? 'settings.memory.unit.chars'
+      : widget.unit === 'items'
+        ? 'settings.memory.unit.items'
+        : 'settings.memory.unit.tokens'
+    rows.push(h(SettingRow, {
+      key: field,
+      title: t(`settings.memory.scale.${field}.title`),
+      hint: t(`settings.memory.scale.${field}.hint`),
+    },
+    h('input', {
+      className: css.number,
+      type: 'number',
+      min: widget.min,
+      max: widget.max,
+      step: widget.step,
+      inputMode: 'numeric',
+      'aria-label': t(`settings.memory.scale.${field}.title`),
+      value: scale.fields[field]?.text ?? '',
+      disabled,
+      'aria-invalid': scale.fields[field]?.invalid || undefined,
+      onChange: (event) => { editScale(field, event.target.value) },
+    }),
+    h('span', { className: css.unit }, t(unitKey))))
+  }
+  // 枚举字段同样按可见表过滤：当前没有可见的枚举（主题门控已从界面撤下），过滤是唯一的
+  // 筛选点 —— 将来把哪一格放回界面，只改 MEMORY_SCALE_VISIBLE_FIELDS，这里不用动。
+  for (const field of MEMORY_ENUM_FIELDS.filter((name) => MEMORY_SCALE_VISIBLE_FIELDS.includes(name))) {
+    const options = field === 'topicGate' ? TOPIC_GATE_VALUES : []
+    rows.push(h(SettingRow, {
+      key: field,
+      title: t(`settings.memory.${field}.title`),
+      hint: t(`settings.memory.${field}.note`),
+    },
+    h('select', {
+      className: css.select,
+      'aria-label': t(`settings.memory.${field}.title`),
+      value: scale.fields[field]?.text ?? '',
+      disabled,
+      'aria-invalid': scale.fields[field]?.invalid || undefined,
+      onChange: (event) => { editScale(field, event.target.value) },
+    }, ...options.map((value) => h('option', { key: value, value }, t(`settings.memory.${field}.value.${value}`))))))
+  }
+  return h('div', null,
+    h('h4', { className: css.group }, t('settings.memory.scale.section')),
+    ...rows)
+}
 
 /** 渲染设置页。 */
 function MemorySettingsSection(props) {
@@ -3423,14 +4925,19 @@ function MemorySettingsSection(props) {
   // 离开这一页时丢掉未保存的草稿（与宿主设置表单的约定一致）。
   useEffect(() => () => { discard?.() }, [discard])
   const editNotes = props.editNotes
+  const editScale = props.editScale
   const save = props.save
   const disabled = !state.writable || state.saving
   // 笔记那段的状态活在独立表单里（嵌套路径），缺宿主命名空间时回退到占位形状。
   const notes = state.notes ?? UNAVAILABLE_STATE.notes
+  const scale = state.scale ?? UNAVAILABLE_STATE.scale
   const notesDisabled = disabled || !notes.available || !notes.writable
+  const scaleDisabled = disabled || !scale.available || !scale.writable
   const notesOn = (field) => notes.fields[field]?.text === 'true'
   const editNote = (field, text) => { editNotes?.(field, text) }
-  const notesPath = notes.fields.repo.text.trim()
+  // 逐字段可选链：宿主给的 notes 快照可能只带部分键（命名空间存在但没暴露这些子字段），
+  // 直接 `notes.fields.repo.text` 会在渲染期 TypeError，整页白屏。
+  const notesPath = (notes.fields.repo?.text ?? '').trim()
   // 三种状态必须分开说：没配、配了但关掉、开着。只按"路径是否为空"判断会让关掉之后
   // 页面继续写「已启用」——那种自相矛盾的提示比不显示更糟。
   const notesStatus = !notes.available
@@ -3524,9 +5031,9 @@ function MemorySettingsSection(props) {
           autoComplete: 'off',
           placeholder: t('settings.notes.repo.placeholder'),
           'aria-label': t('settings.notes.repo.title'),
-          value: notes.fields.repo.text,
+          value: notes.fields.repo?.text ?? '',
           disabled: notesDisabled,
-          'aria-invalid': notes.fields.repo.invalid || undefined,
+          'aria-invalid': notes.fields.repo?.invalid || undefined,
           onChange: (event) => { editNote('repo', event.target.value) },
         }),
         canPick
@@ -3543,6 +5050,10 @@ function MemorySettingsSection(props) {
   const body = state.available
     ? h('div', null,
         !state.writable ? h('p', { className: css.notice }, t('settings.form.readOnly')) : null,
+        // ---- 记忆清单（只读）-----------------------------------------------
+        h(InventoryPanel, { ctx: props.ctx, t, scale }),
+        // ---- 记忆规模（可写）-----------------------------------------------
+        h(ScaleRows, { t, scale, disabled: scaleDisabled, editScale }),
         // ---- 笔记检索 ------------------------------------------------------
         h('h4', { className: css.group }, t('settings.notes.section')),
         h('p', { className: notes.available ? css.status : css.notice }, notesStatus),
@@ -3574,9 +5085,9 @@ function MemorySettingsSection(props) {
             step: 500,
             inputMode: 'numeric',
             'aria-label': t('settings.notes.timeout.title'),
-            value: notes.fields.timeoutMs.text,
+            value: notes.fields.timeoutMs?.text ?? '',
             disabled: notesDisabled,
-            'aria-invalid': notes.fields.timeoutMs.invalid || undefined,
+            'aria-invalid': notes.fields.timeoutMs?.invalid || undefined,
             onChange: (event) => { editNote('timeoutMs', event.target.value) },
           }),
           h('span', { className: css.unit }, t('settings.notes.unit.ms'))),
@@ -3602,7 +5113,7 @@ function MemorySettingsSection(props) {
   canPick
     ? h(NotesDirectoryDialog, {
       open: pickerOpen,
-      value: notes.fields.repo.text,
+      value: notes.fields.repo?.text ?? '',
       directory: props.directory,
       t,
       onPick: (picked) => { editNote('repo', picked) },
@@ -3692,6 +5203,8 @@ function mountSettingsSection(scope, root) {
   const controller = new SettingsSectionController(
     configForms.get(SETTINGS_ENTRY_ID),
     directoryAccess(root),
+    // 记忆清单要读会话列表与命令通道：这两项都在根 ctx 上，不在本 scope 的子集里。
+    root,
   )
   keep(() => controller.dispose())
   keep(slots.inject('settings.section', () => slots.register({
@@ -3713,6 +5226,8 @@ function mountSettingsSection(scope, root) {
 
 /** 图标兜底尺寸。 */
 const SIZE = 16
+    __exports.inventoryDetail = inventoryDetail;
+    __exports.InventoryRow = InventoryRow;
     __exports.MemorySettingsSection = MemorySettingsSection;
     __exports.settingsSectionIcon = settingsSectionIcon;
     __exports.registerSettingsSection = registerSettingsSection;
@@ -3869,9 +5384,17 @@ function createSlashSource(ctx, deps) {
 
 const PANEL_CSS = ".i54Wjq_panel{pointer-events:auto;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,#fff));border:1px solid var(--dsw-alias-border-l2,#7f7f7f4d);border-radius:14px;flex-direction:column;width:380px;max-width:calc(100vw - 24px);max-height:min(70vh,640px);font-family:inherit;animation:.18s ease-out i54Wjq_panelIn;display:flex;position:fixed;overflow:hidden;box-shadow:0 12px 32px #00000029,0 2px 8px #00000014}@keyframes i54Wjq_panelIn{0%{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}.i54Wjq_dragHandle{cursor:grab;z-index:1;justify-content:center;align-items:center;height:12px;display:flex;position:absolute;top:0;left:0;right:0}.i54Wjq_dragHandle:active{cursor:grabbing}.i54Wjq_handleGrip{background:var(--dsw-alias-separator-primary,#7f7f7f59);opacity:.8;border-radius:2px;width:32px;height:3px}.i54Wjq_header{border-bottom:1px solid var(--dsw-alias-border-l1,#7f7f7f2e);-webkit-user-select:none;user-select:none;justify-content:space-between;align-items:center;gap:8px;padding:10px 10px 8px 14px;display:flex}.i54Wjq_headerLeft{align-items:center;gap:6px;min-width:0;display:flex}.i54Wjq_headerIcon{color:var(--dsw-alias-label-secondary);flex:none}.i54Wjq_headerTitle{color:var(--dsw-alias-label-primary);white-space:nowrap;margin:0;font-size:13px;font-weight:600;line-height:20px}.i54Wjq_headerRight{align-items:center;gap:2px;margin-left:auto;display:flex}.i54Wjq_hintsOff{opacity:.45}.i54Wjq_hintsOff:hover{opacity:.75}.i54Wjq_counts{color:var(--dsw-alias-label-tertiary);white-space:nowrap;margin-right:4px;font-size:11px;line-height:16px}.i54Wjq_boundBadge{color:var(--dsw-alias-label-primary-foreground,#fff);background:var(--dsw-alias-button-primary-fill,#3a6ef5);white-space:nowrap;border-radius:7px;flex:none;padding:0 6px;font-size:10px;line-height:14px}.i54Wjq_notice{color:var(--dsw-alias-state-warn-label,#b7791f);background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1a);word-break:break-all;border-radius:8px;margin:8px 12px 0;padding:6px 10px;font-size:12px;line-height:18px}.i54Wjq_taskList{scrollbar-width:thin;scrollbar-color:var(--dsw-alias-scrollbar-bg-l2,transparent) transparent;flex-direction:column;gap:6px;padding:8px;display:flex;overflow-y:auto}.i54Wjq_emptyState{text-align:center;color:var(--dsw-alias-label-secondary);padding:36px 24px 30px}.i54Wjq_emptyTitle{color:var(--dsw-alias-label-primary);margin:0 0 6px;font-size:13px;font-weight:600}.i54Wjq_emptyDesc{color:var(--dsw-alias-label-tertiary);margin:0;font-size:12px;line-height:20px}.i54Wjq_syncHint{color:var(--dsw-alias-label-dimmed);justify-content:center;align-items:center;gap:6px;margin:10px 0 0;font-size:11px;display:flex}.i54Wjq_card{border:1px solid var(--dsw-alias-border-l1,#7f7f7f29);background:var(--dsw-alias-bg-base,transparent);content-visibility:auto;contain-intrinsic-size:auto 140px;border-radius:10px;transition:border-color .15s;overflow:hidden}.i54Wjq_cardBound{border-color:var(--dsw-alias-border-l3,#7f7f7f59);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3,transparent)}.i54Wjq_cardHead{cursor:pointer;text-align:left;background:0 0;border:none;justify-content:space-between;align-items:center;gap:8px;width:100%;padding:8px 10px 7px;display:flex}.i54Wjq_cardHead:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.i54Wjq_cardTitleRow{align-items:center;gap:6px;min-width:0;display:flex}.i54Wjq_cardTitle{color:var(--dsw-alias-label-primary);white-space:nowrap;text-overflow:ellipsis;font-size:13px;font-weight:500;line-height:20px;overflow:hidden}.i54Wjq_cardMeta{color:var(--dsw-alias-label-tertiary);flex:none;align-items:center;gap:8px;display:flex}.i54Wjq_progressText{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:16px}.i54Wjq_updated{color:var(--dsw-alias-label-dimmed);font-size:10px;line-height:14px}.i54Wjq_chevron{color:var(--dsw-alias-label-tertiary);display:inline-flex}.i54Wjq_track{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1f);border-radius:1px;height:2px;margin:0 10px 6px;overflow:hidden}.i54Wjq_trackFill{background:var(--dsw-alias-label-primary-bluish,var(--dsw-alias-button-primary-fill,#3a6ef5));border-radius:1px;height:100%;transition:width .2s}.i54Wjq_cardBody{border-top:1px solid var(--dsw-alias-border-l1,#7f7f7f24);overscroll-behavior:contain;max-height:300px;padding:8px 10px 10px;overflow-y:auto}.i54Wjq_section{margin-bottom:8px}.i54Wjq_section:last-child{margin-bottom:0}.i54Wjq_sectionLabel{color:var(--dsw-alias-label-secondary);align-items:center;gap:6px;margin-bottom:4px;font-size:11px;line-height:16px;display:flex}.i54Wjq_sectionCount{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1a);color:var(--dsw-alias-label-tertiary);border-radius:6px;padding:0 5px;font-size:10px;line-height:14px}.i54Wjq_stepsList{flex-direction:column;gap:1px;margin:0;padding:0;list-style:none;display:flex}.i54Wjq_stepRow{align-items:flex-start;gap:7px;padding:3px 2px;display:flex}.i54Wjq_stepRow>svg{flex:none;margin-top:2px}.i54Wjq_stepDone{color:var(--dsw-alias-label-dimmed)}.i54Wjq_stepRun{color:var(--dsw-alias-label-primary-bluish,#3a6ef5)}.i54Wjq_stepPending{background:var(--dsw-alias-border-l3,#7f7f7f80);border-radius:50%;flex:none;width:8px;height:8px;margin:5px 3px}.i54Wjq_stepContent{color:var(--dsw-alias-label-secondary);word-break:break-word;white-space:pre-wrap;font-size:12px;line-height:20px}.i54Wjq_stepContentDone{color:var(--dsw-alias-label-dimmed);text-decoration:line-through}.i54Wjq_stepContentRun{color:var(--dsw-alias-label-primary)}.i54Wjq_muted{color:var(--dsw-alias-label-dimmed);font-size:11px;line-height:18px}.i54Wjq_filesList{flex-direction:column;margin:0;padding:0;list-style:none;display:flex}.i54Wjq_fileRow{cursor:pointer;text-align:left;background:0 0;border:none;border-radius:6px;align-items:center;gap:6px;width:100%;padding:3px 4px;display:flex}.i54Wjq_fileRow:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.i54Wjq_fileDot{background:var(--dsw-alias-border-l3,#7f7f7f80);border-radius:50%;flex:none;width:5px;height:5px}.i54Wjq_filePath{color:var(--dsw-alias-label-secondary);white-space:nowrap;text-overflow:ellipsis;text-align:left;direction:rtl;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:11px;line-height:18px;overflow:hidden}.i54Wjq_fileLine{color:var(--dsw-alias-label-dimmed);flex:none;font-size:10px;line-height:18px}.i54Wjq_cardFooter{gap:6px;margin-top:8px;display:flex}@media (prefers-reduced-motion:reduce){.i54Wjq_panel{animation:none}.i54Wjq_trackFill,.i54Wjq_card{transition:none}}.i54Wjq_miniBar{border:1px solid var(--dsw-alias-border-l3,#7f7f7f4d);background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,#fff));max-width:min(46vw,340px);height:34px;color:var(--dsw-alias-label-primary);cursor:grab;-webkit-user-select:none;user-select:none;pointer-events:auto;border-radius:999px;align-items:center;gap:7px;padding:0 12px;font-size:12px;line-height:18px;transition:background .15s,border-color .15s;display:inline-flex;position:fixed;box-shadow:0 6px 20px #00000024,0 1px 4px #00000014}.i54Wjq_miniBar:active{cursor:grabbing}.i54Wjq_miniBar:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.i54Wjq_miniIcon{color:var(--dsw-alias-label-secondary);flex:none}.i54Wjq_miniText{white-space:nowrap;text-overflow:ellipsis;overflow:hidden}.i54Wjq_miniChevron{color:var(--dsw-alias-label-tertiary);flex:none}.i54Wjq_taskList{flex:auto;min-height:0}.i54Wjq_card{flex-direction:column;display:flex}.i54Wjq_boundaryFallback{border:1px solid var(--dsw-alias-border-l3,#7f7f7f4d);background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-secondary);cursor:pointer;pointer-events:auto;border-radius:999px;padding:4px 10px;font-size:12px;line-height:18px;position:fixed;top:64px;right:16px}.i54Wjq_stepToggle{cursor:pointer;background:0 0;border:none;border-radius:4px;flex:none;align-items:center;margin-top:2px;padding:0;display:inline-flex}.i54Wjq_stepToggle:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1f)}.i54Wjq_stepToggle:disabled{cursor:default;opacity:.5}.i54Wjq_stepEditable{cursor:text;border-radius:3px}.i54Wjq_stepEditable:hover{outline:1px dashed var(--dsw-alias-border-l3,#7f7f7f66);outline-offset:1px}.i54Wjq_stepInput{box-sizing:border-box;width:auto;min-width:0;font:inherit;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base,transparent);border:1px solid var(--dsw-alias-border-l3,#7f7f7f73);border-radius:5px;flex:auto;padding:0 5px;font-size:12px;line-height:20px}.i54Wjq_editorArea{box-sizing:border-box;min-width:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-base,transparent);border:1px solid var(--dsw-alias-border-l3,#7f7f7f73);resize:none;vertical-align:middle;cursor:text;white-space:pre-wrap;word-break:break-word;border-radius:5px;flex:1;margin:0;padding:2px 5px;font-family:inherit;font-size:12px;line-height:20px;overflow:hidden}.i54Wjq_editorArea:focus{border-color:var(--dsw-alias-border-l3,#7f7f7f99);outline:none}.i54Wjq_stepDragging{opacity:.3;background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.i54Wjq_cardTitleEditable{cursor:text;border-radius:3px}.i54Wjq_cardTitleEditable:hover{outline:1px dashed var(--dsw-alias-border-l3,#7f7f7f66);outline-offset:1px}.i54Wjq_panel[data-theme=glass],.i54Wjq_miniBar[data-theme=glass]{background:color-mix(in srgb, var(--dsw-alias-bg-layer-2,#fff) 90%, transparent);-webkit-backdrop-filter:blur(18px)saturate(1.2);border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#7f7f7f4d) 80%, transparent)}.i54Wjq_panel[data-theme=glass] .i54Wjq_card{background:color-mix(in srgb, var(--dsw-alias-bg-base,transparent) 84%, transparent);border-color:color-mix(in srgb, var(--dsw-alias-border-l1,#7f7f7f29) 60%, transparent)}.i54Wjq_panel[data-theme=glass] .i54Wjq_cardBody{border-top-color:color-mix(in srgb, var(--dsw-alias-border-l1,#7f7f7f24) 60%, transparent)}@media (prefers-reduced-transparency:reduce){.i54Wjq_panel[data-theme=glass],.i54Wjq_miniBar[data-theme=glass]{background:var(--dsw-alias-bg-layer-2,#fff);-webkit-backdrop-filter:none;backdrop-filter:none}.i54Wjq_panel[data-theme=glass] .i54Wjq_card{background:var(--dsw-alias-bg-base,transparent)}}@supports not ((-webkit-backdrop-filter:blur(1px)) or (backdrop-filter:blur(1px))){.i54Wjq_panel[data-theme=glass],.i54Wjq_miniBar[data-theme=glass]{background:var(--dsw-alias-bg-layer-2,#fff)}}.i54Wjq_panel[data-theme=brutal]{box-shadow:none;border-width:1px;border-radius:6px}.i54Wjq_panel[data-theme=brutal] .i54Wjq_card{border:1px solid var(--dsw-alias-border-l3,#7f7f7f6b);background:var(--dsw-alias-bg-base,transparent);box-shadow:none;border-radius:3px}.i54Wjq_panel[data-theme=brutal] .i54Wjq_cardHead{padding:7px 10px 6px}.i54Wjq_panel[data-theme=brutal] .i54Wjq_cardTitle{letter-spacing:.01em;font-weight:650}.i54Wjq_panel[data-theme=brutal] .i54Wjq_headerTitle{letter-spacing:.03em}.i54Wjq_panel[data-theme=brutal] .i54Wjq_boundBadge{border-radius:2px}.i54Wjq_panel[data-theme=brutal] .i54Wjq_track{border-radius:0;height:3px}.i54Wjq_panel[data-theme=brutal] .i54Wjq_trackFill{border-radius:0}.i54Wjq_panel[data-theme=brutal] .i54Wjq_cardBody{border-top:1px solid var(--dsw-alias-border-l2,#7f7f7f3d)}.i54Wjq_panel[data-theme=mono] .i54Wjq_headerTitle,.i54Wjq_panel[data-theme=mono] .i54Wjq_counts,.i54Wjq_panel[data-theme=mono] .i54Wjq_cardTitle,.i54Wjq_panel[data-theme=mono] .i54Wjq_progressText,.i54Wjq_panel[data-theme=mono] .i54Wjq_stepContent,.i54Wjq_panel[data-theme=mono] .i54Wjq_filePath{font-family:ui-monospace,SF Mono,Menlo,Consolas,Liberation Mono,monospace}.i54Wjq_panel[data-theme=mono] .i54Wjq_cardTitle{font-size:12px}.i54Wjq_panel[data-theme=mono] .i54Wjq_stepContent{font-size:11.5px}.i54Wjq_panel[data-theme=mono] .i54Wjq_card{border-radius:5px}.i54Wjq_panel[data-theme=mono] .i54Wjq_trackFill{border-radius:0}.i54Wjq_panel[data-theme=mono] .i54Wjq_stepPending{border-radius:1px}.i54Wjq_panel[data-theme=mono] .i54Wjq_updated{letter-spacing:.02em}.i54Wjq_headerIconBtn{color:inherit;cursor:pointer;background:0 0;border:none;border-radius:0;flex:none;justify-content:center;align-items:center;margin:0;padding:0;display:inline-flex}.i54Wjq_headerIcon{color:var(--dsw-alias-label-secondary);flex:none;display:block}.i54Wjq_headerLeft{min-width:0}.i54Wjq_headerTitle{text-overflow:ellipsis;flex:0 auto;min-width:0;overflow:hidden}.i54Wjq_headerRight{min-width:0}.i54Wjq_counts{text-overflow:ellipsis;flex:none;max-width:45%;margin-left:auto;overflow:hidden}.i54Wjq_dragGhost{pointer-events:none;z-index:9999;transition:left 50ms,top 50ms;position:fixed;transform:translate(-50%,-50%)}.i54Wjq_dragGhostCard{background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base,#fff));border:1px solid var(--dsw-alias-border-l3,#7f7f7f59);color:var(--dsw-alias-label-primary);white-space:nowrap;border-radius:8px;align-items:center;gap:8px;max-width:280px;padding:8px 12px;font-size:12px;line-height:20px;display:inline-flex;transform:scale(.9);box-shadow:0 8px 24px #0000002e,0 2px 8px #0000001a}.i54Wjq_dragGhostContent{text-overflow:ellipsis;word-break:break-word;flex:1;min-width:0;overflow:hidden}.i54Wjq_dragGhostClose{width:20px;height:20px;color:var(--dsw-alias-label-tertiary);cursor:pointer;opacity:.6;background:0 0;border:none;border-radius:4px;flex:none;justify-content:center;align-items:center;margin-left:8px;font-size:16px;line-height:1;transition:opacity .15s,background .15s,color .15s;display:inline-flex}.i54Wjq_dragGhostClose:hover{opacity:1;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1f)}.i54Wjq_dropTargetBefore{position:relative}.i54Wjq_dropTargetBefore:before{content:\"\";background:var(--dsw-alias-button-primary-fill,#3a6ef5);height:2px;box-shadow:0 0 4px var(--dsw-alias-button-primary-fill,#3a6ef5);border-radius:1px;animation:.8s ease-in-out infinite i54Wjq_dropPulse;position:absolute;top:-1px;left:0;right:0}.i54Wjq_dropTargetAfter{position:relative}.i54Wjq_dropTargetAfter:after{content:\"\";background:var(--dsw-alias-button-primary-fill,#3a6ef5);height:2px;box-shadow:0 0 4px var(--dsw-alias-button-primary-fill,#3a6ef5);border-radius:1px;animation:.8s ease-in-out infinite i54Wjq_dropPulse;position:absolute;bottom:-1px;left:0;right:0}@keyframes i54Wjq_dropPulse{0%,to{opacity:.6}50%{opacity:1}}.i54Wjq_memoryPane{flex-direction:column;gap:6px;max-height:480px;padding:8px 10px 10px;display:flex;overflow:auto}.i54Wjq_memToolbar{justify-content:space-between;align-items:center;gap:8px;display:flex}.i54Wjq_memCount{opacity:.75;font-size:12px;font-weight:600}.i54Wjq_memList{flex-direction:column;gap:6px;display:flex}.i54Wjq_memSentinel{flex:none;height:1px}.i54Wjq_memFooter{flex-direction:column;align-items:center;gap:4px;padding:6px 0 2px;font-size:12px;display:flex}.i54Wjq_memRow{border:1px solid var(--dsw-border-weak,#80808040);background:color-mix(in srgb, var(--dsw-bg-secondary,#f5f5f5) 45%, transparent);content-visibility:auto;contain-intrinsic-size:auto 76px;border-radius:6px;flex-direction:column;gap:4px;padding:6px 8px;display:flex}.i54Wjq_memRowArchived{opacity:.55}.i54Wjq_memRowMain{flex-direction:column;gap:2px;display:flex}.i54Wjq_memTitle{word-break:break-word;align-items:flex-start;gap:6px;font-size:13px;line-height:1.35;display:flex}.i54Wjq_kindBadge{background:var(--dsw-accent-soft,#5078ff26);color:var(--dsw-accent,#4d6bfe);border-radius:4px;flex:none;padding:0 5px;font-size:11px;line-height:1.5}.i54Wjq_memMeta{flex-wrap:wrap;align-items:center;gap:4px;display:flex}.i54Wjq_badge{background:color-mix(in srgb, var(--dsw-fg,#222) 8%, transparent);border-radius:4px;padding:0 5px;font-size:11px;line-height:1.5}.i54Wjq_badgeDraft{color:#b26a00;background:#ffb40029}.i54Wjq_badgeArchived{opacity:.8}.i54Wjq_memBody{opacity:.8;word-break:break-word;font-size:12px}.i54Wjq_memActs{flex-wrap:wrap;gap:4px;display:flex}.i54Wjq_memToolbarActs{align-items:center;gap:6px;display:flex}.i54Wjq_memNew{border:1px solid var(--dsw-border-weak,#80808040);border-radius:6px;flex-direction:column;gap:6px;padding:8px;display:flex}.i54Wjq_memNewRow{align-items:center;gap:8px;display:flex}.i54Wjq_memLabel{opacity:.8;align-items:center;gap:6px;font-size:12px;display:inline-flex}.i54Wjq_memNew select,.i54Wjq_memNew textarea{box-sizing:border-box;width:100%}";
 const CMD_CSS = "._9r5h7a_row{max-width:100%;color:var(--dsw-alias-label-tertiary);white-space:nowrap;text-overflow:ellipsis;align-items:center;gap:6px;padding:2px 0;font-size:12px;line-height:20px;display:inline-flex;overflow:hidden}._9r5h7a_row[data-variant=ok]{color:var(--dsw-alias-label-secondary)}._9r5h7a_row[data-variant=error]{color:var(--dsw-alias-state-warn-label,#b7791f)}._9r5h7a_row[data-variant=running]{color:var(--dsw-alias-label-dimmed)}._9r5h7a_icon{color:var(--dsw-alias-label-tertiary);flex:none}";
-const SETTINGS_CSS = ".dshpm-page{display:flex;flex-direction:column;max-width:720px;color:var(--dsw-alias-label-primary,#1f2328)}.dshpm-title{margin:0;font-size:18px;font-weight:600;line-height:26px}.dshpm-intro{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:2px 0 4px;font-size:13px;line-height:20px}.dshpm-group{color:var(--dsw-alias-label-secondary,#6b7280);margin:16px 0 2px;font-size:12px;font-weight:600;line-height:18px}.dshpm-row{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:center;gap:12px;padding:10px 0;display:flex}.dshpm-group+.dshpm-row,.dshpm-status+.dshpm-row{border-top:0}.dshpm-labelBox{flex-direction:column;flex:1;gap:3px;min-width:0;display:flex}.dshpm-label{font-size:13px;line-height:20px}.dshpm-hint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}.dshpm-control{flex:none;align-items:center;gap:6px;display:flex}.dshpm-number{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);width:84px;font:inherit;color:var(--dsw-alias-label-primary,#1f2328);text-align:right;border-radius:7px;padding:6px 8px;font-size:12px;line-height:18px}.dshpm-number:disabled{opacity:.5;cursor:default}.dshpm-number:focus{border-color:var(--dsw-alias-brand-primary,#4f6ef7);outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 18%,transparent)}.dshpm-number[aria-invalid=true]{border-color:var(--dsw-alias-state-error-primary,#dc2626)}.dshpm-text{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);width:220px;font:inherit;color:var(--dsw-alias-label-primary,#1f2328);border-radius:7px;padding:6px 8px;font-size:12px;line-height:18px}.dshpm-text::placeholder{color:var(--dsw-alias-label-tertiary,#8b93a1)}.dshpm-text:disabled{opacity:.5;cursor:default}.dshpm-text:focus{border-color:var(--dsw-alias-brand-primary,#4f6ef7);outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 18%,transparent)}.dshpm-text[aria-invalid=true]{border-color:var(--dsw-alias-state-error-primary,#dc2626)}.dshpm-unit{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}.dshpm-repoValue{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-module-platform,#f5f6f8);max-width:260px;color:var(--dsw-alias-label-primary,#1f2328);white-space:nowrap;text-overflow:ellipsis;border-radius:7px;padding:6px 8px;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:12px;line-height:18px;overflow:hidden}.dshpm-repoValue[data-empty=true]{color:var(--dsw-alias-label-tertiary,#8b93a1);font-family:inherit}.dshpm-linkBtn{cursor:pointer;border:0;background:0 0;color:var(--dsw-alias-brand-primary,#4f6ef7);white-space:nowrap;border-radius:6px;padding:4px 2px;font:inherit;font-size:12px;line-height:18px}.dshpm-linkBtn:hover{text-decoration:underline}.dshpm-linkBtn:disabled{cursor:default;opacity:.5;text-decoration:none}.dshpm-dialogMask{background:#00000052;z-index:9000;justify-content:center;align-items:center;padding:24px;display:flex;position:fixed;inset:0}.dshpm-dialog{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-2,#fff);border-radius:14px;flex-direction:column;width:min(560px,100%);max-height:min(72vh,600px);display:flex;overflow:hidden;box-shadow:0 18px 48px #00000033,0 2px 10px #0000001a}.dshpm-dialogHead{border-bottom:1px solid var(--dsw-alias-border-l1,#eceef2);flex:none;justify-content:space-between;align-items:center;gap:8px;padding:12px 14px;display:flex}.dshpm-dialogTitle{color:var(--dsw-alias-label-primary,#1f2328);font-size:14px;font-weight:600;line-height:20px}.dshpm-dialogClose{cursor:pointer;border:0;background:0 0;color:var(--dsw-alias-label-tertiary,#8b93a1);border-radius:6px;justify-content:center;align-items:center;width:24px;height:24px;font-size:18px;line-height:1;display:inline-flex}.dshpm-dialogClose:hover{color:var(--dsw-alias-label-primary,#1f2328);background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-crumbs{overscroll-behavior:contain;flex-wrap:wrap;flex:none;align-items:center;gap:2px;padding:8px 12px;display:flex;overflow-x:auto}.dshpm-crumb{cursor:pointer;border:0;background:0 0;color:var(--dsw-alias-brand-primary,#4f6ef7);white-space:nowrap;border-radius:6px;padding:2px 5px;font:inherit;font-size:12px;line-height:18px}.dshpm-crumb:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-crumbCurrent{cursor:default;border:0;background:0 0;color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;border-radius:6px;padding:2px 5px;font:inherit;font-size:12px;font-weight:600;line-height:18px}.dshpm-directoryList{overscroll-behavior:contain;border-top:1px solid var(--dsw-alias-border-l1,#eceef2);flex:1;min-height:140px;padding:6px;overflow-y:auto}.dshpm-directoryRow{cursor:pointer;text-align:left;border:0;background:0 0;color:var(--dsw-alias-label-primary,#1f2328);border-radius:7px;align-items:center;gap:8px;width:100%;padding:6px 8px;font:inherit;font-size:13px;line-height:20px;display:flex}.dshpm-directoryRow:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-directoryRowHidden{cursor:pointer;text-align:left;border:0;background:0 0;color:var(--dsw-alias-label-secondary,#6b7280);opacity:.6;border-radius:7px;align-items:center;gap:8px;width:100%;padding:6px 8px;font:inherit;font-size:13px;line-height:20px;display:flex}.dshpm-directoryRowHidden:hover{opacity:.9;background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-directoryIcon{flex:none;width:16px;font-size:12px;line-height:16px}.dshpm-directoryName{white-space:nowrap;text-overflow:ellipsis;flex:1;min-width:0;overflow:hidden}.dshpm-dialogNote{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0;padding:12px;font-size:12px;line-height:18px}.dshpm-dialogError{color:var(--dsw-alias-label-error,#dc2626);word-break:break-word;margin:0;padding:12px;font-size:12px;line-height:18px}.dshpm-dialogFoot{border-top:1px solid var(--dsw-alias-border-l1,#eceef2);background:var(--dsw-alias-bg-layer-2,#fff);flex:none;align-items:center;gap:8px;padding:10px 12px;display:flex}.dshpm-dialogPath{color:var(--dsw-alias-label-tertiary,#8b93a1);white-space:nowrap;text-overflow:ellipsis;flex:1;min-width:0;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:11px;line-height:16px;overflow:hidden}.dshpm-dialogBtn{cursor:pointer;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);color:var(--dsw-alias-label-primary,#1f2328);white-space:nowrap;border-radius:7px;padding:5px 12px;font:inherit;font-size:12px;line-height:18px}.dshpm-dialogBtn:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-dialogBtnPrimary{cursor:pointer;border:1px solid var(--dsw-alias-button-primary-fill,#3a6ef5);background:var(--dsw-alias-button-primary-fill,#3a6ef5);color:var(--dsw-alias-label-primary-foreground,#fff);white-space:nowrap;border-radius:7px;padding:5px 12px;font:inherit;font-size:12px;line-height:18px}.dshpm-dialogBtnPrimary:disabled{cursor:default;opacity:.5}.dshpm-status{color:var(--dsw-alias-label-secondary,#6b7280);margin:4px 0 0;font-size:12px;line-height:18px}.dshpm-actions{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);justify-content:flex-end;align-items:center;gap:8px;margin-top:16px;padding-top:12px;display:flex}.dshpm-unsaved{color:var(--dsw-alias-label-secondary,#6b7280);background:var(--dsw-alias-bg-module-platform,#eef0f4);border-radius:9px;padding:0 6px;font-size:11px;font-weight:600;line-height:17px}.dshpm-failed{min-width:0;color:var(--dsw-alias-label-error,#dc2626);flex:1;margin:0;font-size:12px;line-height:18px}.dshpm-notice{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:4px 0 0;font-size:12px;line-height:18px}";
+/**
+ * 「看哪个项目」下拉框的样式（追加在设置页那份 CSS 之后）。
+ *
+ * 它是这一页唯一一个"选项文本可能很长"的控件（项目名 + 路径尾巴），所以宽度不能沿用
+ * `select` 那套 110px 定宽：可伸缩、上限 340px，完整路径放在 `title` 里。
+ */
+const PROJECT_SELECT_CSS = ".dshpm-projectSelect{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);max-width:340px;min-width:180px;font:inherit;color:var(--dsw-alias-label-primary,#1f2328);border-radius:7px;padding:6px 8px;font-size:12px;line-height:18px}.dshpm-projectSelect:disabled{opacity:.5;cursor:default}.dshpm-projectSelect:focus{border-color:var(--dsw-alias-brand-primary,#4f6ef7);outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 18%,transparent)}";
 
-const TAG_PREFIX = "@local/dsh-turn-cost/memory";
+const SETTINGS_CSS = ".dshpm-page{display:flex;flex-direction:column;max-width:720px;color:var(--dsw-alias-label-primary,#1f2328)}.dshpm-title{margin:0;font-size:18px;font-weight:600;line-height:26px}.dshpm-intro{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:2px 0 4px;font-size:13px;line-height:20px}.dshpm-group{color:var(--dsw-alias-label-secondary,#6b7280);margin:16px 0 2px;font-size:12px;font-weight:600;line-height:18px}.dshpm-row{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);align-items:center;gap:12px;padding:10px 0;display:flex}.dshpm-group+.dshpm-row,.dshpm-status+.dshpm-row{border-top:0}.dshpm-labelBox{flex-direction:column;flex:1;gap:3px;min-width:0;display:flex}.dshpm-label{font-size:13px;line-height:20px}.dshpm-hint{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}.dshpm-control{flex:none;align-items:center;gap:6px;display:flex}.dshpm-number{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);width:84px;font:inherit;color:var(--dsw-alias-label-primary,#1f2328);text-align:right;border-radius:7px;padding:6px 8px;font-size:12px;line-height:18px}.dshpm-number:disabled{opacity:.5;cursor:default}.dshpm-number:focus{border-color:var(--dsw-alias-brand-primary,#4f6ef7);outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 18%,transparent)}.dshpm-number[aria-invalid=true]{border-color:var(--dsw-alias-state-error-primary,#dc2626)}.dshpm-text{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);width:220px;font:inherit;color:var(--dsw-alias-label-primary,#1f2328);border-radius:7px;padding:6px 8px;font-size:12px;line-height:18px}.dshpm-text::placeholder{color:var(--dsw-alias-label-tertiary,#8b93a1)}.dshpm-text:disabled{opacity:.5;cursor:default}.dshpm-text:focus{border-color:var(--dsw-alias-brand-primary,#4f6ef7);outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 18%,transparent)}.dshpm-text[aria-invalid=true]{border-color:var(--dsw-alias-state-error-primary,#dc2626)}.dshpm-unit{color:var(--dsw-alias-label-tertiary,#8b93a1);font-size:12px;line-height:18px}.dshpm-repoValue{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-module-platform,#f5f6f8);max-width:260px;color:var(--dsw-alias-label-primary,#1f2328);white-space:nowrap;text-overflow:ellipsis;border-radius:7px;padding:6px 8px;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:12px;line-height:18px;overflow:hidden}.dshpm-repoValue[data-empty=true]{color:var(--dsw-alias-label-tertiary,#8b93a1);font-family:inherit}.dshpm-linkBtn{cursor:pointer;border:0;background:0 0;color:var(--dsw-alias-brand-primary,#4f6ef7);white-space:nowrap;border-radius:6px;padding:4px 2px;font:inherit;font-size:12px;line-height:18px}.dshpm-linkBtn:hover{text-decoration:underline}.dshpm-linkBtn:disabled{cursor:default;opacity:.5;text-decoration:none}.dshpm-dialogMask{background:#00000052;z-index:9000;justify-content:center;align-items:center;padding:24px;display:flex;position:fixed;inset:0}.dshpm-dialog{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-layer-2,#fff);border-radius:14px;flex-direction:column;width:min(560px,100%);max-height:min(72vh,600px);display:flex;overflow:hidden;box-shadow:0 18px 48px #00000033,0 2px 10px #0000001a}.dshpm-dialogHead{border-bottom:1px solid var(--dsw-alias-border-l1,#eceef2);flex:none;justify-content:space-between;align-items:center;gap:8px;padding:12px 14px;display:flex}.dshpm-dialogTitle{color:var(--dsw-alias-label-primary,#1f2328);font-size:14px;font-weight:600;line-height:20px}.dshpm-dialogClose{cursor:pointer;border:0;background:0 0;color:var(--dsw-alias-label-tertiary,#8b93a1);border-radius:6px;justify-content:center;align-items:center;width:24px;height:24px;font-size:18px;line-height:1;display:inline-flex}.dshpm-dialogClose:hover{color:var(--dsw-alias-label-primary,#1f2328);background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-crumbs{overscroll-behavior:contain;flex-wrap:wrap;flex:none;align-items:center;gap:2px;padding:8px 12px;display:flex;overflow-x:auto}.dshpm-crumb{cursor:pointer;border:0;background:0 0;color:var(--dsw-alias-brand-primary,#4f6ef7);white-space:nowrap;border-radius:6px;padding:2px 5px;font:inherit;font-size:12px;line-height:18px}.dshpm-crumb:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-crumbCurrent{cursor:default;border:0;background:0 0;color:var(--dsw-alias-label-secondary,#6b7280);white-space:nowrap;border-radius:6px;padding:2px 5px;font:inherit;font-size:12px;font-weight:600;line-height:18px}.dshpm-directoryList{overscroll-behavior:contain;border-top:1px solid var(--dsw-alias-border-l1,#eceef2);flex:1;min-height:140px;padding:6px;overflow-y:auto}.dshpm-directoryRow{cursor:pointer;text-align:left;border:0;background:0 0;color:var(--dsw-alias-label-primary,#1f2328);border-radius:7px;align-items:center;gap:8px;width:100%;padding:6px 8px;font:inherit;font-size:13px;line-height:20px;display:flex}.dshpm-directoryRow:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-directoryRowHidden{cursor:pointer;text-align:left;border:0;background:0 0;color:var(--dsw-alias-label-secondary,#6b7280);opacity:.6;border-radius:7px;align-items:center;gap:8px;width:100%;padding:6px 8px;font:inherit;font-size:13px;line-height:20px;display:flex}.dshpm-directoryRowHidden:hover{opacity:.9;background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-directoryIcon{flex:none;width:16px;font-size:12px;line-height:16px}.dshpm-directoryName{white-space:nowrap;text-overflow:ellipsis;flex:1;min-width:0;overflow:hidden}.dshpm-dialogNote{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:0;padding:12px;font-size:12px;line-height:18px}.dshpm-dialogError{color:var(--dsw-alias-label-error,#dc2626);word-break:break-word;margin:0;padding:12px;font-size:12px;line-height:18px}.dshpm-dialogFoot{border-top:1px solid var(--dsw-alias-border-l1,#eceef2);background:var(--dsw-alias-bg-layer-2,#fff);flex:none;align-items:center;gap:8px;padding:10px 12px;display:flex}.dshpm-dialogPath{color:var(--dsw-alias-label-tertiary,#8b93a1);white-space:nowrap;text-overflow:ellipsis;flex:1;min-width:0;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:11px;line-height:16px;overflow:hidden}.dshpm-dialogBtn{cursor:pointer;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);color:var(--dsw-alias-label-primary,#1f2328);white-space:nowrap;border-radius:7px;padding:5px 12px;font:inherit;font-size:12px;line-height:18px}.dshpm-dialogBtn:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-dialogBtnPrimary{cursor:pointer;border:1px solid var(--dsw-alias-button-primary-fill,#3a6ef5);background:var(--dsw-alias-button-primary-fill,#3a6ef5);color:var(--dsw-alias-label-primary-foreground,#fff);white-space:nowrap;border-radius:7px;padding:5px 12px;font:inherit;font-size:12px;line-height:18px}.dshpm-dialogBtnPrimary:disabled{cursor:default;opacity:.5}.dshpm-status{color:var(--dsw-alias-label-secondary,#6b7280);margin:4px 0 0;font-size:12px;line-height:18px}.dshpm-actions{border-top:1px solid var(--dsw-alias-border-l2,#e5e7eb);justify-content:flex-end;align-items:center;gap:8px;margin-top:16px;padding-top:12px;display:flex}.dshpm-unsaved{color:var(--dsw-alias-label-secondary,#6b7280);background:var(--dsw-alias-bg-module-platform,#eef0f4);border-radius:9px;padding:0 6px;font-size:11px;font-weight:600;line-height:17px}.dshpm-failed{min-width:0;color:var(--dsw-alias-label-error,#dc2626);flex:1;margin:0;font-size:12px;line-height:18px}.dshpm-notice{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:4px 0 0;font-size:12px;line-height:18px}.dshpm-toolbar{flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0 0;display:flex}.dshpm-tabs{border:1px solid var(--dsw-alias-border-l2,#e5e7eb);background:var(--dsw-alias-bg-module-platform,#f5f6f8);border-radius:8px;align-self:flex-start;gap:2px;padding:2px;display:flex}.dshpm-tab{cursor:pointer;border:0;background:0 0;color:var(--dsw-alias-label-secondary,#6b7280);border-radius:6px;padding:3px 10px;font:inherit;font-size:12px;line-height:18px}.dshpm-tab:hover{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f14)}.dshpm-tabActive{background:var(--dsw-alias-bg-layer-3,#fff);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600;box-shadow:0 1px 2px #0000001a}.dshpm-usage{color:var(--dsw-alias-label-secondary,#6b7280);align-items:center;gap:8px;margin:8px 0 0;font-size:12px;line-height:18px;display:flex}.dshpm-usageBar{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1f);border-radius:2px;flex:none;width:160px;height:4px;overflow:hidden}.dshpm-usageFill{background:var(--dsw-alias-button-primary-fill,#3a6ef5);border-radius:2px;height:100%}.dshpm-usageFill[data-warn=true]{background:var(--dsw-alias-state-warn-label,#b7791f)}.dshpm-invList{overscroll-behavior:contain;scrollbar-width:thin;flex-direction:column;gap:6px;max-height:360px;margin:8px 0 0;display:flex;overflow-y:auto}.dshpm-invRow{border:1px solid var(--dsw-alias-border-l1,#eceef2);background:var(--dsw-alias-bg-layer-2,#fff);border-radius:8px;flex-direction:column;gap:3px;padding:7px 9px;display:flex}.dshpm-invRowArchived{opacity:.55}.dshpm-invHead{align-items:flex-start;gap:6px;min-width:0;display:flex}.dshpm-kind{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1a);color:var(--dsw-alias-label-secondary,#6b7280);border-radius:4px;flex:none;padding:0 5px;font-size:11px;line-height:16px}.dshpm-kind[data-kind=lesson]{color:#b7791f;background:#e08b001f}.dshpm-kind[data-kind=decision]{color:#7c4ddb;background:#8b5cf61f}.dshpm-kind[data-kind=procedure]{color:#3a6ef5;background:#3a6ef51f}.dshpm-kind[data-kind=experience]{color:#15803d;background:#16a34a1f}.dshpm-invTitle{color:var(--dsw-alias-label-primary,#1f2328);word-break:break-word;flex:1;min-width:0;font-size:13px;line-height:19px}.dshpm-invBody{color:var(--dsw-alias-label-tertiary,#8b93a1);word-break:break-word;margin:0;font-size:12px;line-height:18px}.dshpm-invMeta{color:var(--dsw-alias-label-dimmed,#98a1ae);flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;line-height:16px;display:flex}.dshpm-invBadge{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1a);border-radius:4px;padding:0 5px;font-size:10px;line-height:15px}.dshpm-invBadgeDraft{color:#b26a00;background:#ffb40029}.dshpm-invRowOpen{border-color:var(--dsw-alias-border-l2,#d1d5db)}.dshpm-invHeadBtn{cursor:pointer;border:0;background:0 0;width:100%;font:inherit;color:inherit;text-align:left;padding:0}.dshpm-invHeadBtn:hover .dshpm-invTitle{text-decoration:underline}.dshpm-invChevron{color:var(--dsw-alias-label-tertiary,#8b93a1);flex:none;width:10px;font-size:9px;line-height:19px}.dshpm-invChevronOpen{transform:rotate(90deg);color:var(--dsw-alias-label-secondary,#6b7280)}.dshpm-invDetail{border-top:1px dashed var(--dsw-alias-border-l1,#eceef2);flex-direction:column;gap:7px;margin-top:4px;padding-top:7px;display:flex}.dshpm-invBlock{flex-direction:column;gap:2px;display:flex}.dshpm-invBlockLabel{color:var(--dsw-alias-label-secondary,#6b7280);font-size:11px;font-weight:600;line-height:16px}.dshpm-invBodyFull{color:var(--dsw-alias-label-primary,#1f2328);white-space:pre-wrap;word-break:break-word;scrollbar-width:thin;max-height:200px;margin:0;font-size:12px;line-height:18px;overflow-y:auto}.dshpm-invSteps{color:var(--dsw-alias-label-primary,#1f2328);scrollbar-width:thin;flex-direction:column;gap:2px;max-height:200px;margin:0;padding-left:18px;font-size:12px;line-height:18px;display:flex;overflow-y:auto}.dshpm-invStep{word-break:break-word}.dshpm-invChips{flex-wrap:wrap;gap:4px;display:flex}.dshpm-invFile{border:1px solid var(--dsw-alias-border-l1,#eceef2);background:var(--dsw-alias-bg-module-platform,#f5f6f8);color:var(--dsw-alias-label-primary,#1f2328);word-break:break-all;border-radius:5px;padding:0 5px;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:11px;line-height:17px}.dshpm-invSymbol{background:var(--dsw-alias-interactive-bg-hover,#7f7f7f1a);color:var(--dsw-alias-label-secondary,#6b7280);word-break:break-all;border-radius:5px;padding:0 5px;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:11px;line-height:17px}.dshpm-invOverflow{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:2px 0 0;font-size:11px;line-height:16px}.dshpm-invTriggerRow{align-items:baseline;gap:6px;font-size:12px;line-height:18px;display:flex}.dshpm-invTriggerLabel{color:var(--dsw-alias-label-tertiary,#8b93a1);flex:none;min-width:34px}.dshpm-invTriggerValue{color:var(--dsw-alias-label-primary,#1f2328);word-break:break-word;min-width:0}.dshpm-invId{color:var(--dsw-alias-label-dimmed,#98a1ae);word-break:break-all;margin:2px 0 0;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:10px;line-height:15px}.dshpm-invEmpty{color:var(--dsw-alias-label-tertiary,#8b93a1);margin:8px 0 0;font-size:12px;line-height:18px}.dshpm-select{box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#d1d5db);background:var(--dsw-alias-bg-layer-3,#fff);width:110px;font:inherit;color:var(--dsw-alias-label-primary,#1f2328);border-radius:7px;padding:6px 8px;font-size:12px;line-height:18px}.dshpm-select:disabled{opacity:.5;cursor:default}.dshpm-select:focus{border-color:var(--dsw-alias-brand-primary,#4f6ef7);outline:2px solid color-mix(in srgb,var(--dsw-alias-brand-primary,#4f6ef7) 18%,transparent)}.dshpm-select[aria-invalid=true]{border-color:var(--dsw-alias-state-error-primary,#dc2626)}.dshpm-projectRow{align-items:center;gap:8px;margin:6px 0 0;font-size:12px;line-height:18px;display:flex;flex-wrap:wrap}.dshpm-projectLabel{color:var(--dsw-alias-label-secondary,#6b7280);flex:none}.dshpm-projectPath{color:var(--dsw-alias-label-primary,#1f2328);word-break:break-all;font-family:ui-monospace,SF Mono,Menlo,Consolas,monospace;font-size:11px;line-height:17px;min-width:0}.dshpm-projectPath[data-default=true]{font-family:inherit;color:var(--dsw-alias-label-tertiary,#8b93a1)}"+PROJECT_SELECT_CSS;
+
+const TAG_PREFIX = "@local/dsh-session-insight/memory";
 
 /** 注入一份 CSS（幂等：同 id 复用同一个 <style>，更新时只换 textContent）。 */
 function injectStyle(id, css, plugin) {
@@ -3887,9 +5410,9 @@ function injectStyle(id, css, plugin) {
 }
 
 function ensureMemoryStyles() {
-  injectStyle(TAG_PREFIX + "/TaskPanel.module.css", PANEL_CSS, "@local/dsh-turn-cost");
-  injectStyle(TAG_PREFIX + "/TaskCommandNode.module.css", CMD_CSS, "@local/dsh-turn-cost");
-  injectStyle(TAG_PREFIX + "/SettingsSection.module.css", SETTINGS_CSS, "@local/dsh-turn-cost");
+  injectStyle(TAG_PREFIX + "/TaskPanel.module.css", PANEL_CSS, "@local/dsh-session-insight");
+  injectStyle(TAG_PREFIX + "/TaskCommandNode.module.css", CMD_CSS, "@local/dsh-session-insight");
+  injectStyle(TAG_PREFIX + "/SettingsSection.module.css", SETTINGS_CSS, "@local/dsh-session-insight");
 }
 
 /** TaskPanel.module.css 的 hashed 类名映射（88 项）。 */
@@ -3988,10 +5511,39 @@ const cmdCss = {
   "icon": "_9r5h7a_icon",
   "row": "_9r5h7a_row"
 };
-/** SettingsSection.module.css 的类名映射（17 项）。 */
+/** SettingsSection.module.css 的类名映射。 */
 const settingsCss = {
   "actions": "dshpm-actions",
   "control": "dshpm-control",
+  "invBadge": "dshpm-invBadge",
+  "invBadgeDraft": "dshpm-invBadgeDraft",
+  "invBody": "dshpm-invBody",
+  "invBlock": "dshpm-invBlock",
+  "invBlockLabel": "dshpm-invBlockLabel",
+  "invBodyFull": "dshpm-invBodyFull",
+  "invChevron": "dshpm-invChevron",
+  "invChevronOpen": "dshpm-invChevronOpen",
+  "invChips": "dshpm-invChips",
+  "invDetail": "dshpm-invDetail",
+  "invFile": "dshpm-invFile",
+  "invHeadBtn": "dshpm-invHeadBtn",
+  "invId": "dshpm-invId",
+  "invOverflow": "dshpm-invOverflow",
+  "invRowOpen": "dshpm-invRowOpen",
+  "invStep": "dshpm-invStep",
+  "invSteps": "dshpm-invSteps",
+  "invSymbol": "dshpm-invSymbol",
+  "invTriggerLabel": "dshpm-invTriggerLabel",
+  "invTriggerRow": "dshpm-invTriggerRow",
+  "invTriggerValue": "dshpm-invTriggerValue",
+  "invEmpty": "dshpm-invEmpty",
+  "invHead": "dshpm-invHead",
+  "invList": "dshpm-invList",
+  "invMeta": "dshpm-invMeta",
+  "invRow": "dshpm-invRow",
+  "invRowArchived": "dshpm-invRowArchived",
+  "invTitle": "dshpm-invTitle",
+  "kind": "dshpm-kind",
   "crumb": "dshpm-crumb",
   "crumbCurrent": "dshpm-crumbCurrent",
   "crumbs": "dshpm-crumbs",
@@ -4020,6 +5572,11 @@ const settingsCss = {
   "linkBtn": "dshpm-linkBtn",
   "notice": "dshpm-notice",
   "number": "dshpm-number",
+  "select": "dshpm-select",
+  "projectRow": "dshpm-projectRow",
+  "projectLabel": "dshpm-projectLabel",
+  "projectSelect": "dshpm-projectSelect",
+  "projectPath": "dshpm-projectPath",
   "page": "dshpm-page",
   "repoValue": "dshpm-repoValue",
   "row": "dshpm-row",
@@ -4027,7 +5584,14 @@ const settingsCss = {
   "text": "dshpm-text",
   "title": "dshpm-title",
   "unit": "dshpm-unit",
-  "unsaved": "dshpm-unsaved"
+  "unsaved": "dshpm-unsaved",
+  "tab": "dshpm-tab",
+  "tabActive": "dshpm-tabActive",
+  "tabs": "dshpm-tabs",
+  "toolbar": "dshpm-toolbar",
+  "usage": "dshpm-usage",
+  "usageBar": "dshpm-usageBar",
+  "usageFill": "dshpm-usageFill"
 };
     __exports.ensureMemoryStyles = ensureMemoryStyles;
     __exports.PANEL_CSS = PANEL_CSS;
@@ -4590,7 +6154,7 @@ function useTaskUIActions() {
       const id = __resolve(from, spec);
       if (__cache[id]) return __cache[id].exports;
       const factory = __modules[id];
-      if (!factory) throw new Error('[dsh-turn-cost/memory] module not found: ' + id);
+      if (!factory) throw new Error('[dsh-session-insight/memory] module not found: ' + id);
       const module = { exports: {} };
       __cache[id] = module;
       factory(module.exports, (s) => __require(id, s));

@@ -29,8 +29,20 @@ export const SPINNER_DELAY_MS = 150
  * @param {number} limit - 本页条数。
  * @returns {string} 可直接交给 remote.commands.execute 的命令行。
  */
-export function insightListLine(scope, offset, limit) {
-  return `/tasks insight list ${scope} ${offset} ${limit}`
+export function insightListLine(scope, offset, limit, root) {
+  const base = `/tasks insight list ${scope} ${offset} ${limit}`
+  // 跨项目查看：root 走 URL 编码追加在最后，老宿主的多余词会被忽略（它只读前四个词）。
+  return root ? `${base} root=${encodeURIComponent(root)}` : base
+}
+
+/**
+ * 注入量估算的请求行：`/tasks insight estimate [root=<abs>]`。
+ * 宿主用**真引擎**跑一次 buildInjection，所以界面上显示的数字与下一步实际注入同源。
+ * @param {string|null} [root] - 目标项目根；不给即当前会话项目。
+ * @returns {string}
+ */
+export function insightEstimateLine(root) {
+  return root ? `/tasks insight estimate root=${encodeURIComponent(root)}` : '/tasks insight estimate'
 }
 
 /**

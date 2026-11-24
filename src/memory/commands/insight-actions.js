@@ -3,14 +3,17 @@
 // 纯函数 actInsight / listInsights 操作传入的 store/gs 内存对象，持久化由调用方
 // （命令 handler：store.commit + gs.commit）统一负责，便于单测。
 import path from 'node:path'
+import { statSync } from 'node:fs'
 import { ProjectMemoryStore } from '../store.js'
-import { memoryRootFor, normalizeCitationFiles } from '../util/fs.js'
+import { memoryRootFor, normalizeCitationFiles, rootRejection } from '../util/fs.js'
 import { cfgInsight, GlobalStore, normalizeInsight, defaultGlobalFile, saveInsight, recordDeleted, carryUsageFields, mergeOrPushInto, demoteToProject, demoteToTask, pruneItems, refreshDerivedTrigger, putInsightField, INSIGHT_KINDS } from '../insight-store.js'
 import { NO_PROJECT_ROOT_NOTE, projectRootFor } from '../setup/taskbridge.js'
 import { fencedJson, invocationContext } from './invocation.js'
 import { isoMs } from '../util/value.js'
 import { pruneKindFields } from '../util/insight-fields.js'
 import { forgetVectorRows } from '../vector-index.js'
+import { buildInjection, cfgEngine, insightBody } from '../auto-inject.js'
+import { buildReadinessContext } from '../readiness.js'
 
 /** 容量旋钮的防御性取值：cfg 可能只带显式测试字段。 */
 function capOf(value, fallback) {
@@ -37,8 +40,70 @@ function forgetVectorsForDeleted({ store, gs, home, ids }) {
  */
 export const INSIGHT_PAGE_MAX = 200
 
+/**
+ * 单条载荷里**引用清单**（files / symbols）的最大条数。
+ *
+ * 计数（`files` / `symbols`）不受这个上限影响，始终是完整数量；被截断的只是"具体是哪几个"。
+ * 面板靠这两个清单回答"这条记忆牵着哪些文件"，而一条记忆理论上可以挂上千个路径，
+ * 全量塞进列表载荷会让一次翻页变成几十 KB 的传输 —— 读清单只为了认出条目，不是导出。
+ */
+export const INSIGHT_CITATION_MAX = 40
+
+/**
+ * `/tasks insight … root=<urlencoded 绝对路径>`：跨项目查看的入口。
+ *
+ * 为什么要在命令层接一个 root，而不是让客户端"切项目"再发同一条命令：宿主的 cwd 是会话
+ * 属性，设置页不该为了看一眼别的项目去改会话工作目录。这个参数只影响**读**（列表 / 注入
+ * 估算），写入路径仍然走会话自己的项目。
+ *
+ * 安全边界不放松：绝对路径、真实目录、且必须过 `rootRejection`（家目录 / 系统目录 /
+ * 包管理器前缀一律拒），与自动注入用的判据是同一份。
+ * @param {string[]} words - 命令分词（含 root= 的那个）。
+ * @param {string|null} fallback - 没给 root= 时用它（会话项目根）。
+ * @param {object} config - 插件配置。
+ * @returns {{ root?: string, error?: string }}
+ */
+function rootArgOf(words, fallback, config) {
+  for (const w of words) {
+    if (!w.startsWith('root=')) continue
+    let p
+    try {
+      p = decodeURIComponent(w.slice('root='.length)).trim()
+    } catch {
+      return { error: '[insight] root 的编码无效' }
+    }
+    if (!p) return { error: '[insight] root 不能为空' }
+    if (!path.isAbsolute(p)) return { error: `[insight] root 必须是绝对路径：${p}` }
+    let isDir = false
+    try {
+      isDir = statSync(p).isDirectory()
+    } catch {
+      return { error: `[insight] 目录不存在：${p}` }
+    }
+    if (!isDir) return { error: `[insight] 不是目录：${p}` }
+    const rejection = rootRejection(p, config)
+    if (rejection) return { error: `[insight] 这个目录不能当记忆根（${rejection.reason}）` }
+    return { root: p }
+  }
+  return { root: fallback || undefined }
+}
+
+/** 只保留字符串元素并去空，用于把 store 里的数组字段安全地做成清单。 */
+function citationList(value) {
+  if (!Array.isArray(value)) return []
+  const out = []
+  for (const raw of value) {
+    if (typeof raw !== 'string') continue
+    const text = raw.trim()
+    if (text !== '' && !out.includes(text)) out.push(text)
+  }
+  return out
+}
+
 function insSummary(ins, extra = {}) {
   const s = ins || {}
+  const fileList = citationList(s.files)
+  const symbolList = citationList(s.symbols)
   return {
     id: s.id,
     kind: s.kind || 'lesson',
@@ -65,9 +130,21 @@ function insSummary(ins, extra = {}) {
     confidence: typeof s.confidence === 'number' ? s.confidence : null,
     hitCount: s.hitCount || 0,
     members: (s.sourceTaskIds || []).length,
-    files: (s.files || []).length,
-    symbols: (s.symbols || []).length,
-    trigger: s.trigger ? { keywords: s.trigger.keywords || [], scope: s.trigger.scope || [] } : null,
+    // 计数与清单成对下发：`files` 仍是**总数**（既有消费者按数字用），`fileList` 是具体路径。
+    // 少给清单的结果是面板只能写「文件 3」，用户没法知道是哪个文件 —— 这是本条载荷的用途缺口。
+    files: fileList.length,
+    fileList: fileList.slice(0, INSIGHT_CITATION_MAX),
+    symbols: symbolList.length,
+    symbolList: symbolList.slice(0, INSIGHT_CITATION_MAX),
+    // `when` 是决策条目真正起作用的条件（写哪些文件、跑哪类动作、命中哪些意图词）；
+    // 只下发 keywords/scope 时，面板上「触发条件」永远只能是空 —— 那正是最容易写错的部分。
+    trigger: s.trigger
+      ? {
+        keywords: Array.isArray(s.trigger.keywords) ? s.trigger.keywords : [],
+        scope: Array.isArray(s.trigger.scope) ? s.trigger.scope : [],
+        when: s.trigger.when && typeof s.trigger.when === 'object' ? s.trigger.when : null,
+      }
+      : null,
     steps: Array.isArray(s.steps) ? s.steps.slice(0, 50) : null,
     // 面板编辑要知道原数组是否被截断：只回传看到的 50 条会删掉后面的步骤。
     stepsTotal: Array.isArray(s.steps) ? s.steps.length : 0,
@@ -411,7 +488,7 @@ export function insightCommandDefinition(config, ctx) {
     input: { hint: 'list [scope] [offset] [limit] | <动作> <scope> <id> [taskId]' },
     handler: (invocation) => {
       try {
-        const { cwd } = invocationContext(invocation)
+        const { cwd, sid } = invocationContext(invocation)
         const lineRaw = (invocation?.rawInput || '').trim()
         const raw = lineRaw.split(/\s+/).filter(Boolean)
         const root = projectRootFor(cwd, config)
@@ -437,12 +514,65 @@ export function insightCommandDefinition(config, ctx) {
             if (!Number.isFinite(n) || n <= 0) return { kind: 'error', text: '[insight] limit 必须是正整数' }
             limit = Math.min(n, INSIGHT_PAGE_MAX)
           }
-          const store = new ProjectMemoryStore(memoryRootFor(root, config.memoryDir)).load()
+          // 跨项目查看：`root=<abs>` 只改读的目标，写入路径不受影响。
+          const picked = rootArgOf(raw, root, config)
+          if (picked.error) return { kind: 'error', text: picked.error }
+          const viewRoot = picked.root
+          const store = new ProjectMemoryStore(memoryRootFor(viewRoot, config.memoryDir)).load()
           const gs = new GlobalStore(cfgInsight(config).globalFile || defaultGlobalFile()).load()
-          const payload = listInsights(store, gs, scope, { offset, limit })
+          const payload = { ...listInsights(store, gs, scope, { offset, limit }), root: viewRoot }
           const shown = offset + payload.items.length
           const range = limit === null ? '' : `（显示 ${shown}/${payload.total}）`
           return { kind: 'success', text: fencedJson(`记忆 ${scope}：${payload.count} 条${range}`, JSON.stringify(payload)) }
+        }
+        if (verb === 'estimate') {
+          // 注入量估算：用真引擎（同一份 cfgEngine + buildInjection）跑一次"下一步会注入什么"。
+          // 不另写一份估算公式——两个数字源一旦分叉，界面显示的就不是实际行为。
+          const picked = rootArgOf(raw, root, config)
+          if (picked.error) return { kind: 'error', text: picked.error }
+          const viewRoot = picked.root
+          const engine = cfgEngine(config)
+          const store = new ProjectMemoryStore(memoryRootFor(viewRoot, config.memoryDir)).load()
+          const gs = new GlobalStore(cfgInsight(config).globalFile || defaultGlobalFile()).load()
+          const boundTaskId = sid ? store.getBoundTaskId(sid) : undefined
+          const task = boundTaskId ? store.getTask(boundTaskId) : null
+          // 空话题 = 主题门控不生效 = **最坏情况**（所有候选都可能进上下文），估算要保守。
+          const built = buildInjection({
+            query: '',
+            readiness: buildReadinessContext({}),
+            task,
+            store,
+            globalStore: gs,
+            cfg: engine,
+          })
+          const chars = built.text ? built.text.length : 0
+          const limitChars = Math.max(0, engine.maxTokens * 3)
+          // 候选池总量：本项目活跃条目正文的字符总和 = "全命中"的理论上限。用户问"这个项目
+          // 会注入多少"，单给预算答不了——预算讲的是上限，池子讲的是这份记忆实际有多大。
+          let poolChars = 0
+          let poolItems = 0
+          for (const it of store.insightItems() || []) {
+            if (!it || it.archived || it.draft) continue
+            poolItems++
+            poolChars += String(insightBody(it) || '').length + 1
+          }
+          const payload = {
+            root: viewRoot,
+            maxTokens: engine.maxTokens,
+            limitChars,
+            chars,
+            entryChars: built.entry ? built.entry.length : 0,
+            itemChars: typeof built.itemChars === 'number' ? built.itemChars : 0,
+            items: built.reasons.length,
+            dropped: built.dropped.length,
+            candidates: Array.isArray(built.candidates) ? built.candidates.length : 0,
+            total: store.insightItems().length,
+            poolChars,
+            poolItems,
+            topicGate: engine.topicGate,
+            entryMaxInsights: engine.entryMaxInsights,
+          }
+          return { kind: 'success', text: fencedJson(`注入估算：${chars} 字符（上限 ${limitChars}）`, JSON.stringify(payload)) }
         }
         if (verb === 'save') {
           // /insight save <scope> <json>（新建/合并；project|global）

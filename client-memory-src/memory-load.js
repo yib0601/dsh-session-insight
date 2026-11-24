@@ -49,7 +49,11 @@ export function writeInsightCache(sessionId, scope, root, boundTaskId, rows, tot
   }
 }
 
-export function parseInsightPayloadText(text) {
+/**
+ * 取命令输出里的 JSON 载荷：优先围栏块，其次从最后一个 `{` 起截。解析失败返回 null。
+ * 抽出来是因为现在有**两种**载荷（列表 / 注入估算），JSON 提取逻辑只该有一份。
+ */
+export function parsePayloadText(text) {
   if (!text) return null
   let jsonBlock = null
   const fenced = text.match(/```(?:json)?\s*\n([\s\S]*?)\n```/)
@@ -61,12 +65,31 @@ export function parseInsightPayloadText(text) {
   if (!jsonBlock) return null
   try {
     const data = JSON.parse(jsonBlock)
+    return data && typeof data === 'object' ? data : null
+  } catch {
+    return null
+  }
+}
+
+export function parseInsightPayloadText(text) {
+  const data = parsePayloadText(text)
+  if (!data) return null
+  {
     if (!Array.isArray(data.items)) return null
     // 分页字段走 paging.js 归一：老宿主没有 total/nextOffset 时按"一次给全"降级，
     // 新宿主则给出真实的下一页游标。
     const w = normalizeWindow(data, 0)
-    return { scope: data.scope ?? 'project', count: w.total, total: w.total, offset: w.offset, nextOffset: w.nextOffset, items: w.items }
-  } catch {
-    return null
+    // `root` 是宿主对 `root=` 参数的**回执**（这次到底读了哪个项目）：设置页拿它判断跨项目读取
+    // 是否真的生效。归一化时必须原样带出来 —— 否则「宿主忽略了参数」与「宿主读对了」在界面上
+    // 长得一模一样，而前者会让页面把别的项目的清单标成本项目的。
+    return {
+      scope: data.scope ?? 'project',
+      root: typeof data.root === 'string' && data.root !== '' ? data.root : null,
+      count: w.total,
+      total: w.total,
+      offset: w.offset,
+      nextOffset: w.nextOffset,
+      items: w.items,
+    }
   }
 }

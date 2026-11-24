@@ -26,7 +26,7 @@ modules:
     owns: ["client.js#apply"]
     exposes:
       - "conversation.chat.assistant-actions (list, id=turn-cost, order=90)"
-      - "conversation.chat.turnTail (list, id=dsh-turn-cost)"
+      - "conversation.chat.turnTail (list, id=dsh-session-insight)"
       - "conversation.composer.dock (list, id=session-cost, order=2)"
       - "locale namespace turnCost (zh/en)"
     depends_on: ["presentation", "ctx.slots", "ctx.locale", "ctx.effect"]
@@ -44,12 +44,12 @@ modules:
     not_responsible_for: ["价格", "UI", "网络请求", "写会话日志", "保留工具输出正文（surface 只留 140 字预览与估价）", "界面文案（label 只放工具名与 kind id）"]
   - name: quota-host
     kind: internal
-    responsibility: "订阅额度三条源：DeepSeek 余额（balance_infos → {currency,total,toppedUp,granted}）、OpenCode Go 用量窗口（usage.rolling/weekly/monthly → {key,percent,status,resetsAt}）与 WorkBuddy 积分包（读 shim 的 /quota → {windows:[{key,label,percent,total,remain,resetsAt}],plan,totals}，窗口标签由上游命名）；percent 一律 clamp 0–100；按源缓存 5 分钟（失败不缓存，成功值在失败后继续服务非强制读）、12s 超时，并在 Host web server 上注册 GET /dsh-turn-cost/quota?source=&force=1；密钥按次解析，只留在 Host（WorkBuddy 那条是 shim 的 bearer，不是供应商密钥），端点由 DSH_TURN_COST_WORKBUDDY_QUOTA_URL 配置。是否声明订阅到期由源决定：OpenCode 只有窗口 resetsAt，周期结束由 Client 取最长窗口推出；WorkBuddy 给 plan.expiresAt，Client 直接用，不再推断"
+    responsibility: "订阅额度三条源：DeepSeek 余额（balance_infos → {currency,total,toppedUp,granted}）、OpenCode Go 用量窗口（usage.rolling/weekly/monthly → {key,percent,status,resetsAt}）与 WorkBuddy 积分包（读 shim 的 /quota → {windows:[{key,label,percent,total,remain,resetsAt}],plan,totals}，窗口标签由上游命名）；percent 一律 clamp 0–100；按源缓存 5 分钟（失败不缓存，成功值在失败后继续服务非强制读）、12s 超时，并在 Host web server 上注册 GET /dsh-session-insight/quota?source=&force=1；密钥按次解析，只留在 Host（WorkBuddy 那条是 shim 的 bearer，不是供应商密钥），端点由 DSH_SESSION_INSIGHT_WORKBUDDY_QUOTA_URL 配置。是否声明订阅到期由源决定：OpenCode 只有窗口 resetsAt，周期结束由 Client 取最长窗口推出；WorkBuddy 给 plan.expiresAt，Client 直接用，不再推断"
     owns: ["host/quota.js"]
     exposes:
-      - "GET /dsh-turn-cost/quota?source=deepseek|opencode-go|workbuddy[&force=1] -> {status: ready|failed|unconfigured, source, kind: balance|windows, available?, wallets?[], windows?[{key,label?,percent,status,resetsAt,total?,remain?}], plan?{name,code,paid,expiresAt}, totals?{total,remain,used,unit}, at, reason?}"
+      - "GET /dsh-session-insight/quota?source=deepseek|opencode-go|workbuddy[&force=1] -> {status: ready|failed|unconfigured, source, kind: balance|windows, available?, wallets?[], windows?[{key,label?,percent,status,resetsAt,total?,remain?}], plan?{name,code,paid,expiresAt}, totals?{total,remain,used,unit}, at, reason?}"
       - "normalizeBalance(payload) / normalizeOpenCodeUsage(payload) / normalizeWorkbuddyQuota(payload) (pure)"
-      - "WORKBUDDY_QUOTA_ENDPOINT / KEY_REFS.workbuddy (constants; endpoint overridable by DSH_TURN_COST_WORKBUDDY_QUOTA_URL)"
+      - "WORKBUDDY_QUOTA_ENDPOINT / KEY_REFS.workbuddy (constants; endpoint overridable by DSH_SESSION_INSIGHT_WORKBUDDY_QUOTA_URL)"
       - "QUOTA_SOURCES / KEY_REFS / USAGE_WINDOWS / DEFAULT_SOURCE (constants)"
       - "createQuotaReader({cacheMs,timeoutMs,fetch,now}) (pure I/O boundary, cache per source)"
       - "mountQuotaRoute(ctx, reader, readKey) -> route disposer"
@@ -60,7 +60,7 @@ modules:
     responsibility: "让「目录外 provider 路由（自建网关，如 ai-router）的模型清单」跟随网关 /v1/models，且**查看即读、读即核对**：读路由时立即用 profile 里已存的清单应答（那份清单就是选择器本身，因此读永远不等网关），同时按 staleMs（默认 5 分钟）判断是否在后台静默核对一次；核对只在有差异时经 settings 服务整体写回（校验条目 + 落盘 + 重建 provider 一个事务），一致就什么都不写。条目生成覆盖显示名三段式/两段式、输入模态、上下文与输出上限、思考档位与两个 compat 开关，其余字段原样保留。启动延迟 + 定时轮询只作兜底。拉取失败 / 空清单 / 显示名越界（含 router 历史标记）三种情况一个字都不写，宁可保持旧清单"
     owns: ["host/model-sync/naming.js", "host/model-sync/catalog.js", "host/model-sync/listing.js", "host/model-sync/sync.js", "host/model-sync/mount.js"]
     exposes:
-      - "GET /dsh-turn-cost/models[?force=1] -> {enabled, route, routes[], settingsNs, baseURL, models[], count, syncedAt, stale, refreshing, last: {at, ok, reason, detail?, count, added, removed} | null, intervalMs, staleMs}（**缓存优先**：普通读立即用已存清单应答、不 await 网关，stale 时在后台核对；force=1 才同步等一轮）"
+      - "GET /dsh-session-insight/models[?force=1] -> {enabled, route, routes[], settingsNs, baseURL, models[], count, syncedAt, stale, refreshing, last: {at, ok, reason, detail?, count, added, removed} | null, intervalMs, staleMs}（**缓存优先**：普通读立即用已存清单应答、不 await 网关，stale 时在后台核对；force=1 才同步等一轮）"
       - "displayName(id,row) / nameOk(name) / fmtWindow(tokens) (pure)"
       - "buildEntry(id,row,existing) / buildCatalog(rows,stored) / modalitiesOf / reasoningLevelsOf / isGeneratedReasoning (pure)"
       - "listingUrl(baseURL,api) / parseListing(body) / fillMissingPlatforms(rows) / fetchModels(options)"
@@ -74,7 +74,7 @@ modules:
     owns:
       - "index.js#Config (memory schema) / index.js#apply (memory 半边)"
       - "src/memory/index.js (toolDefinitions / registerTools / apply)"
-      - "src/memory/{chunker,doc-index,doc-pipeline,index-pipeline,index-failures,symbols,enhancer,lazy,watch,recall,auto-inject,inject-visible,insight-store,store,similarity,vector-index,reflection-pipeline,project-profile,project-memory-service,readiness,llm,llm-route,link,ops,global-seed,audit,skill}.js"
+      - "src/memory/{chunker,doc-index,doc-pipeline,index-pipeline,index-failures,symbols,enhancer,lazy,watch,recall,auto-inject,inject-visible,insight-store,store,similarity,vector-index,reflection-pipeline,project-profile,project-memory-service,readiness,topic,llm,llm-route,link,ops,global-seed,audit,skill}.js"
       - "src/memory/{tools,commands,util,setup}/"
       - "skills/project-memory/SKILL.md"
       - "skills/project-memory/scripts/pm-digest.mjs"
@@ -88,9 +88,16 @@ modules:
       - "磁盘契约：<root>/.dsh-project-memory/（索引、insight、任务、审计与影子日志），单项目日志硬上限 2×shadowMaxBytes + 2×auditMaxBytes"
     depends_on: ["ctx.tools", "ctx.commands (可选)", "ctx.skills (可选)", "ctx.llm (可选，召回期查询扩展/反思)", "ctx.session (session/event · session/disposed)", "ctx.provide (可选)", ".dsh-project-memory/ 与项目工作目录"]
     not_responsible_for: ["计价 / token 统计 / 上下文投影（成本半边的事）", "UI 渲染（面板与设置页在 memory-client）", "索引期调用 LLM（索引全本地；LLM 只出现在召回期查询扩展与反思，且默认关）", "扫描家目录 / 文件系统根 / 系统目录（assertSafeRoot 默认拒绝，roots.allow 才放行）", "在 DSH 安装树里打补丁或改写会话日志", "把索引正文塞进 prompt（注入只带摘要与引用）"]
+  - name: memory-topic
+    kind: internal
+    responsibility: "记忆的主题分类轴（与 kind 这个形态轴正交）：受控主题表（style/arch/data/test/perf/security/deploy/docs/tooling）、`category` 归一（含中文别名）、把分类派生成 `trigger.when.intents`、以及从「人类意图 + 写目标」判定本步话题。注入侧据此做主题门控（默认只收万能 op 命中的 trigger），常驻卡据此按话题收口；纯函数、无 IO、无 store"
+    owns: ["src/memory/topic.js#TOPIC_SPECS", "src/memory/topic.js#normalizeCategory", "src/memory/topic.js#detectTopics", "src/memory/topic.js#topicOf", "src/memory/topic.js#withCategoryTrigger", "test/topic-gate.test.js", "scripts/backfill-category.mjs"]
+    exposes: ["TOPICS / TOPIC_SPECS / normalizeCategory / categoryIntents / detectTopics / topicOf / withCategoryTrigger"]
+    depends_on: []
+    not_responsible_for: ["写入与合并（insight-store）", "排程与预算（auto-inject）", "界面渲染"]
   - name: memory-client
     kind: internal
-    responsibility: "项目记忆的界面半边（懒加载兄弟 chunk）：任务面板（shell.overlay 浮层，任务页 / 记忆页 / 新建条目表单 / 分页 / 拖拽），会话内 /tasks 命令节点（接管内置大段文本卡片，避免 JSON 载荷刷屏），show_task_panel 的工具视图（结果一渲染就开面板 —— 面板状态只在浏览器侧），`/` 菜单「工作流」斜杠源（纯客户端开面板页，不发宿主命令），以及设置面板的「记忆与笔记」页（settings.section，id project-memory：记忆三个 volatile 字段经 configForms 宿主校验 + revision fence 原地生效，笔记三项走嵌套路径 mutate）。全部软依赖：slots / configForms / locale / inputTriggers 缺任一项只降级成一条点名告警，绝不静默消失"
+    responsibility: "项目记忆的界面半边（懒加载兄弟 chunk）：任务面板（shell.overlay 浮层，任务页 / 记忆页 / 新建条目表单 / 分页 / 拖拽），会话内 /tasks 命令节点（接管内置大段文本卡片，避免 JSON 载荷刷屏），show_task_panel 的工具视图（结果一渲染就开面板 —— 面板状态只在浏览器侧），`/` 菜单「工作流」斜杠源（纯客户端开面板页，不发宿主命令），以及设置面板的「记忆与笔记」页（settings.section，id project-memory：记忆清单可切项目根查看（`/tasks insight list … root=<abs>`，只读）、一行注入量估算（`/tasks insight estimate`）、记忆规模界面上只留单轮注入预算一行（MEMORY_SCALE_VISIBLE_FIELDS；两层容量、常驻条数、两个保险丝、主题门控仍在表单里被读写以喂清单容量占用，只是不画）经 configForms 宿主校验 + revision fence 原地生效，笔记三项走嵌套路径 mutate）。全部软依赖：slots / configForms / locale / inputTriggers 缺任一项只降级成一条点名告警，绝不静默消失"
     owns: ["client.memory.js", "client-memory-src/"]
     exposes:
       - "shell.overlay (list, id=dsh-project-memory-task-panel, order=100)"
@@ -148,7 +155,7 @@ public_slots:
   - key: conversation.chat.turnTail
     kind: list
     scope: session
-    id: dsh-turn-cost
+    id: dsh-session-insight
     order: 90
     locale: turnCost
   - key: conversation.composer.dock

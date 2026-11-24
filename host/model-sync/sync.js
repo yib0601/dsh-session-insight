@@ -86,11 +86,11 @@ export function createModelSync(options) {
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'fetch-failed';
-      logger?.warn?.(`[dsh-turn-cost] model listing for ${target.route} failed: ${reason}`);
+      logger?.warn?.(`[dsh-session-insight] model listing for ${target.route} failed: ${reason}`);
       return { at, ok: false, reason: 'fetch-failed', detail: reason, count: 0, added: 0, removed: 0 };
     }
     if (rows.length === 0) {
-      logger?.warn?.(`[dsh-turn-cost] model listing for ${target.route} is empty; keeping the stored models`);
+      logger?.warn?.(`[dsh-session-insight] model listing for ${target.route} is empty; keeping the stored models`);
       return { at, ok: false, reason: 'empty-listing', count: 0, added: 0, removed: 0 };
     }
     const storedRaw = await readStored(target);
@@ -98,7 +98,7 @@ export function createModelSync(options) {
     const storedById = new Map(stored.filter((entry) => typeof entry?.id === 'string').map((entry) => [entry.id, entry]));
     const { entries, invalid, quotaSources } = buildCatalog(rows, storedById);
     if (invalid.length > 0) {
-      logger?.warn?.(`[dsh-turn-cost] model names left the naming contract (${invalid.slice(0, 3).map((row) => row.name).join(', ')}); keeping the stored models`);
+      logger?.warn?.(`[dsh-session-insight] model names left the naming contract (${invalid.slice(0, 3).map((row) => row.name).join(', ')}); keeping the stored models`);
       return { at, ok: false, reason: 'name-contract', count: entries.length, added: 0, removed: 0 };
     }
     const storedIds = new Set(stored.map((entry) => entry?.id));
@@ -112,10 +112,10 @@ export function createModelSync(options) {
       await writeModels(target, entries);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      logger?.warn?.(`[dsh-turn-cost] writing the model catalog for ${target.route} failed: ${detail}`);
+      logger?.warn?.(`[dsh-session-insight] writing the model catalog for ${target.route} failed: ${detail}`);
       return { at, ok: false, reason: 'write-failed', detail, count: entries.length, added, removed };
     }
-    logger?.info?.(`[dsh-turn-cost] model catalog for ${target.route}: ${String(entries.length)} models (added ${String(added)}, removed ${String(removed)})`);
+    logger?.info?.(`[dsh-session-insight] model catalog for ${target.route}: ${String(entries.length)} models (added ${String(added)}, removed ${String(removed)})`);
     return { at, ok: true, reason: 'written', count: entries.length, added, removed, quotaSources };
   };
 
@@ -142,7 +142,7 @@ export function createModelSync(options) {
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
           const timedOut = detail === 'cycle-timeout';
-          logger?.warn?.(`[dsh-turn-cost] model sync ${timedOut ? 'timed out' : 'failed'}: ${detail}`);
+          logger?.warn?.(`[dsh-session-insight] model sync ${timedOut ? 'timed out' : 'failed'}: ${detail}`);
           last = {
             at: now(), ok: false, reason: timedOut ? 'timeout' : 'fetch-failed', detail,
             count: 0, added: 0, removed: 0,

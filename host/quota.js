@@ -15,7 +15,7 @@
  * cached, so the next poll retries; a success is cached per source for
  * {@link CACHE_MS} so a page refresh does not hammer the vendor endpoint.
  *
- * When `DSH_TURN_COST_GATEWAY_URL` names the self-hosted gateway (`ai-shim`), a
+ * When `DSH_SESSION_INSIGHT_GATEWAY_URL` names the self-hosted gateway (`ai-shim`), a
  * fourth reader answers **first**: `GET /v1/quota?backend=<id>` on that origin,
  * authenticated with the same bearer the `ai-router` provider uses. The gateway
  * already runs every probe (it is the only party holding the WorkBuddy account
@@ -27,7 +27,7 @@
 import { randomUUID } from 'node:crypto';
 
 /** Same-origin route the Client reads; nothing else is exposed. */
-export const QUOTA_PATH = '/dsh-turn-cost/quota';
+export const QUOTA_PATH = '/dsh-session-insight/quota';
 /** Freshness window for one successful read. */
 export const CACHE_MS = 5 * 60 * 1000;
 /** Vendor deadline; these endpoints are normally fast, occasionally slow. */
@@ -65,16 +65,16 @@ export const KEY_REFS = Object.freeze({
  * Unset = off: the three vendor reads below stay exactly as they were, so an
  * installation without a gateway behaves identically.
  */
-export const GATEWAY_URL_ENV = 'DSH_TURN_COST_GATEWAY_URL';
+export const GATEWAY_URL_ENV = 'DSH_SESSION_INSIGHT_GATEWAY_URL';
 /** Bearer ref for that gateway — the same key the `ai-router` provider uses. */
 export const GATEWAY_KEY_REF = 'AI_ROUTER_API_KEY';
 /** `source=backend` pairs overriding the default source → backend names. */
-export const GATEWAY_BACKENDS_ENV = 'DSH_TURN_COST_GATEWAY_BACKENDS';
+export const GATEWAY_BACKENDS_ENV = 'DSH_SESSION_INSIGHT_GATEWAY_BACKENDS';
 /** Path the gateway serves per-backend quota on (Bearer, same key as /v1/models). */
 export const GATEWAY_QUOTA_PATH = '/v1/quota';
 /**
  * Which gateway backend answers for each source. Defaults match the deployment
- * this plugin was written against; `DSH_TURN_COST_GATEWAY_BACKENDS` overrides
+ * this plugin was written against; `DSH_SESSION_INSIGHT_GATEWAY_BACKENDS` overrides
  * any of them (`workbuddy=wb,opencode-go=ocgo`) without a code change.
  */
 export const GATEWAY_BACKEND_OF_SOURCE = Object.freeze({
@@ -94,12 +94,12 @@ export const USAGE_ENDPOINT = 'https://opencode.ai/zen/go/v1/usage';
  * the gateway host, not next to this plugin (it listens on 127.0.0.1 *there*).
  * So the base URL is configurable: a local SSH forward, an internal address, or
  * a shim running on the same machine all work by changing one variable.
- * `DSH_TURN_COST_WORKBUDDY_QUOTA_URL` wins; the loopback default suits a host
+ * `DSH_SESSION_INSIGHT_WORKBUDDY_QUOTA_URL` wins; the loopback default suits a host
  * that tunnels or co-locates the shim.
  */
 export const WORKBUDDY_QUOTA_ENDPOINT = (() => {
   const configured = typeof process !== 'undefined' && process.env
-    ? process.env.DSH_TURN_COST_WORKBUDDY_QUOTA_URL
+    ? process.env.DSH_SESSION_INSIGHT_WORKBUDDY_QUOTA_URL
     : undefined;
   if (typeof configured === 'string' && configured.trim() !== '') return configured.trim();
   return 'http://127.0.0.1:8898/quota';
@@ -280,7 +280,7 @@ export function resolveGateway(env) {
       else backends[sourceId] = backend;
     }
   }
-  return { baseURL, keyRef: source.DSH_TURN_COST_GATEWAY_KEY_REF ?? GATEWAY_KEY_REF, backends };
+  return { baseURL, keyRef: source.DSH_SESSION_INSIGHT_GATEWAY_KEY_REF ?? GATEWAY_KEY_REF, backends };
 }
 
 /** The gateway's per-backend quota URL, or `null` when that source has no backend. */

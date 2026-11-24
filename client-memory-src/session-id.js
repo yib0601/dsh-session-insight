@@ -68,6 +68,24 @@ export function sessionRows(snap) {
 }
 
 /**
+ * 某一行的 `cwd`（"这个会话属于哪个项目"的唯一依据）。
+ *
+ * `SessionSummary` 上没有 `workspaceId` —— 会话与工作区的关联只体现在 `cwd` 上，
+ * 所以设置页要判断"当前会话项目是哪一个"只能读这个字段，再拿它跟工作区注册表的 `path` 比。
+ * 两种快照形状的取法不同（旧形状行数据在 `items` 里，0.1.7 在 `byId` 里），故这里各走一条。
+ * @param {object|undefined|null} snap - `ctx.sessions.list.getSnapshot()`
+ * @param {string} id - 会话 id
+ * @returns {string|null} 绝对路径；没有这一行 / 没有 cwd 时为 null
+ */
+export function sessionCwd(snap, id) {
+  if (!snap || typeof snap !== 'object' || typeof id !== 'string' || id === '') return null
+  const row = Array.isArray(snap.items)
+    ? snap.items.find((item) => item?.sessionId === id)
+    : snap.byId && typeof snap.byId === 'object' ? snap.byId[id] : undefined
+  return typeof row?.cwd === 'string' && row.cwd !== '' ? row.cwd : null
+}
+
+/**
  * 选出一个可用于执行命令的会话 id（即"用户正在看的那个"）。
  *
  * 优先级：

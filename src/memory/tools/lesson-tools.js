@@ -6,6 +6,7 @@ import { truncate } from '../util/text.js'
 import { saveInsight, defaultGlobalFile, GlobalStore } from '../insight-store.js'
 import { ensureGlobalInit } from '../global-seed.js'
 import { INSIGHT_KINDS, INSIGHT_SCOPES } from '../insight-store.js'
+import { TOPICS, TOPIC_SPECS } from '../topic.js'
 import { sessionIdOf } from '../util/task-view.js'
 import { createVectorRerank, vectorItemsFrom } from '../vector-index.js'
 import { createWriteCosine } from '../auto-inject.js'
@@ -24,6 +25,13 @@ export function lessonTool(config) {
       id: { type: 'string', description: 'existing entry id (in-place update)' },
       title: { type: 'string', description: 'one-line title' },
       kind: { type: 'string', enum: INSIGHT_KINDS, description: kindDesc },
+      category: {
+        type: 'string',
+        enum: TOPICS,
+        description: `which aspect of the project this belongs to (${TOPICS.map((k) => `${k}=${TOPIC_SPECS[k].label}`).join(', ')}). `
+          + 'A categorized entry is topic-gated at injection: only when the current step is about that aspect. '
+          + 'Setting it also derives its intent words into trigger.when.intents, so the author need not repeat them.',
+      },
       scope: { type: 'string', enum: INSIGHT_SCOPES, description: scopeDesc },
       pattern: { type: 'string', description: 'error pattern' },
       fix: { type: 'string', description: 'corrected practice' },
@@ -84,6 +92,7 @@ export function lessonTool(config) {
         id: args.id,
         title: args.title,
         kind: args.kind,
+        category: args.category,
         pattern: args.pattern,
         fix: args.fix,
         choice: args.choice,

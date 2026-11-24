@@ -1,5 +1,5 @@
 /**
- * dsh-turn-cost — context-insight surfaces (lazy sibling chunk).
+ * dsh-session-insight — context-insight surfaces (lazy sibling chunk).
  *
  * Supersedes dsh-context: the same surfaces, rebuilt on DSH's own built-in
  * projections plus our official-price cost engine — a `/context` command with a
@@ -17,7 +17,7 @@
  * · §6 composition.
  */
 window.__ModuleLoader__.load({
-  id: '@local/dsh-turn-cost',
+  id: '@local/dsh-session-insight',
   chunk: 'client.context.js',
   factory(require) {
     const React = require('react');
@@ -956,7 +956,7 @@ window.__ModuleLoader__.load({
     /** Client poll cadence; the Host caches its own read per source. */
     const QUOTA_POLL_MS = 5 * 60 * 1000;
     /** Same-origin route registered by the Host half. */
-    const QUOTA_URL = '/dsh-turn-cost/quota';
+    const QUOTA_URL = '/dsh-session-insight/quota';
     /**
      * Route-parameter fallback only. It is never used to *decide* what to show:
      * a read waits until the session names a vendor (see `sourceOfSessions`),
@@ -965,13 +965,13 @@ window.__ModuleLoader__.load({
      */
     const QUOTA_DEFAULT_SOURCE = 'deepseek';
     /** Remembers the last vendor a session named, for blank sessions with no history. */
-    const QUOTA_SOURCE_KEY = 'dsh-turn-cost:quota-source';
+    const QUOTA_SOURCE_KEY = 'dsh-session-insight:quota-source';
     /**
      * Last successful read per source, so a reload paints the figure it already
      * had instead of flashing「读取中…」while the Host answers. The value is only
      * a starting point: the read that follows always replaces it.
      */
-    const QUOTA_CACHE_KEY = 'dsh-turn-cost:quota-cache';
+    const QUOTA_CACHE_KEY = 'dsh-session-insight:quota-cache';
     /**
      * How old a persisted read may be and still stand in for the live one. The
      * shortest vendor window (OpenCode's rolling 5h) resets within this span, so
@@ -2228,9 +2228,9 @@ window.__ModuleLoader__.load({
     // silently. Nothing on this path makes the user wait for the gateway.
 
     /** Same-origin route registered by the Host half. */
-    const MODELS_URL = '/dsh-turn-cost/models';
+    const MODELS_URL = '/dsh-session-insight/models';
     /** Last painted catalog, so a reload paints the list before the Host answers. */
-    const MODELS_CACHE_KEY = 'dsh-turn-cost:model-catalog';
+    const MODELS_CACHE_KEY = 'dsh-session-insight:model-catalog';
     /** A persisted paint older than this is not worth showing; models move. */
     const MODELS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
     /** Follow-up look after a reply that reported a background refresh in flight. */
@@ -2334,7 +2334,7 @@ window.__ModuleLoader__.load({
      * is served by OpenCode and by the gateway on different plans, so a map from
      * one route must never be applied to another.
      */
-    const QUOTA_SOURCE_CACHE_KEY = 'dsh-turn-cost:quota-sources';
+    const QUOTA_SOURCE_CACHE_KEY = 'dsh-session-insight:quota-sources';
     /** Persisted paints older than this are not worth trusting for a route decision. */
     const QUOTA_SOURCE_TTL_MS = 24 * 60 * 60 * 1000;
     /** Within this window a page load reuses the stored map without asking again. */

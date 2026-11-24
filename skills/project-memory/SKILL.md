@@ -60,9 +60,17 @@ The subject is **this project's own conventions**, not the operator's global age
      `title`, and the body: `pattern` + `fix`, or `choice` + `reason`, or `steps`.
    - `remember problem solution` — shorthand for `kind: experience`.
    - `files`: project-relative paths the conclusion is about.
+   - `category`: which aspect it belongs to — `style` / `arch` / `data` / `test` / `perf` /
+     `security` / `deploy` / `docs` / `tooling`. Set it whenever the entry is about one aspect:
+     it derives that aspect's intent words into `trigger.when.intents` and it makes the entry
+     topic-gated at injection (only injected when the current step is about that aspect).
+     An uncategorized entry is injected on its trigger alone — that is how "everything gets
+     injected" happens.
    - `trigger.when`: when this should be recalled. `ops` (action), `writes` (file about to change),
      `intents` (words the human would use). `guard` only narrows; `prevents` records what breaks
-     without it. Do **not** write a trigger you have not seen fire.
+     without it. Do **not** write a trigger you have not seen fire. Prefer a specific `writes` over
+     the catch-all `ops: ['file-write']` — the catch-all fires on every write and, for a
+     categorized entry, is the one trigger shape the topic gate is allowed to veto.
    - `scope`: `task` (needs a bound task), `project` (default), `global` (rarely).
 4. **Correct or delete**
    - Same `id` + new fields = in-place update (old value kept in `prev`).

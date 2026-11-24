@@ -11,10 +11,12 @@ import { acquireDirLock, storeKey, writeJsonAtomic } from './util/fs.js'
 import { debugPersistence } from './util/persist.js'
 import { trackDirty, untrackDirty } from './util/flush.js'
 import { backfillDerivedTriggers, deriveTrigger } from './readiness.js'
+import { normalizeCategory, withCategoryTrigger } from './topic.js'
 import { vectorText } from './vector-index.js'
 import { tokenize } from './util/search.js'
 import { isRecord, isoMs, newerIso } from './util/value.js'
 import { pruneKindFields } from './util/insight-fields.js'
+import { cfgValue } from './util/config.js'
 
 export const INSIGHT_KINDS = ['lesson', 'decision', 'procedure', 'experience']
 export const INSIGHT_SCOPES = ['task', 'project', 'global']
@@ -61,8 +63,11 @@ export function cfgInsight(config) {
     // `forget` 关键词删除的上限：超了不删、只列候选。真删且无撤销——一次 `forget 'pnpm'`
     // 扫掉十几条精选记忆不可接受。
     maxForgetMatches: num(c.maxForgetMatches, 10),
-    maxProject: num(c.maxProject, 100),
-    maxGlobalProcedures: num(c.maxGlobalProcedures, 200),
+    // 两格都是 volatile（容量只在配置里，设置页「记忆规模」不画）：在 config 上是 ref，
+    // `num()` 直接读会拿到对象
+    // → 判定失败 → 静默回落默认值。cfgValue 两种形状都给同一个数。
+    maxProject: num(cfgValue(c, 'maxProject'), 100),
+    maxGlobalProcedures: num(cfgValue(c, 'maxGlobalProcedures'), 200),
     promoteConfidence: num(c.promoteConfidence, 0.7),
     globalPromoteTasks: num(c.globalPromoteTasks, 3),
     decayDays: num(c.decayDays, 90),
@@ -143,7 +148,12 @@ export function normalizeInsight(raw, extra = {}) {
     }
     if (Object.keys(tr).length) ins.trigger = tr
   }
-  return ins
+  // 主题分类（`style` / `arch` / …）：写入侧唯一的分类入口。归一失败就丢掉——不受控的自由文本
+  // 会让注入侧的「主题门控」失效（永远命中不了，或者永远命中）。分类还被派生进 `when.intents`：
+  // 设了分类 = 该方面的词一出现就注入，作者不必再手写一遍同义触发词（见 topic.js）。
+  const category = normalizeCategory(raw.category)
+  if (category) ins.category = category
+  return category ? withCategoryTrigger(ins) : ins
 }
 
 export function unionStrings(base = [], add = []) {
@@ -262,7 +272,7 @@ export function mergeInto(existing, base, cfg, nowIso) {
 }
 
 /** 就地更新的可写字段（比自动合并宽：kind/confidence/files 等显式改动也允许）。 */
-const UPDATE_FIELDS = ['title', 'kind', 'body', 'pattern', 'fix', 'problem', 'solution', 'choice', 'reason', 'steps', 'trigger', 'files', 'symbols', 'tags', 'confidence']
+const UPDATE_FIELDS = ['title', 'kind', 'body', 'pattern', 'fix', 'problem', 'solution', 'choice', 'reason', 'steps', 'trigger', 'files', 'symbols', 'tags', 'confidence', 'category']
 const UPDATE_ARRAYS = ['steps', 'files', 'symbols', 'tags']
 
 /** 显式就地更新（`save_lesson` 带 id）：只动调用方给的字段，其余原样，旧值进 `prev`。 */
@@ -290,6 +300,15 @@ export function applyUpdate(item, raw, nowIso) {
     }
     if (f === 'trigger') {
       if (typeof v === 'object') putField(item, 'trigger', mergeAuthoredTrigger(item.trigger, v), replaced)
+      continue
+    }
+    if (f === 'category') {
+      // 就地改分类要同时把新分类的意图词补进触发面，否则「改了分类」只改标签、注入行为不变。
+      const cat = normalizeCategory(v)
+      if (cat && cat !== item.category) {
+        putField(item, 'category', cat, replaced)
+        putField(item, 'trigger', withCategoryTrigger({ ...item, category: cat, trigger: item.trigger }).trigger, replaced)
+      }
       continue
     }
     putField(item, f, String(v), replaced)

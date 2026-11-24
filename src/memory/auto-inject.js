@@ -15,10 +15,12 @@ import { createVisibleState, ensureVisible, isBlockVisible, isEntryVisible, isIt
 import { SOURCE_KIND, isOwnInjection } from './util/message-source.js'
 import { sessionWorkingDir } from './util/session-dir.js'
 import { cfgInsight, GlobalStore, defaultGlobalFile, recordHit } from './insight-store.js'
+import { cfgValue } from './util/config.js'
 import { projectTags } from './project-profile.js'
 import { rankEntriesMergedScored } from './util/search.js'
 import { insightToEntry, insightScoringText } from './recall.js'
 import { buildReadinessContext, hintQueryText, corpusTermSets, idfCoveragePrepared, matchTrigger, normalizeTrigger, relativeHits } from './readiness.js'
+import { detectTopics, normalizeCategory, topicLabel, topicOf } from './topic.js'
 import { activityFromCalls } from './ops.js'
 import { appendInjectionAudit, appendShadowAudit, auditRecordFrom, cfgAudit, cfgShadow, shadowRecordFrom } from './audit.js'
 
@@ -43,16 +45,45 @@ export { SOURCE_KIND, isOwnInjection }
 /** 注入正文的最小可用长度：预算塞不下就宁可不注入（记 dropped）——stub 只消耗 token 不传递信息。 */
 const MIN_BODY_CHARS = { trigger: 48, hint: 120 }
 
+/**
+ * "万能 op"：只要发生写文件 / 跑命令 / 提交就成立，不含任何"在聊哪方面"的信息。
+ * 主题门控的默认档只对这几种命中追加主题要求（见 cfgEngine 的 topicGate），
+ * `write:` / `intent:` 这类精确条件不在此列。
+ */
+const WEAK_TRIGGER_OPS = new Set(['file-write', 'shell-run', 'git-commit'])
+
+/** 有限数字才认；其余（含 volatile ref 被漏解时的对象）回落默认值。 */
+function num(value, fallback) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+/** 同上，但只接受 >= 0（这两个是保险丝：0 = 本会话不再注入该通道）。 */
+function nonNegative(value, fallback) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
 /** 注入引擎配置：insight 默认之上叠加 autoContext 预算/门控参数。 */
 export function cfgEngine(config) {
   const c = (config && config.autoContext) || {}
   const base = cfgInsight(config)
   return {
     ...base,
-    maxTokens: typeof c.maxTokens === 'number' ? c.maxTokens : 400,
-    entryMaxInsights: typeof c.entryMaxInsights === 'number' ? c.entryMaxInsights : 6,
+    // volatile 字段在 config 上是 ref（`{ get() }`），直接 `typeof c.maxTokens === 'number'`
+    // 会判假 → 永远回落默认值，设置页改了等于没改。cfgValue 两种形状都给同一个数。
+    maxTokens: num(cfgValue(c, 'maxTokens'), 400),
+    entryMaxInsights: num(cfgValue(c, 'entryMaxInsights'), 6),
     // 提示通道的相对阈值（层内最高分比例）：尺度无关；旧 overlap 判据对长消息必然趋零（实测 0.014–0.057）。
     signalMinRatio: typeof c.signalMinRatio === 'number' ? c.signalMinRatio : 0.5,
+    // 主题门控（四档）：条目声明了 `category` 且本步话题明确时，话题不在该主题内的条目被挡掉。
+    //   'weak'（默认）= 提示通道 + **仅靠万能 op 命中**的 trigger（`file-write` / `shell-run` / `git-commit`：
+    //                   写任何文件、跑任何命令都成立的条件，本身不含"在聊哪方面"的信息）；
+    //   'hint'        = 只挡统计提示通道，trigger 一律放行；
+    //   'all'         = 连精确 trigger（`write:` / `intent:`）也挡——主题词没写全时会误杀；
+    //   'off' / false = 只按 `when` 注入，与分类无关。
+    // 精确条件（具体路径、明确意图词）是作者写下的确定性契约，默认不被主题否决。
+    // 话题为空（本步没有任何主题词）时不门控：宁可松，也不要静默失明。
+    topicGate: c.topicGate === false ? 'off'
+      : ['off', 'hint', 'weak', 'all'].includes(c.topicGate) ? c.topicGate : 'weak',
     // 兼容闸门：显式配置 relevanceMin 时仍走旧的绝对 overlap 判据；不配置则为 null（走相对阈值）。
     relevanceMin: typeof c.relevanceMin === 'number' ? c.relevanceMin : null,
     // resident 任务卡最多显示几个"编辑中"文件（纯写权重，最近写优先）
@@ -75,8 +106,8 @@ export function cfgEngine(config) {
     // 每会话条目注入上限（条数 / 字符）：这是**保险丝**，不是节流阀——节流由 maxTokens 与 gateCooldownSteps
     // 负责，这两个数只兜住病态 runaway。旧默认 12 条 / 4000 字符实测 11/81 个会话打满后永久静默
     // （1234 步失明），最长会话用 35 条 / 8640 字符，故取 60 / 24000。
-    maxItemsPerSession: typeof c.maxItemsPerSession === 'number' && c.maxItemsPerSession >= 0 ? c.maxItemsPerSession : 60,
-    maxItemCharsPerSession: typeof c.maxItemCharsPerSession === 'number' && c.maxItemCharsPerSession >= 0 ? c.maxItemCharsPerSession : 24000,
+    maxItemsPerSession: nonNegative(cfgValue(c, 'maxItemsPerSession'), 60),
+    maxItemCharsPerSession: nonNegative(cfgValue(c, 'maxItemCharsPerSession'), 24000),
     // 提示通道的**绝对**覆盖底线（IDF 加权覆盖率）：只有归一在 [0,1]、有真零点才谈得上下限。
     // 0.30 的实测反例：真实 store（43 条同源洞察）上对照场景以 cov 0.32~0.35 注入 3 条无关条目
     // （同源语料共享词多、IDF 分辨力被拉平）。0.45 落在实测空隙里（假阳性 ≤0.35、下一个真命中
@@ -147,12 +178,15 @@ function fingerprint(text) {
   return createHash('sha256').update(text).digest('hex').slice(0, 12)
 }
 
-function linesOf(list) {
+function linesOf(list, { withTopic = false } = {}) {
   const out = []
   for (const it of list || []) {
     if (!it || it.archived || it.draft) continue
     const body = it.fix || it.solution || it.choice || (Array.isArray(it.steps) ? `步骤 ${it.steps.length} 条` : '')
-    out.push(`- [${it.id}] ${it.kind}: ${it.title}${body ? ` — ${String(body).slice(0, 120)}` : ''}`)
+    // 主题标签让「这条为什么在卡里」可读：同一堆记忆按方面分组后，没标签就分不清哪条属于哪类。
+    const topic = withTopic ? topicOf(it) : null
+    const kind = topic ? `${it.kind}/${topicLabel(topic)}` : it.kind
+    out.push(`- [${it.id}] ${kind}: ${it.title}${body ? ` — ${String(body).slice(0, 120)}` : ''}`)
   }
   return out
 }
@@ -181,7 +215,7 @@ export function shouldEchoTaskCard(task, cfg) {
 
 /** 任务卡 + 非草稿任务级 insights 摘要（常驻块主体）。
  * 去重指纹**包含**“编辑中”行：否则常驻卡会停在第一次注入时的文件列表（写文件不改变指纹）。 */
-export function buildEntryContent(task, cfg, { withEdited = true } = {}) {
+export function buildEntryContent(task, cfg, { withEdited = true, topics = [] } = {}) {
   if (!task) return ''
   const c = cfg || {}
   const steps = (task.steps || []).map((s) => stepContent(s).slice(0, 80))
@@ -191,14 +225,27 @@ export function buildEntryContent(task, cfg, { withEdited = true } = {}) {
     `进度: ${progress}`,
     ...steps.slice(0, 12).map((s, i) => `  ${i + 1}. ${s}`),
   ]
-  const insights = linesOf(task.insights)
+  // 常驻卡里的「任务记忆」按本步话题收口：话题明确时只列该主题（以及没分类的老条目）的记忆，
+  // 其余折叠成一行计数。否则任务一多，卡自己就把单轮预算吃满（见 maxTokens × 3 的字符上限）。
+  const visible = (task.insights || []).filter((it) => it && !it.archived && !it.draft)
+  const focus = topics.length
+    ? visible.filter((it) => {
+      const t = topicOf(it)
+      return !t || topics.includes(t)
+    })
+    : visible
+  const restCount = visible.length - focus.length
+  const insights = linesOf(focus, { withTopic: true })
   // 0 是合法值（= 不显示）：cfgEngine 已归一成数字，这里不能再用 `||` 把 0 顶回默认。
   const maxEdited = Number.isFinite(c.editedMax) ? c.editedMax : 3
   const maxInsights = Number.isFinite(c.entryMaxInsights) ? c.entryMaxInsights : 6
   const edited = editedFiles(task, maxEdited)
   const parts = [...card]
   if (withEdited && edited.length) parts.push(`  编辑中: ${edited.join(', ')}`)
-  if (insights.length) parts.push(`任务记忆:`, ...insights.slice(0, maxInsights))
+  if (insights.length) {
+    parts.push(`任务记忆:`, ...insights.slice(0, maxInsights))
+    if (restCount > 0) parts.push(`  (+${restCount} 条其他主题未展开，需要时用 query_memory 拉取)`)
+  }
   return parts.join('\n')
 }
 
@@ -220,8 +267,8 @@ function insightCandidates(store, globalStore, task, opts) {
   return out
 }
 
-/** 一条 insight 的注入正文：procedure 给全步骤，其余给标题 + 结论。 */
-function insightBody(it) {
+/** 一条 insight 的注入正文：procedure 给全步骤，其余给标题 + 结论。导出给估算用（同一份正文才算得出真数字）。 */
+export function insightBody(it) {
   return it.kind === 'procedure' && Array.isArray(it.steps)
     ? `【${it.title}】\n${it.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`
     : `- [${it.id}] ${it.title}${it.fix || it.solution || it.choice ? ` — ${it.fix || it.solution || it.choice}` : ''}`
@@ -430,6 +477,23 @@ export function buildInjection(opts) {
   const reasons = []
   const dropped = []
   const parts = []
+  // 本步话题：人类意图 + 写目标（含"即将写"的路径）。空数组 = 话题不明 → 主题门控不生效。
+  const topics = Array.isArray(opts.topics)
+    ? opts.topics
+    : detectTopics([ctx.humanText || '', ctx.intent || '', ...(ctx.targets || []), ...(ctx.humanPaths || [])])
+  /**
+   * 主题门控：`channel` + 命中原因决定这一条是否受管（见 cfgEngine 的 topicGate 四档）。
+   * 判定只看**显式** `category`（`normalizeCategory`），不看猜出来的主题：猜是一个好用的展示标签，
+   * 但它错了就是静默丢掉一条该注入的记忆，代价不对等。
+   */
+  const topicOpen = (channel, it, why = '') => {
+    if (cfg.topicGate === 'off' || !topics.length) return true
+    const gated = channel === 'hint' || cfg.topicGate === 'all'
+      || (cfg.topicGate === 'weak' && WEAK_TRIGGER_OPS.has(/^op:(.+)$/.exec(String(why))?.[1] || ''))
+    if (!gated) return true
+    const t = normalizeCategory(it && it.category)
+    return !t || topics.includes(t)
+  }
   // 预算只能是上限，不是目标。两条额度分开：stepBudget 是单轮（常驻块 + 条目）共享的 maxTokens；
   // itemBudget 是条目还受的会话字符额度，**常驻块不占这条**（它是状态快照，文档明说不受限）。
   const quotaChars = typeof opts.maxChars === 'number' ? opts.maxChars : Infinity
@@ -467,7 +531,7 @@ export function buildInjection(opts) {
   // 常驻块文本。去重指纹包含“编辑中”行：否则这条常驻状态只会在别的条目变化时顺带更新，
   // 模型会一直看到旧文件列表；只有热点文件集合/顺序变化时才重发整块。
   const echo = stepBudget > 0 && cfg.entryOn !== false && shouldEchoTaskCard(task, cfg)
-  const entry = echo ? buildEntryContent(task, cfg) : ''
+  const entry = echo ? buildEntryContent(task, cfg, { topics }) : ''
   let used = entry.length
   let itemUsed = 0
   let itemCount = 0
@@ -475,6 +539,11 @@ export function buildInjection(opts) {
   /** 把一组候选按优先级放进剩余预算：放不下的进 dropped（quota / budget），不静默。 */
   const place = (channel, list, minChars, labelOf) => {
     for (const { it, why } of list) {
+      // 主题不匹配：先判主题再判预算，日志里才能区分"不相关"与"没预算"。
+      if (!topicOpen(channel, it, why)) {
+        dropped.push({ id: it.id, channel, reason: 'topic', topic: topicOf(it), topics })
+        continue
+      }
       if (itemCount >= maxItems) {
         dropped.push({ id: it.id, channel, reason: 'quota' })
         continue
@@ -623,8 +692,10 @@ function installCallObserver(ctx, sessions) {
 export function installAutoInject(ctx, config) {
   const auto = (config && config.autoContext) || {}
   if (auto.enabled === false) return
-  const cfg = cfgEngine(config)
-  // 审计配置同 cfg：安装时解析一次（与 autoContext 其余开关一致）。
+  // 注入预算与保险丝（`autoContext.maxTokens` / `entryMaxInsights` / 两条 max*PerSession）是
+  // **volatile**：设置页保存后要当场生效，而 install 只跑一次。所以 `cfgEngine(config)` 放在
+  // 每个 pre-step 里现算（纯对象构造，微秒级，每步一次可以忽略）。安装期只解析审计配置 ——
+  // 那两个键不是 volatile，改它们本来就要重启。
   const audit = cfgAudit(config)
   const shadow = cfgShadow(config)
   const sessions = new InjectionSessions()
@@ -642,7 +713,7 @@ export function installAutoInject(ctx, config) {
     if (!decision) return fallback()
     if (decision.kind !== 'enter') return decision
     try {
-      return (await injectForStep({ payload, decision, config, cfg, audit, shadow, sessions })) || decision
+      return (await injectForStep({ payload, decision, config, cfg: cfgEngine(config), audit, shadow, sessions })) || decision
     } catch (err) {
       console.error(`[dsh-project-memory] auto-inject skipped: ${err?.message || err}`)
       return decision

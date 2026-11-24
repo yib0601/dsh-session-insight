@@ -21,7 +21,7 @@ import { setupSkill } from './skill.js'
 import { flushDirtyStores } from './util/flush.js'
 import { cfgValue, changedConfigKeys, asVolatile } from './util/config.js'
 
-// 合并进 dsh-turn-cost 后本模块**不是**独立插件行，只是被包根 index.js 调用的库：
+// 合并进 dsh-session-insight 后本模块**不是**独立插件行，只是被包根 index.js 调用的库：
 // 导出 name / inject 会被 loader 当成第二个插件身份，且顶层 inject 会在缺 llm/tools
 // 服务时让整个 host 半边不挂载（连成本统计一起死）。故只保留 Config 与 apply。
 export const MEMORY_NAME = 'dsh-project-memory'
@@ -127,8 +127,13 @@ export const Config = Schema.object({
     autoMergeMargin: Schema.number().default(0.05),
     hintCos: Schema.number().default(0.7),
     maxForgetMatches: Schema.number().default(10),
-    maxProject: Schema.number().default(100),
-    maxGlobalProcedures: Schema.number().default(200),
+    // `maxProject` / `maxGlobalProcedures` 标了 volatile：容量只在 profile 配置里调，
+    // 写进去下一次 prune 就用新值，不需要重启（客户端仍按 `['insight','maxProject']`
+    // 这样的嵌套路径读它，用来算设置页清单的容量占用）。
+    // ⚠ volatile 字段在 `config` 上是 ref，`typeof x === 'number'` 会判假 —— 读取点必须走
+    // cfgValue（见 util/config.js），否则改容量等于没改、且静默回落默认值。
+    maxProject: asVolatile(Schema.number().default(100)),
+    maxGlobalProcedures: asVolatile(Schema.number().default(200)),
     promoteConfidence: Schema.number().default(0.7),
     globalPromoteTasks: Schema.number().default(3),
     decayDays: Schema.number().default(90),
@@ -145,8 +150,10 @@ export const Config = Schema.object({
   autoContext: Schema.object({
     enabled: Schema.boolean().default(true),
     entryOn: Schema.boolean().default(true),
-    maxTokens: Schema.number().default(400),
-    entryMaxInsights: Schema.number().default(6),
+    // 单轮注入预算（设置页「记忆规模」唯一一格）/ 常驻块条数（只在配置里）：volatile
+    // 即时生效（读取点在 auto-inject.js 的 cfgEngine，必须走 cfgValue 解 ref）。
+    maxTokens: asVolatile(Schema.number().default(400)),
+    entryMaxInsights: asVolatile(Schema.number().default(6)),
     // 提示通道的相对阈值（层内最高分的比例）——出厂判据
     signalMinRatio: Schema.number().default(0.5),
     // resident 任务卡最多显示几个「编辑中」文件
@@ -169,8 +176,13 @@ export const Config = Schema.object({
     // 这两个是**保险丝**不是节流阀：节流由 gateCooldownSteps 与单轮 maxTokens 负责。
     // 实测旧默认 12 / 4000 时 11/81 个会话打满后永久静默；最长会话用 35 条 / 8640 字符，
     // 故抬到 60 / 24000。显式配小值可复现旧行为。
-    maxItemsPerSession: Schema.number().default(60),
-    maxItemCharsPerSession: Schema.number().default(24000),
+    maxItemsPerSession: asVolatile(Schema.number().default(60)),
+    maxItemCharsPerSession: asVolatile(Schema.number().default(24000)),
+    // 主题门控四档（设置页「按主题注入」下拉 + cfgEngine 的 topicGate）：
+    //   weak（默认）= 提示通道 + 万能 op（file-write / shell-run / git-commit）命中的 trigger；
+    //   hint = 只提示通道；all = 精确条件也挡；off = 不门控。
+    // 只有**显式** `category` 的条目参与门控：没分类的条目行为完全不变。
+    topicGate: asVolatile(Schema.union(['weak', 'hint', 'all', 'off']).default('weak')),
     hintMinCoverage: Schema.number().default(0.45),
     hintMinMatched: Schema.number().default(2),
     hintMinSupport: Schema.number().default(0.15),

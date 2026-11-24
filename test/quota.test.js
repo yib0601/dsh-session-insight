@@ -541,15 +541,15 @@ assert.equal(readStoredSource(), 'deepseek', 'a real remembered vendor still rea
 storage.delete(QUOTA_SOURCE_KEY);
 
 // ── readQuotaRoute ──────────────────────────────────────────────────────────
-assert.equal(QUOTA_URL, '/dsh-turn-cost/quota');
+assert.equal(QUOTA_URL, '/dsh-session-insight/quota');
 const seen = [];
 const okFetch = async (url, init) => { seen.push({ url, init }); return { ok: true, json: async () => ({ status: 'ready' }) }; };
 assert.deepEqual(await readQuotaRoute('opencode-go', false, okFetch), { status: 'ready' });
-assert.equal(seen[0].url, '/dsh-turn-cost/quota?source=opencode-go', 'the source is part of the read');
+assert.equal(seen[0].url, '/dsh-session-insight/quota?source=opencode-go', 'the source is part of the read');
 await readQuotaRoute('deepseek', true, okFetch);
-assert.equal(seen[1].url, '/dsh-turn-cost/quota?source=deepseek&force=1', 'a press forces the Host cache');
+assert.equal(seen[1].url, '/dsh-session-insight/quota?source=deepseek&force=1', 'a press forces the Host cache');
 await readQuotaRoute(undefined, false, okFetch);
-assert.equal(seen[2].url, '/dsh-turn-cost/quota?source=deepseek', 'a missing source falls back to the default');
+assert.equal(seen[2].url, '/dsh-session-insight/quota?source=deepseek', 'a missing source falls back to the default');
 const badFetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
 await assert.rejects(() => readQuotaRoute('opencode-go', false, badFetch), /quota route 404/);
 

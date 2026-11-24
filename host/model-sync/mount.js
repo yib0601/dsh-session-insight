@@ -15,18 +15,18 @@
  *
  * Zero configuration by default (`ai-router` every ten minutes). Environment
  * overrides exist for the odd deployment:
- *   `DSH_TURN_COST_MODEL_SYNC=0`     — disable the loop entirely
- *   `DSH_TURN_COST_MODEL_ROUTES`     — comma-separated provider routes
- *   `DSH_TURN_COST_MODEL_SYNC_MS`    — interval (default 600000)
- *   `DSH_TURN_COST_MODEL_BOOT_MS`    — first-run delay (default 20000)
- *   `DSH_TURN_COST_MODEL_STALE_MS`   — how old a read may be before a read revalidates (default 300000)
- *   `DSH_TURN_COST_SETTINGS_NS`      — settings entry id (default `llm-pi-ai`)
+ *   `DSH_SESSION_INSIGHT_MODEL_SYNC=0`     — disable the loop entirely
+ *   `DSH_SESSION_INSIGHT_MODEL_ROUTES`     — comma-separated provider routes
+ *   `DSH_SESSION_INSIGHT_MODEL_SYNC_MS`    — interval (default 600000)
+ *   `DSH_SESSION_INSIGHT_MODEL_BOOT_MS`    — first-run delay (default 20000)
+ *   `DSH_SESSION_INSIGHT_MODEL_STALE_MS`   — how old a read may be before a read revalidates (default 300000)
+ *   `DSH_SESSION_INSIGHT_SETTINGS_NS`      — settings entry id (default `llm-pi-ai`)
  */
 
 import { createModelSync } from './sync.js';
 
 /** Same-origin route the Client (or curl) reads for sync status. */
-export const MODELS_PATH = '/dsh-turn-cost/models';
+export const MODELS_PATH = '/dsh-session-insight/models';
 /** Settings entry that owns pi-ai provider profiles. */
 export const DEFAULT_SETTINGS_NS = 'llm-pi-ai';
 /** Delay before one retry after an unhealthy cycle (boot races heal in seconds). */
@@ -62,18 +62,18 @@ function positiveFromEnv(value, fallback) {
  * @returns `{enabled, settingsNs, routes, intervalMs, bootMs}`.
  */
 export function resolveSyncOptions(env = {}) {
-  const disabled = String(env.DSH_TURN_COST_MODEL_SYNC ?? '').trim().toLowerCase();
-  const routes = String(env.DSH_TURN_COST_MODEL_ROUTES ?? '')
+  const disabled = String(env.DSH_SESSION_INSIGHT_MODEL_SYNC ?? '').trim().toLowerCase();
+  const routes = String(env.DSH_SESSION_INSIGHT_MODEL_ROUTES ?? '')
     .split(',')
     .map((route) => route.trim())
     .filter((route) => route !== '');
   return {
     enabled: !(disabled === '0' || disabled === 'off' || disabled === 'false'),
-    settingsNs: String(env.DSH_TURN_COST_SETTINGS_NS ?? '').trim() || DEFAULT_SETTINGS_NS,
+    settingsNs: String(env.DSH_SESSION_INSIGHT_SETTINGS_NS ?? '').trim() || DEFAULT_SETTINGS_NS,
     routes: routes.length > 0 ? routes : [...DEFAULT_ROUTES],
-    intervalMs: positiveFromEnv(env.DSH_TURN_COST_MODEL_SYNC_MS, DEFAULT_INTERVAL_MS),
-    bootMs: positiveFromEnv(env.DSH_TURN_COST_MODEL_BOOT_MS, DEFAULT_BOOT_MS),
-    staleMs: positiveFromEnv(env.DSH_TURN_COST_MODEL_STALE_MS, DEFAULT_STALE_MS),
+    intervalMs: positiveFromEnv(env.DSH_SESSION_INSIGHT_MODEL_SYNC_MS, DEFAULT_INTERVAL_MS),
+    bootMs: positiveFromEnv(env.DSH_SESSION_INSIGHT_MODEL_BOOT_MS, DEFAULT_BOOT_MS),
+    staleMs: positiveFromEnv(env.DSH_SESSION_INSIGHT_MODEL_STALE_MS, DEFAULT_STALE_MS),
   };
 }
 
@@ -105,7 +105,7 @@ function storedModels(descriptor, route) {
 }
 
 /**
- * Claim `/dsh-turn-cost/models` as early as a `webServer` exists.
+ * Claim `/dsh-session-insight/models` as early as a `webServer` exists.
  *
  * The route must not depend on the settings service being ready: DSH composes
  * entries in several passes, and a plugin whose route only registers from inside
@@ -129,30 +129,27 @@ export function createModelsSurface(scoped, options) {
     get mounted() { return handle !== null; },
   };
   if (webServer === undefined || webServer === null || typeof webServer.register !== 'function') return surface;
-  dispose = webServer.register({
-    kind: 'exact',
-    path: MODELS_PATH,
-    resource: async (request) => {
-      if (request.method !== 'GET' && request.method !== 'HEAD') {
-        return new Response('method not allowed', { status: 405, headers: { allow: 'GET, HEAD' } });
+  const handler = async (request) => {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return new Response('method not allowed', { status: 405, headers: { allow: 'GET, HEAD' } });
+    }
+    const body = handle === null
+      ? {
+        enabled: options.enabled, route: null, routes: [...options.routes], settingsNs: options.settingsNs,
+        baseURL: null, models: [], count: 0, syncedAt: null, quotaSources: null, quotaSourcesAt: null,
+        stale: false, refreshing: false, last: null,
+        // Actionable on purpose: this is what a 200-with-no-data looks like when
+        // the settings pass never arrived, and it is what the catalog page shows.
+        syncUnavailable: true, reason: 'settings-unavailable',
       }
-      const body = handle === null
-        ? {
-          enabled: options.enabled, route: null, routes: [...options.routes], settingsNs: options.settingsNs,
-          baseURL: null, models: [], count: 0, syncedAt: null, quotaSources: null, quotaSourcesAt: null,
-          stale: false, refreshing: false, last: null,
-          // Actionable on purpose: this is what a 200-with-no-data looks like when
-          // the settings pass never arrived, and it is what the catalog page shows.
-          syncUnavailable: true, reason: 'settings-unavailable',
-        }
-        : { ...await handle.catalog(), last: handle.sync.last, intervalMs: options.intervalMs, staleMs: options.staleMs };
-      return new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
-      });
-    },
-  });
-  surface.dispose = () => dispose();
+      : { ...await handle.catalog(), last: handle.sync.last, intervalMs: options.intervalMs, staleMs: options.staleMs };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    });
+  };
+  dispose = webServer.register({ kind: 'exact', path: MODELS_PATH, resource: handler });
+  surface.dispose = dispose;
   return surface;
 }
 
@@ -188,7 +185,7 @@ export function mountModelSync(scoped, options, surface) {
     try {
       descriptors = settings.describe();
     } catch (error) {
-      scoped.logger?.warn?.(`[dsh-turn-cost] settings describe failed: ${error instanceof Error ? error.message : String(error)}`);
+      scoped.logger?.warn?.(`[dsh-session-insight] settings describe failed: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
     const descriptor = settingsEntry(descriptors, options.settingsNs);
@@ -357,21 +354,19 @@ export function mountModelSync(scoped, options, surface) {
     clearRetry();
   };
   start();
-  scoped.effect(() => stop, 'dsh-turn-cost: model sync loop');
+  scoped.effect(() => stop, 'dsh-session-insight: model sync loop');
 
   const handle = { catalog, sync, status };
   if (surface !== undefined && surface !== null) {
-    // The route is already serving (`/dsh-turn-cost/models`); hand it the loop so
+    // The route is already serving (`/dsh-session-insight/models`); hand it the loop so
     // reads see the live catalog instead of the「未挂载」answer.
     surface.attach(handle);
     return { ...handle, stop };
   }
   const webServer = get('webServer');
   if (webServer !== undefined && webServer !== null && typeof webServer.register === 'function') {
-    scoped.effect(() => webServer.register({
-      kind: 'exact',
-      path: MODELS_PATH,
-      resource: async (request) => {
+    scoped.effect(() => {
+      const handler = async (request) => {
         if (request.method !== 'GET' && request.method !== 'HEAD') {
           return new Response('method not allowed', { status: 405, headers: { allow: 'GET, HEAD' } });
         }
@@ -391,8 +386,9 @@ export function mountModelSync(scoped, options, surface) {
           status: 200,
           headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
         });
-      },
-    }), 'dsh-turn-cost: model sync route');
+      };
+      return webServer.register({ kind: 'exact', path: MODELS_PATH, resource: handler });
+    }, 'dsh-session-insight: model sync route');
   }
 
   return { ...handle, stop };

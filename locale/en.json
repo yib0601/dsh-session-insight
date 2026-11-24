@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "Turn cost & usage overview (official prices)",
-    "description": "Shows this turn's and the session total at official list prices (CNY by default, USD optional, budget alarm), plus a context breakdown, a usage overview and subscription quota. Configure it under Settings.",
+    "title": "Session insight — cost · context · quota · memory",
+    "description": "One session, in full: per-turn and session cost at official list prices (CNY default, USD optional, budget), the context breakdown and cross-session usage overview, subscription quota with its reset countdown, self-hosted gateway model-catalog sync, and project memory plus notes retrieval across sessions. Configure it under Settings → Cost / Model catalog / Memory & notes.",
     "detail": "docs/GUIDE.md"
   }
 }

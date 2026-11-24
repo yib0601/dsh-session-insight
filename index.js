@@ -85,7 +85,7 @@ export function apply(ctx, config) {
     const mountNotes = (settings) => {
       notesBridge = settings.enabled ? new NotesBridge(settings) : null;
       if (notesBridge !== null) {
-        ctx.logger?.info?.(`[dsh-turn-cost] notes search enabled: ${settings.repo}`);
+        ctx.logger?.info?.(`[dsh-session-insight] notes search enabled: ${settings.repo}`);
         // 预热只是 ping 进程（不加载模型），失败留给第一次真正的检索如实回报。
         notesBridge.ensureStarted().catch(() => {});
       }
@@ -97,7 +97,7 @@ export function apply(ctx, config) {
       try {
         next = notesSettings(config);
       } catch (error) {
-        ctx.logger?.error?.(`[dsh-turn-cost] notes settings unreadable: ${error instanceof Error ? error.message : String(error)}`);
+        ctx.logger?.error?.(`[dsh-session-insight] notes settings unreadable: ${error instanceof Error ? error.message : String(error)}`);
         return;
       }
       const before = notesBridge === null ? null : notesBridge.settings;
@@ -114,10 +114,10 @@ export function apply(ctx, config) {
       if (changed === null || changed.has('notes')) reconfigureNotes();
     });
 
-    ctx.effect(() => () => { void notesBridge?.dispose(); }, 'dsh-turn-cost: notes bridge');
+    ctx.effect(() => () => { void notesBridge?.dispose(); }, 'dsh-session-insight: notes bridge');
   } catch (error) {
     ctx.logger?.error?.(
-      `[dsh-turn-cost] notes bridge not mounted: ${error instanceof Error ? error.message : String(error)}`,
+      `[dsh-session-insight] notes bridge not mounted: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -135,7 +135,7 @@ export function apply(ctx, config) {
     applyMemory(ctx, resolved);
   } catch (error) {
     ctx.logger?.error?.(
-      `[dsh-turn-cost] memory engine failed to mount: ${error instanceof Error ? error.message : String(error)}`,
+      `[dsh-session-insight] memory engine failed to mount: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
@@ -148,13 +148,13 @@ export function apply(ctx, config) {
     const credentials = scoped.get ? scoped.get('credentials') : scoped.credentials;
     if (webServer === undefined || webServer === null || typeof webServer.register !== 'function') return;
     if (credentials === undefined || credentials === null || typeof credentials.resolve !== 'function') return;
-    // The self-hosted gateway (`ai-shim`) answers first when `DSH_TURN_COST_GATEWAY_URL`
+    // The self-hosted gateway (`ai-shim`) answers first when `DSH_SESSION_INSIGHT_GATEWAY_URL`
     // is set: it owns both halves of the question — which backend a route bills
     // (`/v1/models` rows carry `quota.source`) and what is left on it (`/v1/quota`).
     // Unset keeps the three direct vendor reads; see host/quota.js.
     const gateway = resolveGateway(process.env);
     if (gateway !== null) {
-      ctx.logger?.info?.(`[dsh-turn-cost] quota via gateway ${gateway.baseURL}`);
+      ctx.logger?.info?.(`[dsh-session-insight] quota via gateway ${gateway.baseURL}`);
     }
     const reader = createQuotaReader(gateway === null ? {} : { gateway });
     // The route names a credential reference per source; resolution happens on
@@ -163,7 +163,7 @@ export function apply(ctx, config) {
       const resolved = await credentials.resolve(ref);
       return resolved === undefined || resolved === null ? undefined : resolved.value;
     };
-    scoped.effect(() => mountQuotaRoute(scoped, reader, readKey), 'dsh-turn-cost: quota route');
+    scoped.effect(() => mountQuotaRoute(scoped, reader, readKey), 'dsh-session-insight: quota route');
   });
 
   // Model-catalog sync: a route the installed pi-ai catalog does not describe
@@ -182,26 +182,26 @@ export function apply(ctx, config) {
   ctx.inject(['webServer'], (web) => {
     const options = resolveSyncOptions(process.env);
     if (!options.enabled) {
-      ctx.logger?.info?.('[dsh-turn-cost] model sync disabled by DSH_TURN_COST_MODEL_SYNC');
+      ctx.logger?.info?.('[dsh-session-insight] model sync disabled by DSH_SESSION_INSIGHT_MODEL_SYNC');
       return;
     }
     let surface;
     try {
       surface = createModelsSurface(web, options);
     } catch (error) {
-      ctx.logger?.warn?.(`[dsh-turn-cost] model route not registered: ${error instanceof Error ? error.message : String(error)}`);
+      ctx.logger?.warn?.(`[dsh-session-insight] model route not registered: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
     ctx.inject(['settings'], (scoped) => {
       const settings = scoped.get ? scoped.get('settings') : scoped.settings;
       if (settings === undefined || settings === null || typeof settings.update !== 'function') {
-        ctx.logger?.warn?.('[dsh-turn-cost] settings service unusable; model sync skipped (route answers sync-unavailable)');
+        ctx.logger?.warn?.('[dsh-session-insight] settings service unusable; model sync skipped (route answers sync-unavailable)');
         return;
       }
       try {
         mountModelSync(scoped, options, surface);
       } catch (error) {
-        ctx.logger?.warn?.(`[dsh-turn-cost] model sync not mounted: ${error instanceof Error ? error.message : String(error)}`);
+        ctx.logger?.warn?.(`[dsh-session-insight] model sync not mounted: ${error instanceof Error ? error.message : String(error)}`);
       }
     });
   });
@@ -211,7 +211,7 @@ export function apply(ctx, config) {
       ? scoped.get('sessionProjections')
       : scoped.sessionProjections;
     if (projections === undefined || projections === null || typeof projections.register !== 'function') {
-      ctx.logger?.warn?.('[dsh-turn-cost] sessionProjections unusable; context projections skipped');
+      ctx.logger?.warn?.('[dsh-session-insight] sessionProjections unusable; context projections skipped');
       return;
     }
 
@@ -223,9 +223,9 @@ export function apply(ctx, config) {
         const handle = await projections.register(definition);
         if (disposed) { await handle.dispose(); return; }
         handles.push(handle);
-        ctx.logger?.info?.(`[dsh-turn-cost] projection ${definition.key} registered`);
+        ctx.logger?.info?.(`[dsh-session-insight] projection ${definition.key} registered`);
       } catch (error) {
-        ctx.logger?.warn?.(`[dsh-turn-cost] projection ${definition.key} failed: ${error instanceof Error ? error.message : String(error)}`);
+        ctx.logger?.warn?.(`[dsh-session-insight] projection ${definition.key} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }));
 
@@ -234,6 +234,6 @@ export function apply(ctx, config) {
       void ready.then(() => {
         for (const handle of handles) void handle.dispose();
       });
-    }, 'dsh-turn-cost: context projections');
+    }, 'dsh-session-insight: context projections');
   });
 }

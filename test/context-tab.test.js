@@ -129,7 +129,7 @@ console.log('ok — the Context tab aggregates the Agent family card; no fleet t
 // The list must be a read that paints and then revalidates, never a poll that
 // blocks. These are source contracts: the chunk is loaded by the DSH web app,
 // not by Node, so the file is asserted rather than executed.
-assert.ok(src.includes("const MODELS_URL = '/dsh-turn-cost/models';"), 'catalog route constant');
+assert.ok(src.includes("const MODELS_URL = '/dsh-session-insight/models';"), 'catalog route constant');
 assert.equal(src.split("function createModelsStore(").length - 1, 1, 'one catalog store');
 assert.equal(src.split('modelsStore.attach(').length - 1, 1, 'one reader attached to the store');
 assert.ok(/modelsStore\.attach\(\(force\) => readModelsRoute\(force, \(url, init\) => fetch\(url, init\)\)\)/

@@ -22,7 +22,7 @@
  * 生成后必须把**入口文件**的 mtime 也动一下（脚本末尾自动做）。
  *
  * 宿主给每个 bundle 行的 `rev` 取的是**入口工件**（`client.js`）的 mtime/ctime/size 指纹，
- * 页面的 chunk 请求形如 `/plugins/@local/dsh-turn-cost/client.memory.js?rev=<入口 rev>`，
+ * 页面的 chunk 请求形如 `/plugins/@local/dsh-session-insight/client.memory.js?rev=<入口 rev>`，
  * 服务端按这个 rev 缓存响应体。只写 chunk、不碰入口，rev 不变 → 页面继续拿旧字节，
  * 表现是"改了代码但界面没变化"，很容易被误判成构建失败。这是实测结论，不是猜测。
  */
